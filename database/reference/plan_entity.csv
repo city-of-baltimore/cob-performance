@@ -1,0 +1,25 @@
+entity_id,parent_agency_id,public_name,entity_type,has_own_plan,active
+1,AGC4301,Mayor's Office of Performance and Innovation,MayoraltyOffice,true,true
+2,AGC4301,Mayor's Office of African American Male Engagement,MayoraltyOffice,true,true
+3,AGC4301,Mayor's Office of LGBTQ Affairs,MayoraltyOffice,true,true
+4,AGC4301,Mayor's Office of Infrastructure Development,MayoraltyOffice,true,true
+5,AGC4301,Mayor's Office of Older Adult Affairs and Advocacy,MayoraltyOffice,true,true
+6,AGC4301,Baltimore City Mayor's Office of Overdose Response,MayoraltyOffice,true,true
+7,AGC4301,"Mayor's Office of Art, Culture, and Entertainment",MayoraltyOffice,true,true
+8,AGC4301,Innovation Team,MayoraltyOffice,true,true
+9,AGC4361,Baltimore Convention Center,QuasiAgency,true,true
+10,AGC4361,CFG Bank Arena (Royal Farms Arena),QuasiAgency,false,true
+11,AGC4326,Visit Baltimore,QuasiAgency,true,true
+12,AGC4326,Baltimore Heritage Area,QuasiAgency,true,true
+13,AGC4326,Baltimore Public Markets,QuasiAgency,true,true
+14,AGC4326,Lexington Market,QuasiAgency,true,true
+15,AGC3100,Live Baltimore,QuasiAgency,true,true
+16,AGC4356,Baltimore Museum of Art,QuasiAgency,true,true
+17,AGC4356,Walters Art Gallery,QuasiAgency,true,true
+18,AGC4356,Maryland Zoo,QuasiAgency,true,true
+19,AGC4356,Baltimore Symphony Orchestra,QuasiAgency,true,true
+20,AGC4356,Create Baltimore,QuasiAgency,true,true
+21,AGC4316,Legal Aid,QuasiAgency,true,true
+22,AGC4321,Family League,QuasiAgency,true,true
+23,AGC3100,Baltimore Development Corporation,QuasiAgency,true,true
+24,AGC7000,Parking Authority,QuasiAgency,true,true

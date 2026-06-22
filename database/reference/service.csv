@@ -1,0 +1,263 @@
+service_id,service_name,agency_id,service_type,pillar_id,pillar_name,active
+SRV0100,City Council,AGC1000,Performance,5,Responsible Stewardship of City Resources,true
+SRV0103,Council Services,AGC1100,Performance,5,Responsible Stewardship of City Resources,true
+SRV0106,Legislative Reference Services,AGC3700,Performance,5,Responsible Stewardship of City Resources,true
+SRV0107,Archives and Records Management,AGC3700,Performance,5,Responsible Stewardship of City Resources,true
+SRV0109,Administration - Children and Family Success,AGC4309,Administrative,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0110,Circuit Court,AGC1311,Performance,1,Enhancing Public Safety,true
+SRV0111,Economic Recovery,AGC4392,Performance,,,true
+SRV0115,Prosecution of Criminals,AGC6900,Performance,1,Enhancing Public Safety,true
+SRV0117,Adjudication of Environmental Citations,AGC4383,Performance,4,Equitable Economic Development,true
+SRV0121,Contingent Fund,AGC4306,Performance,,,true
+SRV0122,Miscellaneous General Expenses,AGC4311,Performance,,,true
+SRV0123,General Debt Service,AGC4312,Performance,,,true
+SRV0124,TIF Debt Service,AGC4315,Performance,,,true
+SRV0125,Executive Direction and Control - Mayoralty,AGC4301,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0126,Contribution to Self-Insurance Fund,AGC4313,Performance,,,true
+SRV0128,Labor Contract Negotiations and Administration,AGC4341,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0129,Conditional Purchase Agreement Payments,AGC4314,Performance,,,true
+SRV0130,Executive Direction and Control - Comptroller,AGC1200,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0131,Audits,AGC1200,Performance,5,Responsible Stewardship of City Resources,true
+SRV0132,Real Estate Acquisition and Management,AGC1200,Performance,4,Equitable Economic Development,true
+SRV0133,Municipal Telephone Exchange,AGC1200,Performance,5,Responsible Stewardship of City Resources,true
+SRV0136,Municipal Post Office,AGC1200,Performance,5,Responsible Stewardship of City Resources,true
+SRV0148,Revenue Collection,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0150,Treasury and Debt Management,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0152,Employees' Retirement System - Administration,AGC2100,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0154,Fire and Police Retirement System - Administration,AGC2100,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0155,Retirement Savings Plan,AGC2100,Performance,5,Responsible Stewardship of City Resources,true
+SRV0168,Municipal Broadband,AGC4303,Performance,5,Responsible Stewardship of City Resources,true
+SRV0185,Board of Municipal and Zoning Appeals,AGC7900,Performance,4,Equitable Economic Development,true
+SRV0189,Fleet Management,AGC2600,Performance,5,Responsible Stewardship of City Resources,true
+SRV0303,Clinical Services,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0305,Healthy Homes,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0307,Substance Use Disorder and Mental Health,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0308,Maternal and Child Health,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0310,School Health Services,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0311,Health Services for Seniors,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0315,Emergency Services - Health,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0316,Youth and Trauma Services,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0351,Retirees'  Benefits,AGC4376,Performance,,,true
+SRV0352,Baltimore City Public Schools,AGC4371,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0355,Employees' Retirement Contribution,AGC4377,Performance,,,true
+SRV0356,Administration - Homeless Services,AGC4381,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0385,Health and Welfare Grants,AGC4316,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0446,Educational Grants,AGC4321,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0493,Art and Culture Grants,AGC4356,Performance,4,Equitable Economic Development,true
+SRV0500,Street Lighting,AGC7000,Performance,1,Enhancing Public Safety,true
+SRV0535,Convention Center Hotel,AGC4364,Performance,4,Equitable Economic Development,true
+SRV0540,Royal Farms Arena Operations,AGC4361,Performance,4,Equitable Economic Development,true
+SRV0548,Conduits,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0590,Civic Promotion Grants,AGC4326,Performance,4,Equitable Economic Development,true
+SRV0593,Community Support Projects,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0600,Administration - Fire,AGC2500,Administrative,1,Enhancing Public Safety,true
+SRV0602,Fire Suppression and Emergency Rescue,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0604,Before and After Care,AGC3100,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0605,Head Start,AGC4309,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0608,Emergency Management,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0609,Emergency Medical Services,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0610,Fire and Emergency Community Outreach,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0611,Fire Code Enforcement,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0612,Fire Investigation,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0613,Fire Facilities Maintenance and Replacement,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0614,Fire Communications and Dispatch,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0615,Fire Training and Education,AGC2500,Performance,1,Enhancing Public Safety,true
+SRV0617,Criminal Justice Coordination,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0618,Neighborhood Safety and Engagement,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0619,Community Empowerment and Opportunity,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0621,Administrative Bureau,AGC5900,Administrative,1,Enhancing Public Safety,true
+SRV0622,Police Patrol,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0623,Criminal Investigation Division,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0626,Data Driven Strategies,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0628,Public Integrity Bureau,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0635,Recruitment Section,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0642,Crime Laboratory and Evidence Control,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0644,Administration - Recreation and Parks,AGC6300,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0645,Aquatics,AGC6300,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0646,Park Maintenance,AGC6300,Performance,6,Modernizing Public Infrastructure,true
+SRV0647,Youth and Adult Sports,AGC6300,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0648,Community Recreation Centers,AGC6300,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0649,Special Facilities Management - Recreation,AGC6300,Performance,6,Modernizing Public Infrastructure,true
+SRV0650,Horticulture,AGC6300,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0651,Recreation for Older Adults,AGC6300,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0652,Therapeutic Recreation,AGC6300,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0653,Park Programs and Events,AGC6300,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0654,Urban Forestry,AGC6300,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0656,Wage Investigation and Enforcement,AGC5500,Performance,4,Equitable Economic Development,true
+SRV0660,Administration - Solid Waste,AGC6100,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0661,Public Right-of-Way Cleaning,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0662,Vacant and Abandoned Property Cleaning and Boarding,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0663,Waste Removal and Recycling,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0664,Waste Re-Use and Disposal,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0670,Administration - Water and Wastewater,AGC6100,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0671,Water Management,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0672,Water and Wastewater Consumer Services,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0673,Wastewater Management,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0674,Surface Water Management,AGC6100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0675,Engineering and Construction Management - Water and Wastewater,AGC6100,Performance,6,Modernizing Public Infrastructure,true
+SRV0676,Administration - DPW,AGC6100,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0681,Administration - DOT,AGC7000,Administrative,6,Modernizing Public Infrastructure,true
+SRV0682,Parking Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0683,Street Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0684,Traffic Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0685,Special Events,AGC7000,Performance,4,Equitable Economic Development,true
+SRV0687,Inner Harbor Services - Transportation,AGC7000,Performance,4,Equitable Economic Development,true
+SRV0688,Snow and Ice Control,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0689,Vehicle Impounding and Disposal,AGC7000,Performance,1,Enhancing Public Safety,true
+SRV0690,Sustainable Transportation,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0691,Public Rights-of-Way Landscape Management,AGC7000,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0692,Bridge and Culvert Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0693,Parking Enforcement,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0694,Survey Control,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0695,Dock Master,AGC7000,Performance,4,Equitable Economic Development,true
+SRV0696,Street Cuts Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0697,Traffic Safety,AGC7000,Performance,1,Enhancing Public Safety,true
+SRV0698,Administration - Finance,AGC2300,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0699,Procurement,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0700,Surplus Property Disposal,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0701,Printing Services,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0702,Accounts Payable,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0703,Payroll,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0704,Accounting,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0707,Risk Management for Employee Injuries,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0708,Operating Budget Management,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0710,Fiscal Integrity and Recovery,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0711,Finance Project Management,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0715,Administration - Health,AGC2700,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0716,Animal Services,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0717,Environmental Inspection Services,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0718,Chronic Disease Prevention,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0720,HIV Treatment Services for the Uninsured,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0721,Senior Centers,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0722,Administration - CARE,AGC2700,Administrative,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0723,Advocacy for Seniors,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0724,Direct Care and Support Planning,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0725,Community Services for Seniors,AGC2700,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0726,Administration - General Services,AGC2600,Administrative,6,Modernizing Public Infrastructure,true
+SRV0727,Real Property Management,AGC7000,Performance,6,Modernizing Public Infrastructure,true
+SRV0730,Public and Private Energy Performance,AGC2600,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0731,Facilities Management,AGC2600,Performance,6,Modernizing Public Infrastructure,true
+SRV0734,Capital Projects Division - Design and Construction,AGC2600,Performance,6,Modernizing Public Infrastructure,true
+SRV0737,Administration - HCD,AGC3100,Administrative,4,Equitable Economic Development,true
+SRV0738,Weatherization Services,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0741,Community Action Partnership,AGC4309,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0742,Promote Homeownership,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0745,Housing Code Enforcement,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0747,Register and License Properties and Contractors,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0748,Affordable Housing,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0749,"Property Acquisition, Disposition and Asset Management",AGC3100,Performance,4,Equitable Economic Development,true
+SRV0750,Housing Rehabilitation Services,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0751,"Building Codes Permitting, Inspections, and Compliance",AGC3100,Performance,4,Equitable Economic Development,true
+SRV0752,Community Outreach Services,AGC3100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0754,Summer Food Service Program,AGC3100,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0757,CitiWatch,AGC4303,Performance,1,Enhancing Public Safety,true
+SRV0758,Coordination of Public Safety Strategy - Administration,AGC4346,Administrative,1,Enhancing Public Safety,true
+SRV0761,Development Oversight and Project Support,AGC5700,Performance,4,Equitable Economic Development,true
+SRV0762,Historic Preservation,AGC5700,Performance,4,Equitable Economic Development,true
+SRV0763,Comprehensive Planning and Resource Management,AGC5700,Performance,6,Modernizing Public Infrastructure,true
+SRV0765,Planning for a Sustainable Baltimore,AGC5700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0768,Administration - Planning,AGC5700,Administrative,4,Equitable Economic Development,true
+SRV0770,Administration - Human Resources,AGC3300,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0771,Benefits Administration,AGC3300,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0772,Civil Service Management,AGC3300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0773,Learning and Development,AGC3300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0781,Administration - State's Attorney,AGC6900,Administrative,1,Enhancing Public Safety,true
+SRV0786,Victim and Witness Services,AGC6900,Performance,1,Enhancing Public Safety,true
+SRV0788,Information Services,AGC3900,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0791,BCPS Alternative Options Academy for Youth,AGC4500,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0792,Workforce Public Assistance,AGC4500,Performance,4,Equitable Economic Development,true
+SRV0793,Employment Enhancement Services for Baltimore City Residents,AGC4500,Performance,4,Equitable Economic Development,true
+SRV0794,Administration - MOED,AGC4500,Administrative,4,Equitable Economic Development,true
+SRV0795,Workforce Services for Baltimore Residents,AGC4500,Performance,4,Equitable Economic Development,true
+SRV0796,Workforce Services for Ex-Offenders,AGC4500,Performance,1,Enhancing Public Safety,true
+SRV0797,Workforce Services for Out of School Youth - Youth Opportunity,AGC4500,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0798,Youth Works Summer Job Program,AGC4500,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0800,Workforce Services for WIOA Funded Youth,AGC4500,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0802,Administration,AGC4303,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0803,Enterprise Innovation and Application Services,AGC4303,Performance,5,Responsible Stewardship of City Resources,true
+SRV0804,311 Call Center,AGC4303,Performance,5,Responsible Stewardship of City Resources,true
+SRV0805,Enterprise IT Delivery Services,AGC4303,Performance,5,Responsible Stewardship of City Resources,true
+SRV0807,Compliance Bureau,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0809,"Retention, Expansion, and Attraction of Businesses",AGC3100,Performance,4,Equitable Economic Development,true
+SRV0810,Real Estate Development,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0811,Inner Harbor Coordination,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0813,Technology Development - Emerging Technology Center,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0815,Live Baltimore,AGC3100,Performance,4,Equitable Economic Development,true
+SRV0816,Special Operations Section,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0817,Orphans' Court,AGC1321,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0820,Convention Sales and Tourism Marketing,AGC4326,Performance,4,Equitable Economic Development,true
+SRV0824,"Events, Art, Culture, and Film",AGC4356,Performance,4,Equitable Economic Development,true
+SRV0828,Bromo Seltzer Arts Tower,AGC4356,Performance,4,Equitable Economic Development,true
+SRV0833,Innovation Fund,AGC4307,Performance,,,true
+SRV0834,MWB Opportunity Office,AGC4310,Performance,4,Equitable Economic Development,true
+SRV0836,Inspector General,AGC4308,Performance,5,Responsible Stewardship of City Resources,true
+SRV0844,Equity & Inclusion,AGC5500,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0846,"Discrimination Investigations, Resolutions and Concilations",AGC5500,Performance,5,Responsible Stewardship of City Resources,true
+SRV0848,Police Community Relations,AGC5500,Performance,1,Enhancing Public Safety,true
+SRV0849,Police Civilian Oversight,AGC5500,Performance,1,Enhancing Public Safety,true
+SRV0850,Liquor Licensing,AGC4100,Performance,4,Equitable Economic Development,true
+SRV0851,Liquor License Compliance,AGC4100,Performance,1,Enhancing Public Safety,true
+SRV0853,Patrol Support Services,AGC5900,Performance,1,Enhancing Public Safety,true
+SRV0855,Convention Center,AGC4361,Performance,4,Equitable Economic Development,true
+SRV0857,Convention Center Debt Service,AGC4361,Performance,,,true
+SRV0860,Administration - Law,AGC3500,Administrative,5,Responsible Stewardship of City Resources,true
+SRV0861,Controversies,AGC3500,Performance,5,Responsible Stewardship of City Resources,true
+SRV0862,Transactions,AGC3500,Performance,5,Responsible Stewardship of City Resources,true
+SRV0869,Minority and Women's Business Opportunity Office,AGC3500,Performance,4,Equitable Economic Development,true
+SRV0871,Police Legal Affairs,AGC3500,Performance,1,Enhancing Public Safety,true
+SRV0872,Workers’ Compensation Practice,AGC3500,Performance,5,Responsible Stewardship of City Resources,true
+SRV0873,Broadband and Digital Equity,AGC4303,Performance,6,Modernizing Public Infrastructure,true
+SRV0876,Media Production,AGC4366,Performance,5,Responsible Stewardship of City Resources,true
+SRV0881,Courthouse Security,AGC6500,Performance,1,Enhancing Public Safety,true
+SRV0882,Deputy Sheriff Enforcement,AGC6500,Performance,1,Enhancing Public Safety,true
+SRV0883,Service of Protective and Peace Orders,AGC6500,Performance,1,Enhancing Public Safety,true
+SRV0884,District Court Sheriff Services,AGC6500,Performance,1,Enhancing Public Safety,true
+SRV0889,Child Support Enforcement,AGC6500,Performance,1,Enhancing Public Safety,true
+SRV0893,Homeless Prevention and Support Services for the Homeless,AGC4381,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0894,Outreach to the Homeless,AGC4381,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0895,Temporary Housing for the Homeless,AGC4381,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0896,Permanent Housing for the Homeless,AGC4381,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0899,Fair Conduct of Elections,AGC1900,Performance,5,Responsible Stewardship of City Resources,true
+SRV0902,Account Payable,AGC1200,Performance,5,Responsible Stewardship of City Resources,true
+SRV0903,Office of Performance and Innovation,AGC4301,Performance,5,Responsible Stewardship of City Resources,true
+SRV0905,Office of African American Male Engagement,AGC4301,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0906,Office of LGBTQ Affairs,AGC4301,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0907,Office of Infrastructure Development,AGC4301,Performance,6,Modernizing Public Infrastructure,true
+SRV0908,Office of Older Adult Affairs and Advocacy,AGC4301,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0909,Office of the Zoning Administrator,AGC5700,Performance,4,Equitable Economic Development,true
+SRV0910,Office of Ethics,AGC4308,Performance,5,Responsible Stewardship of City Resources,true
+SRV0911,Digital Services,AGC4303,Performance,5,Responsible Stewardship of City Resources,true
+SRV0912,Facility Maintenance,AGC6300,Performance,6,Modernizing Public Infrastructure,true
+SRV0913,Finance Grants Management,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0914,Administration - OECR,AGC5500,Administrative,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0915,Corporate and Revenue Compliance,AGC2300,Performance,5,Responsible Stewardship of City Resources,true
+SRV0916,Opioid Restitution Administration,AGC4392,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0917,Opioid Restitution Grants,AGC4392,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0918,Opioid Restitution Administration,AGC4301,Administrative,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0919,Municipal ID,AGC4303,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV0920,"Mayor’s Office of Art, Culture, and Entertainment",AGC4301,Performance,4,Equitable Economic Development,true
+SRV0921,Consumer Protection and Business Licensing,AGC4317,Performance,4,Equitable Economic Development,true
+SRV0922,Clean Corps,AGC5700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0923,Administration (MONSE),AGC4346,Administrative,1,Enhancing Public Safety,true
+SRV0924,Violence Prevention,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0925,Victim Services,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0926,Re-Entry Services,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0927,Neighborhood Stabilization,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0928,Food Policy & Planning,AGC5700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0929,Capital Improvement Program,AGC5700,Performance,6,Modernizing Public Infrastructure,true
+SRV0930,Public Behavioral Health,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
+SRV0931,Office of Immigrant Affairs,AGC4393,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
+SRV9000,Capital Projects (HLT),AGC2700,Performance,,,true
+SRV9001,Capital Projects (BPD),AGC5900,Performance,,,true
+SRV9002,Capital Projects (CON),AGC4361,Performance,,,true
+SRV9003,Capital Projects (DGS),AGC2600,Performance,,,true
+SRV9004,Capital Projects (DPW),AGC6100,Performance,,,true
+SRV9005,Capital Projects (FIN),AGC2300,Performance,,,true
+SRV9006,Capital Projects (FIR),AGC2500,Performance,,,true
+SRV9007,Capital Projects (HCD),AGC3100,Performance,,,true
+SRV9008,Capital Projects (LIB),AGC3900,Performance,,,true
+SRV9011,Capital Projects (OIT),AGC4303,Performance,,,true
+SRV9012,Capital Projects (PLN),AGC5700,Performance,,,true
+SRV9013,Capital Projects (REC),AGC6300,Performance,,,true
+SRV0904,Office of Immigrant Affairs,AGC4301,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",false
+SRV9009,Capital Projects (MYR),AGC4301,Performance,,,false

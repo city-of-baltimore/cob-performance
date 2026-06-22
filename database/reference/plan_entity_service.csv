@@ -1,0 +1,29 @@
+pes_id,entity_id,service_id,service_name,is_primary
+1,1,SRV0903,Office of Performance and Innovation,true
+2,2,SRV0905,Office of African American Male Engagement,true
+3,3,SRV0906,Office of LGBTQ Affairs,true
+4,4,SRV0907,Office of Infrastructure Development,true
+5,5,SRV0908,Office of Older Adult Affairs and Advocacy,true
+6,6,SRV0918,Opioid Restitution Administration,true
+7,7,SRV0920,"Mayor's Office of Art, Culture, and Entertainment",true
+8,8,SRV0125,Innovation Team,true
+9,9,SRV0855,Convention Center,true
+10,10,SRV0540,Royal Farms Arena Operations,true
+11,11,SRV0820,Convention Sales and Tourism Marketing,true
+12,12,SRV0590,Civic Promotion Grants,true
+13,13,SRV0590,Civic Promotion Grants,true
+14,14,SRV0590,Civic Promotion Grants,true
+15,15,SRV0815,Live Baltimore,true
+16,16,SRV0493,Art and Culture Grants,true
+17,17,SRV0493,Art and Culture Grants,true
+18,18,SRV0493,Art and Culture Grants,true
+19,19,SRV0493,Art and Culture Grants,true
+20,20,SRV0824,"Events, Art, and Culture",true
+21,20,SRV0828,Bromo Seltzer Arts Tower,true
+22,21,SRV0385,Health and Welfare Grants,true
+23,22,SRV0385,Health and Welfare Grants,true
+24,22,SRV0446,Educational Grants,true
+25,23,SRV0749,"Property Acquisition, Disposition and Asset Management",true
+26,23,SRV0750,Housing Rehabilitation Services,false
+27,23,SRV0810,Real Estate Development,false
+28,24,SRV0682,Parking Management,true
