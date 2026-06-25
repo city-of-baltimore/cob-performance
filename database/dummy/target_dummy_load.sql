@@ -228,13 +228,13 @@ VALUES
     (1, 'AGC2600', NULL, 4, 'UnderReview', 'Draft', 2, 6, '2026-06-05', NULL, '2026-06-01', '2026-06-16'),
     (2, 'AGC4346', NULL, 4, 'Approved', 'Submitted', 3, 6, '2026-06-08', '2026-06-22', '2026-06-01', '2026-06-22'),
     (3, 'AGC2700', NULL, 4, 'Draft', 'Locked', 1, NULL, NULL, NULL, '2026-06-01', '2026-06-01'),
-    (4, 'AGC7000', NULL, 4, 'FeedbackReturned', 'Locked', 2, 6, '2026-06-12', '2026-06-12', '2026-06-01', '2026-06-25'),
-    (5, 'AGC2600', NULL, 3, 'Approved', 'Approved', 5, 6, '2025-06-04', '2025-06-28', '2025-06-01', '2025-07-10'),
+    (4, 'AGC7000', NULL, 4, 'Returned', 'Locked', 2, 6, '2026-06-12', '2026-06-12', '2026-06-01', '2026-06-25'),
+    (5, 'AGC2600', NULL, 3, 'Published', 'Approved', 5, 6, '2025-06-04', '2025-06-28', '2025-06-01', '2025-07-10'),
     (6, NULL, 1, 4, 'Submitted', 'Locked', 1, 10, '2026-06-12', NULL, '2026-06-01', '2026-06-15'),
     (7, NULL, 3, 4, 'DirectorSignOff', 'Locked', 1, NULL, NULL, NULL, '2026-06-01', '2026-06-14'),
     (8, 'AGC5900', NULL, 4, 'DeputyMayorReview', 'Locked', 2, 6, '2026-06-14', NULL, '2026-06-01', '2026-06-17'),
     (9, 'AGC3100', NULL, 4, 'CAReview', 'Draft', 3, 6, '2026-06-09', '2026-06-26', '2026-06-01', '2026-06-26'),
-    (10, 'AGC2500', NULL, 2, 'Amended', 'Approved', 4, 6, '2025-05-01', '2025-05-15', '2025-05-01', '2025-05-15')
+    (10, 'AGC2500', NULL, 2, 'Published', 'Approved', 4, 6, '2025-05-01', '2025-05-15', '2025-05-01', '2025-05-15')
 ON CONFLICT ("plan_id") DO UPDATE SET
     "agency_id" = EXCLUDED."agency_id", "entity_id" = EXCLUDED."entity_id", "cycle_id" = EXCLUDED."cycle_id", "plan_status" = EXCLUDED."plan_status", "budget_status" = EXCLUDED."budget_status", "version" = EXCLUDED."version", "assigned_reviewer" = EXCLUDED."assigned_reviewer", "submitted_at" = EXCLUDED."submitted_at", "approved_at" = EXCLUDED."approved_at", "created_at" = EXCLUDED."created_at", "updated_at" = EXCLUDED."updated_at";
 SELECT setval(
@@ -264,25 +264,25 @@ SELECT setval(
     (SELECT COUNT(*) > 0 FROM performance.plan_header)
 );
 
--- MISSION_VISION -> performance.mission_vision
-INSERT INTO performance.mission_vision ("mv_id", "plan_id", "mission", "vision")
+-- OVERVIEW_VISION -> performance.overview_vision
+INSERT INTO performance.overview_vision ("mv_id", "plan_id", "overview", "vision", "web_address")
 VALUES
-    (1, 1, 'To deliver results for City partners through services and solutions that are timely, cost-effective, and sustainable.', 'To be a leader in delivering expertise, efficiency, and service excellence.'),
-    (2, 2, 'To implement Baltimore''s public health approach to violence through prevention, intervention, and victim support.', 'A Baltimore where every neighborhood is safe from violence and every resident has access to support and opportunity.'),
-    (3, 3, 'To protect and promote the health of all Baltimore City residents.', 'A healthy Baltimore where every resident can thrive regardless of zip code or income.'),
-    (4, 4, 'To plan, build, and maintain a safe, accessible, and sustainable transportation network.', 'A connected Baltimore where every resident can move safely and efficiently.'),
-    (5, 5, 'To deliver results for City partners through services and solutions that are timely, cost-effective, and sustainable.', 'To be a leader in delivering expertise, efficiency, and service excellence.'),
-    (6, 6, 'To redevelop vacant and underutilized properties into thriving community assets.', 'A Baltimore where every neighborhood has the investment it needs to grow.'),
-    (7, 7, 'To strengthen citywide performance management, budget transparency, and data-informed decision-making.', 'A city government that uses data and evidence to deliver better outcomes for every resident.'),
-    (8, 8, 'To protect the lives and property of Baltimore City residents through community-centered policing.', 'A Baltimore where every neighborhood is safe and every resident trusts their police department.'),
-    (9, 9, 'To expand access to safe, affordable housing for all Baltimore City residents.', 'A Baltimore where every resident has a safe, stable, and affordable place to call home.'),
-    (10, 10, 'To protect lives and property through rapid, professional emergency response.', 'A Baltimore where every resident is protected by a modern, well-equipped Fire Department.')
+    (1, 1, 'To deliver results for City partners through services and solutions that are timely, cost-effective, and sustainable.', 'To be a leader in delivering expertise, efficiency, and service excellence.', 'https://generalservices.baltimorecity.gov'),
+    (2, 2, 'To implement Baltimore''s public health approach to violence through prevention, intervention, and victim support.', 'A Baltimore where every neighborhood is safe from violence and every resident has access to support and opportunity.', 'https://monse.baltimorecity.gov'),
+    (3, 3, 'To protect and promote the health of all Baltimore City residents.', 'A healthy Baltimore where every resident can thrive regardless of zip code or income.', 'https://health.baltimorecity.gov'),
+    (4, 4, 'To plan, build, and maintain a safe, accessible, and sustainable transportation network.', 'A connected Baltimore where every resident can move safely and efficiently.', 'https://transportation.baltimorecity.gov'),
+    (5, 5, 'To deliver results for City partners through services and solutions that are timely, cost-effective, and sustainable.', 'To be a leader in delivering expertise, efficiency, and service excellence.', 'https://generalservices.baltimorecity.gov'),
+    (6, 6, 'To redevelop vacant and underutilized properties into thriving community assets.', 'A Baltimore where every neighborhood has the investment it needs to grow.', 'https://www.baltimoredevelopment.com'),
+    (7, 7, 'To strengthen citywide performance management, budget transparency, and data-informed decision-making.', 'A city government that uses data and evidence to deliver better outcomes for every resident.', 'https://mayor.baltimorecity.gov/bcstat'),
+    (8, 8, 'To protect the lives and property of Baltimore City residents through community-centered policing.', 'A Baltimore where every neighborhood is safe and every resident trusts their police department.', 'https://www.baltimorepolice.org'),
+    (9, 9, 'To expand access to safe, affordable housing for all Baltimore City residents.', 'A Baltimore where every resident has a safe, stable, and affordable place to call home.', 'https://dhcd.baltimorecity.gov'),
+    (10, 10, 'To protect lives and property through rapid, professional emergency response.', 'A Baltimore where every resident is protected by a modern, well-equipped Fire Department.', 'https://fire.baltimorecity.gov')
 ON CONFLICT ("mv_id") DO UPDATE SET
-    "plan_id" = EXCLUDED."plan_id", "mission" = EXCLUDED."mission", "vision" = EXCLUDED."vision";
+    "plan_id" = EXCLUDED."plan_id", "overview" = EXCLUDED."overview", "vision" = EXCLUDED."vision", "web_address" = EXCLUDED."web_address";
 SELECT setval(
-    pg_get_serial_sequence('performance.mission_vision', 'mv_id'),
-    COALESCE((SELECT MAX("mv_id") FROM performance.mission_vision), 1),
-    (SELECT COUNT(*) > 0 FROM performance.mission_vision)
+    pg_get_serial_sequence('performance.overview_vision', 'mv_id'),
+    COALESCE((SELECT MAX("mv_id") FROM performance.overview_vision), 1),
+    (SELECT COUNT(*) > 0 FROM performance.overview_vision)
 );
 
 -- PLAN_PILLAR_ALIGNMENT -> performance.plan_pillar_alignment
@@ -318,7 +318,9 @@ VALUES
     (7, 7, 'Strengthen citywide performance management and data-informed decision-making.', 'OPI''s flagship goal for the FY27 cycle.', 1, '2026-06-01'),
     (8, 8, 'Reduce violent crime through community policing strategies.', 'Expand foot patrol and community trust-building citywide.', 1, '2026-06-14'),
     (9, 9, 'Expand affordable housing production and preservation.', 'Increase the supply of affordable and preserved housing units.', 1, '2026-06-09'),
-    (10, 10, 'Improve emergency response times across all districts.', 'FY25 historical goal, later amended to add a new KPI.', 1, '2025-05-01')
+    (10, 10, 'Improve emergency response times across all districts.', 'FY25 historical goal, later amended to add a new KPI.', 1, '2025-05-01'),
+    (11, 1, 'Reduce preventable facility downtime by 15% by June 2027.', 'Improve the reliability and availability of facilities used by City agencies and residents.', 2, '2026-06-01'),
+    (12, 1, 'Reduce energy use in City-owned facilities by 10% from the FY2025 baseline by June 2027.', 'Lower operating costs and emissions through targeted efficiency improvements.', 3, '2026-06-01')
 ON CONFLICT ("agency_goal_id") DO UPDATE SET
     "plan_id" = EXCLUDED."plan_id", "title" = EXCLUDED."title", "description" = EXCLUDED."description", "sort_order" = EXCLUDED."sort_order", "created_at" = EXCLUDED."created_at";
 SELECT setval(
@@ -339,7 +341,8 @@ VALUES
     (7, 7, 14, 'Secondary', NULL, '2026-06-01'),
     (8, 8, 3, 'Primary', NULL, '2026-06-14'),
     (9, 9, 13, 'Primary', NULL, '2026-06-09'),
-    (10, 10, 19, 'Primary', NULL, '2025-05-01')
+    (10, 10, 19, 'Primary', NULL, '2025-05-01'),
+    (11, 11, 19, 'Primary', 'Reliable facilities directly support safe, functional, and efficient City operations.', '2026-06-01')
 ON CONFLICT ("link_id") DO UPDATE SET
     "agency_goal_id" = EXCLUDED."agency_goal_id", "pillar_goal_id" = EXCLUDED."pillar_goal_id", "link_type" = EXCLUDED."link_type", "alignment_narrative" = EXCLUDED."alignment_narrative", "created_date" = EXCLUDED."created_date";
 SELECT setval(
@@ -360,7 +363,9 @@ VALUES
     (7, 'Launch citywide KPI dashboard', 'Build and launch a public-facing citywide performance dashboard.', '2026-07-01', '2027-06-30', 'Planned', '2026-06-01', '2026-06-01'),
     (8, 'Expand community policing foot patrols', 'Add foot patrol coverage in three additional neighborhoods.', '2026-07-01', '2027-06-30', 'Planned', '2026-06-14', '2026-06-14'),
     (9, 'Increase Housing Trust Fund allocations', 'Increase annual allocations to the Affordable Housing Trust Fund.', '2026-07-01', '2027-06-30', 'Planned', '2026-06-09', '2026-06-09'),
-    (10, 'Modernize fire station dispatch system', 'Replace the legacy CAD dispatch system citywide.', '2025-01-01', '2026-12-31', 'InProgress', '2025-05-01', '2025-05-12')
+    (10, 'Modernize fire station dispatch system', 'Replace the legacy CAD dispatch system citywide.', '2025-01-01', '2026-12-31', 'InProgress', '2025-05-01', '2025-05-12'),
+    (11, 'Launch condition-based facility maintenance schedules', 'Implement condition-based maintenance schedules for the twenty highest-use City facilities.', '2026-07-01', '2027-06-30', 'Planned', '2026-06-01', '2026-06-01'),
+    (12, 'Complete priority facility energy upgrades', 'Complete energy audits and implement priority efficiency upgrades in City-owned facilities.', '2026-07-01', '2027-06-30', 'Planned', '2026-06-01', '2026-06-01')
 ON CONFLICT ("initiative_id") DO UPDATE SET
     "title" = EXCLUDED."title", "description" = EXCLUDED."description", "start_date" = EXCLUDED."start_date", "end_date" = EXCLUDED."end_date", "status" = EXCLUDED."status", "created_date" = EXCLUDED."created_date", "last_updated" = EXCLUDED."last_updated";
 SELECT setval(
@@ -381,7 +386,9 @@ VALUES
     (7, 7, 7, 'Primary', '2026-06-01'),
     (8, 8, 8, 'Primary', '2026-06-01'),
     (9, 9, 9, 'Primary', '2026-06-01'),
-    (10, 10, 10, 'Primary', '2026-06-01')
+    (10, 10, 10, 'Primary', '2026-06-01'),
+    (11, 11, 11, 'Primary', '2026-06-01'),
+    (12, 12, 12, 'Primary', '2026-06-01')
 ON CONFLICT ("link_id") DO UPDATE SET
     "agency_goal_id" = EXCLUDED."agency_goal_id", "initiative_id" = EXCLUDED."initiative_id", "link_type" = EXCLUDED."link_type", "created_date" = EXCLUDED."created_date";
 SELECT setval(
@@ -391,20 +398,20 @@ SELECT setval(
 );
 
 -- PERFORMANCE_MEASURE -> performance.performance_measure
-INSERT INTO performance.performance_measure ("measure_id", "agency_id", "initial_cycle", "title", "is_kpi", "measure_type", "description", "data_source", "data_owner", "data_owner_role", "update_frequency", "formula", "desired_direction", "baseline_value", "baseline_fy", "format_type", "display_unit", "context_required", "replicability", "disaggregation", "data_location", "collection_method", "how_data_used", "why_meaningful", "proxy_measure", "improvement_notes", "change_mapping", "pillar_id", "pillar_goal_id", "is_city", "is_agency", "is_service", "validated", "created_date", "last_updated")
+INSERT INTO performance.performance_measure ("measure_id", "agency_id", "initial_cycle", "title", "measure_type", "description", "data_source", "data_owner", "data_owner_role", "update_frequency", "formula", "desired_direction", "baseline_value", "baseline_fy", "format_type", "display_unit", "context_required", "replicability", "disaggregation", "data_location", "collection_method", "how_data_used", "why_meaningful", "proxy_measure", "improvement_notes", "change_mapping", "pillar_id", "pillar_goal_id", "is_city", "is_agency", "is_service", "validated", "created_date", "last_updated")
 VALUES
-    (1, 'AGC2600', 4, 'Average Age of Fleet', true, 'Outcome', 'Tracks the average age of vehicles in DGS''s Fleet at the beginning of each fiscal quarter.', 'FasterWeb', 'James Trimarco', 'Analyst', 'Daily', 'SUM(Age of Fleet Vehicles)/COUNT(Fleet Vehicles)', 'Decrease', 6.7, 2025, 'Decimal', 'years', NULL, true, 'By vehicle type', 'FasterWeb', 'Fleet availability viewed on FasterWeb.', 'Tracks fleet asset health.', 'Vehicle age impacts availability and maintenance cost.', NULL, NULL, 'Unchanged', 5, NULL, false, true, false, true, '2026-06-01', '2026-06-01'),
-    (2, 'AGC4346', 4, 'Citywide Violence Reduction', true, 'Outcome', 'Sustain a 15% reduction in Homicides and Shootings Year Over Year.', 'Citistat - BPD', 'Joseph Muhlhausen', 'Chief of Data Analytics', 'Daily', '(Current Year - Previous Year)/Previous Year * 100', 'Decrease', -13.13, 2025, 'Percent', NULL, NULL, true, 'By district', 'Citistat', 'SQL query against GroupA_Crime table.', 'Tracks citywide violence trend.', 'Core outcome measure for violence prevention strategy.', NULL, NULL, 'Unchanged', 1, 2, true, true, false, true, '2026-06-08', '2026-06-08'),
-    (3, 'AGC2700', 4, '% of Residents Tested for Communicable Disease Within 48 Hours of Exposure', true, 'Effectiveness', 'Tracks how quickly exposed residents are tested following a known exposure event.', 'Health Dept Case Management System', 'Dr. Anita Roy', 'Epidemiology Program Manager', 'Monthly', '(Tested Within 48 Hrs / Total Exposures) * 100', 'Increase', 62, 2025, 'Percent', NULL, NULL, true, 'By zip code', 'CHESS', 'Case investigators log exposure and test dates.', 'Tracks outbreak response speed.', 'Faster testing limits disease spread.', NULL, NULL, 'New', 3, 8, false, true, false, false, '2026-06-01', '2026-06-01'),
-    (4, 'AGC7000', 4, 'Average Traffic Signal Outage Response Time', true, 'Efficiency', 'Tracks the average number of days to resolve a reported traffic signal outage.', 'Maximo Work Order System', 'Carlos Reyes', 'Signals Division Manager', 'Monthly', 'AVG(Resolution Date - Report Date)', 'Decrease', 5, 2025, 'Days', NULL, NULL, true, 'By district', 'Maximo', 'Work orders logged and closed in Maximo.', 'Tracks signal maintenance responsiveness.', 'Faster repairs reduce intersection safety risk.', NULL, NULL, 'New', 6, 20, false, true, false, false, '2026-06-12', '2026-06-12'),
-    (5, 'AGC2600', 4, '% of Preventive Maintenance Completed On Time', false, 'Effectiveness', 'Tracks the percentage of preventive maintenance work orders completed on time.', 'Archibus', 'Happy Iguare', 'Operations Research Analyst', 'Daily', '(PMs Completed On Time / All PMs) * 100', 'Increase', 88, 2025, 'Percent', NULL, NULL, true, 'By building', 'Archibus', 'Maintenance requests viewable in Archibus.', 'Tracks facilities upkeep performance.', 'Reduces emergency repair costs.', NULL, NULL, 'Unchanged', 6, 19, false, false, true, true, '2026-06-01', '2026-06-01'),
-    (6, 'AGC3100', 4, '# of Vacant Properties Redeveloped', true, 'Output', 'Cumulative number of vacant properties redeveloped through BDC and Housing partnerships.', 'Real Property Database', 'Devon Carter', 'Redevelopment Program Manager', 'Quarterly', 'Cumulative count of redeveloped parcels', 'Increase', 42, 2025, 'Count', NULL, NULL, true, 'By neighborhood', 'Real Property DB', 'Redevelopment closings logged manually.', 'Tracks redevelopment pipeline progress.', 'Each property returned to productive use strengthens neighborhoods.', NULL, NULL, 'Unchanged', 4, 13, false, true, false, true, '2026-06-12', '2026-06-12'),
-    (7, 'AGC4301', 4, 'Citizen Engagement Score for OPI Dashboards', true, 'Outcome', 'Composite resident engagement score based on dashboard usage and feedback surveys.', 'Google Analytics / MS Forms', 'Maria Chen', 'OPI Reviewer', 'Quarterly', 'Composite Score', 'Increase', 7.8, 2025, 'Score', 'out of 10', NULL, true, NULL, 'Google Analytics', 'Dashboard usage and survey data combined.', 'Tracks public engagement with performance data.', 'Higher engagement reflects greater transparency impact.', NULL, NULL, 'New', 5, 14, true, true, false, false, '2026-06-01', '2026-06-01'),
-    (8, 'AGC5900', 4, 'Violent Crime Rate per 1,000 Residents', true, 'Outcome', 'Tracks the citywide violent crime rate normalized per 1,000 residents.', 'Citistat - BPD', 'Capt. Diane Foster', 'Crime Analysis Unit', 'Monthly', '(Violent Crimes / Population) * 1000', 'Decrease', 38.4, 2025, 'Rate', 'per 1,000 residents', NULL, true, 'By district', 'Citistat', 'Incident reports aggregated monthly.', 'Tracks overall public safety trend.', 'Normalizes crime trend against population change.', NULL, NULL, 'Unchanged', 1, 2, true, true, false, true, '2026-06-14', '2026-06-14'),
-    (9, 'AGC3100', 4, '% of Affordable Housing Units Preserved', true, 'Outcome', 'Tracks the percentage of at-risk affordable units preserved through City intervention.', 'Housing Preservation Database', 'Devon Carter', 'Redevelopment Program Manager', 'Quarterly', '(Units Preserved / Units At Risk) * 100', 'Increase', 91, 2025, 'Percent', NULL, NULL, true, 'By council district', 'Housing Preservation DB', 'Preservation actions logged by case managers.', 'Tracks housing stability outcomes.', 'Preservation is more cost-effective than new construction.', NULL, NULL, 'Unchanged', 4, 13, false, true, false, true, '2026-06-09', '2026-06-09'),
-    (10, 'AGC2500', 4, 'Average Emergency Response Time (Minutes)', true, 'Efficiency', 'Tracks the average response time from dispatch to arrival on scene.', 'CAD Dispatch System', 'Chief Robert Hale', 'Operations Chief', 'Daily', 'AVG(Arrival Time - Dispatch Time)', 'Decrease', 6.2, 2025, 'Decimal', 'minutes', NULL, true, 'By station', 'CAD System', 'Dispatch and arrival timestamps logged automatically.', 'Tracks emergency response performance.', 'Faster response improves survival and outcome rates.', NULL, NULL, 'Unchanged', 1, 3, false, true, false, true, '2025-05-01', '2025-05-12')
+    (1, 'AGC2600', 4, 'Average Age of Fleet', 'Outcome', 'Tracks the average age of vehicles in DGS''s Fleet at the beginning of each fiscal quarter.', 'FasterWeb', 'James Trimarco', 'Analyst', 'Daily', 'SUM(Age of Fleet Vehicles)/COUNT(Fleet Vehicles)', 'Decrease', 6.7, 2025, 'Decimal', 'years', NULL, true, 'By vehicle type', 'FasterWeb', 'Fleet availability viewed on FasterWeb.', 'Tracks fleet asset health.', 'Vehicle age impacts availability and maintenance cost.', NULL, NULL, 'Unchanged', 5, NULL, false, true, false, true, '2026-06-01', '2026-06-01'),
+    (2, 'AGC4346', 4, 'Citywide Violence Reduction', 'Outcome', 'Sustain a 15% reduction in Homicides and Shootings Year Over Year.', 'Citistat - BPD', 'Joseph Muhlhausen', 'Chief of Data Analytics', 'Daily', '(Current Year - Previous Year)/Previous Year * 100', 'Decrease', -13.13, 2025, 'Percent', NULL, NULL, true, 'By district', 'Citistat', 'SQL query against GroupA_Crime table.', 'Tracks citywide violence trend.', 'Core outcome measure for violence prevention strategy.', NULL, NULL, 'Unchanged', 1, 2, true, true, false, true, '2026-06-08', '2026-06-08'),
+    (3, 'AGC2700', 4, '% of Residents Tested for Communicable Disease Within 48 Hours of Exposure', 'Effectiveness', 'Tracks how quickly exposed residents are tested following a known exposure event.', 'Health Dept Case Management System', 'Dr. Anita Roy', 'Epidemiology Program Manager', 'Monthly', '(Tested Within 48 Hrs / Total Exposures) * 100', 'Increase', 62, 2025, 'Percent', NULL, NULL, true, 'By zip code', 'CHESS', 'Case investigators log exposure and test dates.', 'Tracks outbreak response speed.', 'Faster testing limits disease spread.', NULL, NULL, 'New', 3, 8, false, true, false, false, '2026-06-01', '2026-06-01'),
+    (4, 'AGC7000', 4, 'Average Traffic Signal Outage Response Time', 'Efficiency', 'Tracks the average number of days to resolve a reported traffic signal outage.', 'Maximo Work Order System', 'Carlos Reyes', 'Signals Division Manager', 'Monthly', 'AVG(Resolution Date - Report Date)', 'Decrease', 5, 2025, 'Days', NULL, NULL, true, 'By district', 'Maximo', 'Work orders logged and closed in Maximo.', 'Tracks signal maintenance responsiveness.', 'Faster repairs reduce intersection safety risk.', NULL, NULL, 'New', 6, 20, false, true, false, false, '2026-06-12', '2026-06-12'),
+    (5, 'AGC2600', 4, '% of Preventive Maintenance Completed On Time', 'Effectiveness', 'Tracks the percentage of preventive maintenance work orders completed on time.', 'Archibus', 'Happy Iguare', 'Operations Research Analyst', 'Daily', '(PMs Completed On Time / All PMs) * 100', 'Increase', 88, 2025, 'Percent', NULL, NULL, true, 'By building', 'Archibus', 'Maintenance requests viewable in Archibus.', 'Tracks facilities upkeep performance.', 'Reduces emergency repair costs.', NULL, NULL, 'Unchanged', 6, 19, false, false, true, true, '2026-06-01', '2026-06-01'),
+    (6, 'AGC3100', 4, '# of Vacant Properties Redeveloped', 'Output', 'Cumulative number of vacant properties redeveloped through BDC and Housing partnerships.', 'Real Property Database', 'Devon Carter', 'Redevelopment Program Manager', 'Quarterly', 'Cumulative count of redeveloped parcels', 'Increase', 42, 2025, 'Count', NULL, NULL, true, 'By neighborhood', 'Real Property DB', 'Redevelopment closings logged manually.', 'Tracks redevelopment pipeline progress.', 'Each property returned to productive use strengthens neighborhoods.', NULL, NULL, 'Unchanged', 4, 13, false, true, false, true, '2026-06-12', '2026-06-12'),
+    (7, 'AGC4301', 4, 'Citizen Engagement Score for OPI Dashboards', 'Outcome', 'Composite resident engagement score based on dashboard usage and feedback surveys.', 'Google Analytics / MS Forms', 'Maria Chen', 'OPI Reviewer', 'Quarterly', 'Composite Score', 'Increase', 7.8, 2025, 'Score', 'out of 10', NULL, true, NULL, 'Google Analytics', 'Dashboard usage and survey data combined.', 'Tracks public engagement with performance data.', 'Higher engagement reflects greater transparency impact.', NULL, NULL, 'New', 5, 14, true, true, false, false, '2026-06-01', '2026-06-01'),
+    (8, 'AGC5900', 4, 'Violent Crime Rate per 1,000 Residents', 'Outcome', 'Tracks the citywide violent crime rate normalized per 1,000 residents.', 'Citistat - BPD', 'Capt. Diane Foster', 'Crime Analysis Unit', 'Monthly', '(Violent Crimes / Population) * 1000', 'Decrease', 38.4, 2025, 'Rate', 'per 1,000 residents', NULL, true, 'By district', 'Citistat', 'Incident reports aggregated monthly.', 'Tracks overall public safety trend.', 'Normalizes crime trend against population change.', NULL, NULL, 'Unchanged', 1, 2, true, true, false, true, '2026-06-14', '2026-06-14'),
+    (9, 'AGC3100', 4, '% of Affordable Housing Units Preserved', 'Outcome', 'Tracks the percentage of at-risk affordable units preserved through City intervention.', 'Housing Preservation Database', 'Devon Carter', 'Redevelopment Program Manager', 'Quarterly', '(Units Preserved / Units At Risk) * 100', 'Increase', 91, 2025, 'Percent', NULL, NULL, true, 'By council district', 'Housing Preservation DB', 'Preservation actions logged by case managers.', 'Tracks housing stability outcomes.', 'Preservation is more cost-effective than new construction.', NULL, NULL, 'Unchanged', 4, 13, false, true, false, true, '2026-06-09', '2026-06-09'),
+    (10, 'AGC2500', 4, 'Average Emergency Response Time (Minutes)', 'Efficiency', 'Tracks the average response time from dispatch to arrival on scene.', 'CAD Dispatch System', 'Chief Robert Hale', 'Operations Chief', 'Daily', 'AVG(Arrival Time - Dispatch Time)', 'Decrease', 6.2, 2025, 'Decimal', 'minutes', NULL, true, 'By station', 'CAD System', 'Dispatch and arrival timestamps logged automatically.', 'Tracks emergency response performance.', 'Faster response improves survival and outcome rates.', NULL, NULL, 'Unchanged', 1, 3, false, true, false, true, '2025-05-01', '2025-05-12')
 ON CONFLICT ("measure_id") DO UPDATE SET
-    "agency_id" = EXCLUDED."agency_id", "initial_cycle" = EXCLUDED."initial_cycle", "title" = EXCLUDED."title", "is_kpi" = EXCLUDED."is_kpi", "measure_type" = EXCLUDED."measure_type", "description" = EXCLUDED."description", "data_source" = EXCLUDED."data_source", "data_owner" = EXCLUDED."data_owner", "data_owner_role" = EXCLUDED."data_owner_role", "update_frequency" = EXCLUDED."update_frequency", "formula" = EXCLUDED."formula", "desired_direction" = EXCLUDED."desired_direction", "baseline_value" = EXCLUDED."baseline_value", "baseline_fy" = EXCLUDED."baseline_fy", "format_type" = EXCLUDED."format_type", "display_unit" = EXCLUDED."display_unit", "context_required" = EXCLUDED."context_required", "replicability" = EXCLUDED."replicability", "disaggregation" = EXCLUDED."disaggregation", "data_location" = EXCLUDED."data_location", "collection_method" = EXCLUDED."collection_method", "how_data_used" = EXCLUDED."how_data_used", "why_meaningful" = EXCLUDED."why_meaningful", "proxy_measure" = EXCLUDED."proxy_measure", "improvement_notes" = EXCLUDED."improvement_notes", "change_mapping" = EXCLUDED."change_mapping", "pillar_id" = EXCLUDED."pillar_id", "pillar_goal_id" = EXCLUDED."pillar_goal_id", "is_city" = EXCLUDED."is_city", "is_agency" = EXCLUDED."is_agency", "is_service" = EXCLUDED."is_service", "validated" = EXCLUDED."validated", "created_date" = EXCLUDED."created_date", "last_updated" = EXCLUDED."last_updated";
+    "agency_id" = EXCLUDED."agency_id", "initial_cycle" = EXCLUDED."initial_cycle", "title" = EXCLUDED."title", "measure_type" = EXCLUDED."measure_type", "description" = EXCLUDED."description", "data_source" = EXCLUDED."data_source", "data_owner" = EXCLUDED."data_owner", "data_owner_role" = EXCLUDED."data_owner_role", "update_frequency" = EXCLUDED."update_frequency", "formula" = EXCLUDED."formula", "desired_direction" = EXCLUDED."desired_direction", "baseline_value" = EXCLUDED."baseline_value", "baseline_fy" = EXCLUDED."baseline_fy", "format_type" = EXCLUDED."format_type", "display_unit" = EXCLUDED."display_unit", "context_required" = EXCLUDED."context_required", "replicability" = EXCLUDED."replicability", "disaggregation" = EXCLUDED."disaggregation", "data_location" = EXCLUDED."data_location", "collection_method" = EXCLUDED."collection_method", "how_data_used" = EXCLUDED."how_data_used", "why_meaningful" = EXCLUDED."why_meaningful", "proxy_measure" = EXCLUDED."proxy_measure", "improvement_notes" = EXCLUDED."improvement_notes", "change_mapping" = EXCLUDED."change_mapping", "pillar_id" = EXCLUDED."pillar_id", "pillar_goal_id" = EXCLUDED."pillar_goal_id", "is_city" = EXCLUDED."is_city", "is_agency" = EXCLUDED."is_agency", "is_service" = EXCLUDED."is_service", "validated" = EXCLUDED."validated", "created_date" = EXCLUDED."created_date", "last_updated" = EXCLUDED."last_updated";
 SELECT setval(
     pg_get_serial_sequence('performance.performance_measure', 'measure_id'),
     COALESCE((SELECT MAX("measure_id") FROM performance.performance_measure), 1),
@@ -418,12 +425,20 @@ VALUES
     (2, 2, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, -10.2, NULL, -15, NULL, 6, '2026-06-15', '2026-06-15'),
     (3, 3, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 62, NULL, 75, NULL, 6, '2026-06-15', '2026-06-15'),
     (4, 4, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 5, NULL, 3, NULL, 6, '2026-06-15', '2026-06-15'),
-    (5, 5, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 88, NULL, 90, NULL, 3, '2026-06-15', '2026-06-15'),
+    (5, 5, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 88, NULL, 95, NULL, 3, '2026-06-15', '2026-06-15'),
     (6, 6, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 42, NULL, 60, NULL, 6, '2026-06-15', '2026-06-15'),
     (7, 7, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 7.8, NULL, 8.5, NULL, 6, '2026-06-15', '2026-06-15'),
     (8, 8, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 38.4, NULL, 32, NULL, 6, '2026-06-15', '2026-06-15'),
     (9, 9, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 91, NULL, 95, NULL, 6, '2026-06-15', '2026-06-15'),
-    (10, 10, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 6.2, NULL, 5.5, NULL, 3, '2025-06-15', '2025-06-15')
+    (10, 10, 2026, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 6.2, NULL, 5.5, NULL, 3, '2025-06-15', '2025-06-15'),
+    (11, 1, 2022, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 7.8, NULL, 7.6, NULL, 2, '2022-06-30', '2022-06-30'),
+    (12, 1, 2023, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 7.5, NULL, 7.3, NULL, 2, '2023-06-30', '2023-06-30'),
+    (13, 1, 2024, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 7.3, NULL, 7.0, NULL, 2, '2024-06-30', '2024-06-30'),
+    (14, 1, 2025, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 7.1, NULL, 6.8, NULL, 2, '2025-06-30', '2025-06-30'),
+    (15, 5, 2022, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 72, NULL, 75, NULL, 3, '2022-06-30', '2022-06-30'),
+    (16, 5, 2023, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 77, NULL, 80, NULL, 3, '2023-06-30', '2023-06-30'),
+    (17, 5, 2024, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 81, NULL, 85, NULL, 3, '2024-06-30', '2024-06-30'),
+    (18, 5, 2025, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 85, NULL, 90, NULL, 3, '2025-06-30', '2025-06-30')
 ON CONFLICT ("actual_id") DO UPDATE SET
     "measure_id" = EXCLUDED."measure_id", "fiscal_year" = EXCLUDED."fiscal_year", "q1_value" = EXCLUDED."q1_value", "q1_notes" = EXCLUDED."q1_notes", "q2_value" = EXCLUDED."q2_value", "q2_notes" = EXCLUDED."q2_notes", "q3_value" = EXCLUDED."q3_value", "q3_notes" = EXCLUDED."q3_notes", "q4_value" = EXCLUDED."q4_value", "q4_notes" = EXCLUDED."q4_notes", "annual_actual" = EXCLUDED."annual_actual", "annual_actual_notes" = EXCLUDED."annual_actual_notes", "target_value" = EXCLUDED."target_value", "target_value_notes" = EXCLUDED."target_value_notes", "reported_by" = EXCLUDED."reported_by", "created_at" = EXCLUDED."created_at", "updated_at" = EXCLUDED."updated_at";
 SELECT setval(
@@ -444,7 +459,9 @@ VALUES
     (7, 7, 7),
     (8, 8, 8),
     (9, 9, 9),
-    (10, 10, 10)
+    (10, 10, 10),
+    (11, 5, 11),
+    (12, 1, 12)
 ON CONFLICT ("link_id") DO UPDATE SET
     "measure_id" = EXCLUDED."measure_id", "agency_goal_id" = EXCLUDED."agency_goal_id";
 SELECT setval(
@@ -820,7 +837,7 @@ VALUES
     (7, 7, 'Services', 'Add baseline values for two metrics missing them.', true, '2026-06-24'),
     (8, 9, 'Goals', 'Strong alignment to Pillar 4 goals.', false, NULL),
     (9, 9, 'DataReporting', 'Clarify data collection method for the housing preservation metric.', true, '2026-06-21'),
-    (10, 10, 'OverviewVision', 'Mission statement updated appropriately post-amendment.', false, NULL)
+    (10, 10, 'OverviewVision', 'Overview statement updated appropriately post-amendment.', false, NULL)
 ON CONFLICT ("feedback_id") DO UPDATE SET
     "review_id" = EXCLUDED."review_id", "section_code" = EXCLUDED."section_code", "feedback_text" = EXCLUDED."feedback_text", "return_required" = EXCLUDED."return_required", "resolved_at" = EXCLUDED."resolved_at";
 SELECT setval(
@@ -952,5 +969,8 @@ SELECT setval(
     COALESCE((SELECT MAX("notification_id") FROM output.notification), 1),
     (SELECT COUNT(*) > 0 FROM output.notification)
 );
+
+\ir city_reference_seed.sql
+\ir action_plan_seed.sql
 
 COMMIT;

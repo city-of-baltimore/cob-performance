@@ -21,7 +21,6 @@ BOOLEAN_COLUMNS = {
     "has_own_plan",
     "is_agency",
     "is_city",
-    "is_kpi",
     "is_primary",
     "is_quasi",
     "is_service",
@@ -51,7 +50,7 @@ TARGET_TABLES: list[dict[str, Any]] = [
     {"sheet": "PLAN_CYCLE", "table": "planning.plan_cycle", "pk": "cycle_id"},
     {"sheet": "AGENCY_PLAN", "table": "planning.agency_plan", "pk": "plan_id"},
     {"sheet": "PLAN_HEADER", "table": "performance.plan_header", "pk": "header_id"},
-    {"sheet": "MISSION_VISION", "table": "performance.mission_vision", "pk": "mv_id"},
+    {"sheet": "MISSION_VISION", "table": "performance.overview_vision", "pk": "mv_id"},
     {"sheet": "PLAN_PILLAR_ALIGNMENT", "table": "performance.plan_pillar_alignment", "pk": "alignment_id"},
     {"sheet": "AGENCY_GOAL", "table": "performance.agency_goal", "pk": "agency_goal_id"},
     {"sheet": "AGENCY_GOAL_PILLAR_LINK", "table": "performance.agency_goal_pillar_link", "pk": "link_id"},
@@ -91,7 +90,7 @@ TARGET_COLUMNS: dict[str, list[str]] = {
     "reference.pillar": ["pillar_id", "pillar_name", "pillar_lead", "sort_order", "updated_at"],
     "reference.pillar_goal": ["pillar_goal_id", "pillar_id", "goal_code", "goal_title", "goal_lead", "sort_order"],
     "reference.agency": ["agency_id", "agency_name", "public_name", "deputy_mayor_pillar", "is_quasi", "active"],
-    "reference.service": ["service_id", "service_name", "agency_id", "service_type", "service_description", "active"],
+    "reference.service": ["service_id", "service_name", "agency_id", "pillar_id", "service_type", "service_description", "active"],
     "reference.cost_center": ["cost_center_id", "cost_center_name", "service_id", "agency_id", "active"],
     "reference.plan_entity": ["entity_id", "parent_agency_id", "public_name", "entity_type", "has_own_plan", "active"],
     "reference.plan_entity_service": ["pes_id", "entity_id", "service_id", "is_primary"],
@@ -101,13 +100,13 @@ TARGET_COLUMNS: dict[str, list[str]] = {
     "planning.plan_cycle": ["cycle_id", "fiscal_year", "summer_open", "summer_close", "fall_open", "fall_close", "cycle_status", "created_by"],
     "planning.agency_plan": ["plan_id", "agency_id", "entity_id", "cycle_id", "plan_status", "budget_status", "version", "assigned_reviewer", "submitted_at", "approved_at", "created_at", "updated_at"],
     "performance.plan_header": ["header_id", "plan_id", "primary_contact_name", "primary_contact_email", "plan_date", "version_label"],
-    "performance.mission_vision": ["mv_id", "plan_id", "mission", "vision"],
+    "performance.overview_vision": ["mv_id", "plan_id", "overview", "vision", "web_address"],
     "performance.plan_pillar_alignment": ["alignment_id", "plan_id", "pillar_id"],
     "performance.agency_goal": ["agency_goal_id", "plan_id", "title", "description", "sort_order", "created_at"],
     "performance.agency_goal_pillar_link": ["link_id", "agency_goal_id", "pillar_goal_id", "link_type", "alignment_narrative", "created_date"],
     "performance.initiative": ["initiative_id", "title", "description", "start_date", "end_date", "status", "created_date", "last_updated"],
     "performance.agency_goal_initiative_link": ["link_id", "agency_goal_id", "initiative_id", "link_type", "created_date"],
-    "performance.performance_measure": ["measure_id", "agency_id", "initial_cycle", "title", "is_kpi", "measure_type", "description", "data_source", "data_owner", "data_owner_role", "update_frequency", "formula", "desired_direction", "baseline_value", "baseline_fy", "format_type", "display_unit", "context_required", "replicability", "disaggregation", "data_location", "collection_method", "how_data_used", "why_meaningful", "proxy_measure", "improvement_notes", "change_mapping", "pillar_id", "pillar_goal_id", "is_city", "is_agency", "is_service", "validated", "created_date", "last_updated"],
+    "performance.performance_measure": ["measure_id", "agency_id", "initial_cycle", "title", "measure_type", "description", "data_source", "data_owner", "data_owner_role", "update_frequency", "formula", "desired_direction", "baseline_value", "baseline_fy", "format_type", "display_unit", "context_required", "replicability", "disaggregation", "data_location", "collection_method", "how_data_used", "why_meaningful", "proxy_measure", "improvement_notes", "change_mapping", "pillar_id", "pillar_goal_id", "is_city", "is_agency", "is_service", "validated", "created_date", "last_updated"],
     "performance.measure_actuals": ["actual_id", "measure_id", "fiscal_year", "q1_value", "q1_notes", "q2_value", "q2_notes", "q3_value", "q3_notes", "q4_value", "q4_notes", "annual_actual", "annual_actual_notes", "target_value", "target_value_notes", "reported_by", "created_at", "updated_at"],
     "performance.pm_goal_link": ["link_id", "measure_id", "agency_goal_id"],
     "performance.pm_service_link": ["link_id", "measure_id", "service_id"],
@@ -244,6 +243,9 @@ def build_sql(workbook_path: Path) -> str:
         sections.append(insert_sql(table, pk, rows))
         sections.append(reset_sequence_sql(table, pk))
 
+    sections.append("")
+    sections.append(r"\ir city_reference_seed.sql")
+    sections.append(r"\ir action_plan_seed.sql")
     sections.append("")
     sections.append("COMMIT;")
     return "\n".join(sections) + "\n"

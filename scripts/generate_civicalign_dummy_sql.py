@@ -33,7 +33,6 @@ BOOLEAN_COLUMNS = {
     "has_own_plan",
     "is_agency",
     "is_city",
-    "is_kpi",
     "is_primary",
     "is_quasi",
     "is_service",
