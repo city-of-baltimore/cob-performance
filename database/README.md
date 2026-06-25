@@ -10,7 +10,7 @@ It creates these namespaces:
 
 - `reference`: city lookup tables such as agencies, services, pillars, and cost centers
 - `access`: users, roles, and agency/service access
-- `planning`: annual cycles and top-level agency plans
+- `planning`: annual cycles, top-level agency plans, and revisioned shared section drafts
 - `performance`: performance plan content, goals, initiatives, measures, services, risks, and data reporting
 - `budget`: budget proposal detail
 - `review`: OPI review and scoring
@@ -26,9 +26,13 @@ psql "postgresql://postgres:<password>@localhost:5432/cob_performance" -v ON_ERR
 
 App code should reference namespaced tables directly, such as `planning.agency_plan`, or set the DB connection `search_path`.
 
+`planning.plan_section_draft` stores one shared working draft per plan section. The app uses its `revision` column for optimistic locking and keeps browser storage only as recovery for changes that have not reached Postgres.
+
 ## CivicAlign Dummy Data
 
 `dummy/target_dummy_load.sql` is generated from `CivicAlign_DummyData.xlsx` and loads the namespaced target schema created by `schema/target_schema.sql`.
+
+The target loader also includes `dummy/city_reference_seed.sql` for the complete agency/service hierarchy and `dummy/action_plan_seed.sql` for Action Plan narratives, goals, initiatives, and measures.
 
 `dummy/civicalign_dummy_load.sql` is the older public-schema bootstrap seed. Keep it only for compatibility with early prototypes that still query unqualified `public` tables.
 

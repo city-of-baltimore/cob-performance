@@ -62,9 +62,9 @@ SRV0612,Fire Investigation,AGC2500,Performance,1,Enhancing Public Safety,true
 SRV0613,Fire Facilities Maintenance and Replacement,AGC2500,Performance,1,Enhancing Public Safety,true
 SRV0614,Fire Communications and Dispatch,AGC2500,Performance,1,Enhancing Public Safety,true
 SRV0615,Fire Training and Education,AGC2500,Performance,1,Enhancing Public Safety,true
-SRV0617,Criminal Justice Coordination,AGC4346,Performance,1,Enhancing Public Safety,true
-SRV0618,Neighborhood Safety and Engagement,AGC4346,Performance,1,Enhancing Public Safety,true
-SRV0619,Community Empowerment and Opportunity,AGC4346,Performance,1,Enhancing Public Safety,true
+SRV0617,Criminal Justice Coordination,AGC4346,Performance,1,Enhancing Public Safety,false
+SRV0618,Neighborhood Safety and Engagement,AGC4346,Performance,1,Enhancing Public Safety,false
+SRV0619,Community Empowerment and Opportunity,AGC4346,Performance,1,Enhancing Public Safety,false
 SRV0621,Administrative Bureau,AGC5900,Administrative,1,Enhancing Public Safety,true
 SRV0622,Police Patrol,AGC5900,Performance,1,Enhancing Public Safety,true
 SRV0623,Criminal Investigation Division,AGC5900,Performance,1,Enhancing Public Safety,true
@@ -151,7 +151,7 @@ SRV0751,"Building Codes Permitting, Inspections, and Compliance",AGC3100,Perform
 SRV0752,Community Outreach Services,AGC3100,Performance,3,"Clean, Healthy, and Sustainable Communities",true
 SRV0754,Summer Food Service Program,AGC3100,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
 SRV0757,CitiWatch,AGC4303,Performance,1,Enhancing Public Safety,true
-SRV0758,Coordination of Public Safety Strategy - Administration,AGC4346,Administrative,1,Enhancing Public Safety,true
+SRV0758,Coordination of Public Safety Strategy - Administration,AGC4346,Administrative,1,Enhancing Public Safety,false
 SRV0761,Development Oversight and Project Support,AGC5700,Performance,4,Equitable Economic Development,true
 SRV0762,Historic Preservation,AGC5700,Performance,4,Equitable Economic Development,true
 SRV0763,Comprehensive Planning and Resource Management,AGC5700,Performance,6,Modernizing Public Infrastructure,true
