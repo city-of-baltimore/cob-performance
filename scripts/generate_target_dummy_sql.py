@@ -244,8 +244,8 @@ def build_sql(workbook_path: Path) -> str:
         sections.append(reset_sequence_sql(table, pk))
 
     sections.append("")
-    sections.append(r"\ir city_reference_seed.sql")
-    sections.append(r"\ir action_plan_seed.sql")
+    sections.append(r"\ir ../seed/city_reference_seed.sql")
+    sections.append(r"\ir ../seed/action_plan_seed.sql")
     sections.append("")
     sections.append("COMMIT;")
     return "\n".join(sections) + "\n"

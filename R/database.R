@@ -146,7 +146,7 @@ load_app_data <- function(connection) {
       )
     ),
     planning_plan_section_draft = query(
-      "SELECT draft_id, plan_id, section_key, revision, updated_by, updated_at AT TIME ZONE 'America/New_York' AS updated_at FROM planning.plan_section_draft ORDER BY plan_id, section_key"
+      "SELECT draft_id, plan_id, section_key, payload::text AS payload, revision, updated_by, updated_at AT TIME ZONE 'America/New_York' AS updated_at FROM planning.plan_section_draft ORDER BY plan_id, section_key"
     ),
     access_user_agency_access = query(
       paste(
@@ -377,4 +377,232 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
     ),
     params = list(as.integer(plan_id), as.character(section_key), as.character(payload), updated_by)
   )
+}
+
+submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  submitted_by <- if (is.null(submitted_by) || is.na(submitted_by)) NA_integer_ else as.integer(submitted_by)
+  if (is.na(submitted_by)) {
+    users <- DBI::dbGetQuery(connection, "SELECT user_id FROM access.\"user\" ORDER BY user_id LIMIT 1")
+    if (!nrow(users)) stop("No user is available to submit this plan.")
+    submitted_by <- users$user_id[[1]]
+  }
+  changed <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "WITH current_plan AS (",
+      "SELECT plan_id, plan_status FROM planning.agency_plan",
+      "WHERE plan_id = $1 AND plan_status IN ('Draft', 'FeedbackReturned', 'Returned', 'AgencyRevised')",
+      "), updated_plan AS (",
+      "UPDATE planning.agency_plan ap",
+      "SET plan_status = 'Submitted', submitted_at = now(), updated_at = now()",
+      "FROM current_plan cp WHERE ap.plan_id = cp.plan_id",
+      "RETURNING ap.plan_id, cp.plan_status AS from_status",
+      ") SELECT plan_id, from_status FROM updated_plan"
+    ),
+    params = list(plan_id)
+  )
+  if (!nrow(changed)) stop("Only editable draft or returned plans can be submitted.")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+      "VALUES ($1, $2, $3, 'Submitted', 'PerformancePlan', now(), 'Submitted from agency workspace prototype.')"
+    ),
+    params = list(plan_id, submitted_by, changed$from_status[[1]])
+  )
+  invisible(plan_id)
+}
+
+plan_draft_payloads <- function(connection, plan_id) {
+  rows <- DBI::dbGetQuery(
+    connection,
+    "SELECT section_key, payload::text AS payload FROM planning.plan_section_draft WHERE plan_id = $1",
+    params = list(as.integer(plan_id))
+  )
+  payloads <- list()
+  for (i in seq_len(nrow(rows))) {
+    payloads[[rows$section_key[[i]]]] <- jsonlite::fromJSON(rows$payload[[i]], simplifyVector = FALSE)
+  }
+  payloads
+}
+
+draft_field <- function(payload, field_id, fallback = "") {
+  if (is.null(payload) || is.null(payload$values) || is.null(payload$values[[field_id]])) return(fallback)
+  value <- payload$values[[field_id]]
+  if (is.null(value) || length(value) == 0 || is.na(value)) return(fallback)
+  as.character(value)
+}
+
+apply_plan_drafts_to_records <- function(connection, plan_id) {
+  plan_id <- as.integer(plan_id)
+  payloads <- plan_draft_payloads(connection, plan_id)
+
+  overview <- payloads$overview
+  if (!is.null(overview)) {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO performance.overview_vision (plan_id, overview, vision, web_address)",
+        "VALUES ($1, $2, $3, $4)",
+        "ON CONFLICT (plan_id) DO UPDATE SET overview = EXCLUDED.overview, vision = EXCLUDED.vision, web_address = EXCLUDED.web_address"
+      ),
+      params = list(
+        plan_id,
+        draft_field(overview, "agency_summary", "Overview pending."),
+        draft_field(overview, "agency_vision", "Vision pending."),
+        draft_field(overview, "agency_website", NA_character_)
+      )
+    )
+  }
+
+  goals <- payloads$goals
+  if (!is.null(goals) && !is.null(goals$goalIds)) {
+    goal_ids <- as.character(unlist(goals$goalIds))
+    kept_goal_ids <- integer(0)
+    DBI::dbExecute(
+      connection,
+      "UPDATE performance.agency_goal SET sort_order = sort_order + 1000 WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    for (index in seq_along(goal_ids)) {
+      draft_goal_id <- goal_ids[[index]]
+      title <- draft_field(goals, paste0("goal_statement_", draft_goal_id), "Untitled goal")
+      if (grepl("^[0-9]+$", draft_goal_id)) {
+        saved_goal <- DBI::dbGetQuery(
+          connection,
+          paste(
+            "UPDATE performance.agency_goal",
+            "SET title = $3, sort_order = $4",
+            "WHERE agency_goal_id = $1 AND plan_id = $2",
+            "RETURNING agency_goal_id"
+          ),
+          params = list(as.integer(draft_goal_id), plan_id, title, as.integer(index))
+        )
+      } else {
+        saved_goal <- data.frame()
+      }
+      if (!nrow(saved_goal)) {
+        saved_goal <- DBI::dbGetQuery(
+          connection,
+          "INSERT INTO performance.agency_goal (plan_id, title, sort_order) VALUES ($1, $2, $3) RETURNING agency_goal_id",
+          params = list(plan_id, title, as.integer(index))
+        )
+      }
+      goal_id <- saved_goal$agency_goal_id[[1]]
+      kept_goal_ids <- c(kept_goal_ids, goal_id)
+
+      DBI::dbExecute(connection, "DELETE FROM performance.agency_goal_pillar_link WHERE agency_goal_id = $1", params = list(goal_id))
+      alignment_code <- draft_field(goals, paste0("goal_alignment_", draft_goal_id), "")
+      if (nzchar(alignment_code)) {
+        pillar_goal <- DBI::dbGetQuery(connection, "SELECT pillar_goal_id FROM reference.pillar_goal WHERE goal_code = $1 LIMIT 1", params = list(alignment_code))
+        if (nrow(pillar_goal)) {
+          DBI::dbExecute(
+            connection,
+            "INSERT INTO performance.agency_goal_pillar_link (agency_goal_id, pillar_goal_id, link_type) VALUES ($1, $2, 'Primary') ON CONFLICT DO NOTHING",
+            params = list(goal_id, pillar_goal$pillar_goal_id[[1]])
+          )
+        }
+      }
+
+      DBI::dbExecute(connection, "DELETE FROM performance.agency_goal_initiative_link WHERE agency_goal_id = $1", params = list(goal_id))
+      initiative_titles <- if (!is.null(goals$initiatives[[draft_goal_id]])) as.character(unlist(goals$initiatives[[draft_goal_id]])) else character(0)
+      initiative_titles <- initiative_titles[nzchar(trimws(initiative_titles))]
+      for (initiative_title in initiative_titles) {
+        initiative <- DBI::dbGetQuery(
+          connection,
+          "INSERT INTO performance.initiative (title, status) VALUES ($1, 'Planned') RETURNING initiative_id",
+          params = list(initiative_title)
+        )
+        DBI::dbExecute(
+          connection,
+          "INSERT INTO performance.agency_goal_initiative_link (agency_goal_id, initiative_id, link_type) VALUES ($1, $2, 'Primary') ON CONFLICT DO NOTHING",
+          params = list(goal_id, initiative$initiative_id[[1]])
+        )
+      }
+
+      DBI::dbExecute(connection, "DELETE FROM performance.pm_goal_link WHERE agency_goal_id = $1", params = list(goal_id))
+      kpi_ids <- if (!is.null(goals$kpis[[draft_goal_id]])) suppressWarnings(as.integer(unlist(goals$kpis[[draft_goal_id]]))) else integer(0)
+      kpi_ids <- kpi_ids[!is.na(kpi_ids)]
+      for (measure_id in kpi_ids) {
+        DBI::dbExecute(
+          connection,
+          "INSERT INTO performance.pm_goal_link (measure_id, agency_goal_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          params = list(measure_id, goal_id)
+        )
+      }
+    }
+
+    existing_goals <- DBI::dbGetQuery(connection, "SELECT agency_goal_id FROM performance.agency_goal WHERE plan_id = $1", params = list(plan_id))
+    removed_goal_ids <- setdiff(existing_goals$agency_goal_id, kept_goal_ids)
+    for (removed_goal_id in removed_goal_ids) {
+      DBI::dbExecute(connection, "DELETE FROM performance.pm_goal_link WHERE agency_goal_id = $1", params = list(removed_goal_id))
+      DBI::dbExecute(connection, "DELETE FROM performance.agency_goal_pillar_link WHERE agency_goal_id = $1", params = list(removed_goal_id))
+      DBI::dbExecute(connection, "DELETE FROM performance.agency_goal_initiative_link WHERE agency_goal_id = $1", params = list(removed_goal_id))
+      DBI::dbExecute(connection, "DELETE FROM performance.service_goal_link WHERE agency_goal_id = $1", params = list(removed_goal_id))
+      DBI::dbExecute(connection, "DELETE FROM performance.agency_goal WHERE agency_goal_id = $1", params = list(removed_goal_id))
+    }
+  }
+
+  services <- payloads$services
+  if (!is.null(services)) {
+    plan_services <- DBI::dbGetQuery(connection, "SELECT service_id FROM performance.plan_service WHERE plan_id = $1", params = list(plan_id))
+    for (service_id in plan_services$service_id) {
+      service_key <- as.character(service_id)
+      description <- draft_field(services, paste0("service_description_", service_key), NA_character_)
+      if (!is.na(description)) {
+        DBI::dbExecute(connection, "UPDATE reference.service SET service_description = $2 WHERE service_id = $1", params = list(service_key, description))
+      }
+      if (!is.null(services$serviceMetrics[[service_key]])) {
+        DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE service_id = $1", params = list(service_key))
+        metric_ids <- suppressWarnings(as.integer(unlist(services$serviceMetrics[[service_key]])))
+        metric_ids <- metric_ids[!is.na(metric_ids)]
+        for (measure_id in metric_ids) {
+          DBI::dbExecute(
+            connection,
+            "INSERT INTO performance.pm_service_link (measure_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            params = list(measure_id, service_key)
+          )
+        }
+      }
+    }
+  }
+
+  invisible(plan_id)
+}
+
+approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  approved_by <- if (is.null(approved_by) || is.na(approved_by)) NA_integer_ else as.integer(approved_by)
+  if (is.na(approved_by)) {
+    users <- DBI::dbGetQuery(connection, "SELECT user_id FROM access.\"user\" ORDER BY user_id LIMIT 1")
+    if (!nrow(users)) stop("No user is available to approve this plan.")
+    approved_by <- users$user_id[[1]]
+  }
+  DBI::dbWithTransaction(connection, {
+    apply_plan_drafts_to_records(connection, plan_id)
+    changed <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "WITH current_plan AS (SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1),",
+        "updated_plan AS (",
+        "UPDATE planning.agency_plan ap SET plan_status = 'Approved', approved_at = now(), updated_at = now()",
+        "FROM current_plan cp WHERE ap.plan_id = cp.plan_id",
+        "RETURNING ap.plan_id, cp.plan_status AS from_status",
+        ") SELECT plan_id, from_status FROM updated_plan"
+      ),
+      params = list(plan_id)
+    )
+    if (!nrow(changed)) stop("Plan not found.")
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, 'Approved', 'PerformancePlan', now(), 'Draft payload promoted to plan records and cleared.')"
+      ),
+      params = list(plan_id, approved_by, changed$from_status[[1]])
+    )
+    DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1", params = list(plan_id))
+  })
+  invisible(plan_id)
 }
