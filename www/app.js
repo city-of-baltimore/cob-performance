@@ -739,6 +739,23 @@
     }, { priority: "event" });
   }
 
+  function triggerPlanDownload(message) {
+    var type = message && message.type === "pptx" ? "pptx" : "pdf";
+    var link = document.getElementById(type === "pptx" ? "download_plan_pptx" : "download_plan_pdf");
+    if (!link) return;
+    var attempts = 0;
+    var clickWhenReady = function () {
+      attempts += 1;
+      var href = link.getAttribute("href") || "";
+      if (href && href !== "#" && href !== window.location.pathname && href.indexOf("session/") !== -1) {
+        link.click();
+        return;
+      }
+      if (attempts < 20) window.setTimeout(clickWhenReady, 100);
+    };
+    clickWhenReady();
+  }
+
   function initializeGoalsPage() {
     var page = document.querySelector(".goals-page");
     if (!page || page.dataset.goalsInitialized === "true") return;
@@ -760,6 +777,14 @@
     var page = document.querySelector(".builder-page-content");
     if (!page || page.dataset.builderInitialized === "true") return;
     page.dataset.builderInitialized = "true";
+    if (page.getAttribute("data-plan-locked") === "true") {
+      page.querySelectorAll("input, textarea, select, button").forEach(function (control) {
+        if (control.closest(".rubric-section")) return;
+        control.disabled = true;
+        control.setAttribute("aria-disabled", "true");
+      });
+      return;
+    }
     requestSharedDraft(page);
   }
 
@@ -893,6 +918,18 @@
     }
   });
 
+  document.addEventListener("click", function (event) {
+    var submitButton = event.target.closest("[data-submit-plan]");
+    if (!submitButton) return;
+    if (!window.confirm("Are you sure you want to submit this plan? Fields will lock while it is in review.")) return;
+    if (window.Shiny && window.Shiny.setInputValue) {
+      window.Shiny.setInputValue("submit_plan_request", {
+        planId: Number(submitButton.getAttribute("data-submit-plan")),
+        nonce: Date.now()
+      }, { priority: "event" });
+    }
+  });
+
   function syncDesktopNavToggles() {
     var collapsed = document.body.classList.contains("desktop-nav-collapsed");
     var expanded = collapsed ? "false" : "true";
@@ -971,11 +1008,13 @@
     window.Shiny.addCustomMessageHandler("set-page", setActivePage);
     window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
     window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
+    window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
   } else {
     document.addEventListener("shiny:connected", function () {
       window.Shiny.addCustomMessageHandler("set-page", setActivePage);
       window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
       window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
+      window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
     });
   }
 })();

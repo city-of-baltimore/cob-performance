@@ -225,7 +225,7 @@ SELECT setval(
 -- AGENCY_PLAN -> planning.agency_plan
 INSERT INTO planning.agency_plan ("plan_id", "agency_id", "entity_id", "cycle_id", "plan_status", "budget_status", "version", "assigned_reviewer", "submitted_at", "approved_at", "created_at", "updated_at")
 VALUES
-    (1, 'AGC2600', NULL, 4, 'UnderReview', 'Draft', 2, 6, '2026-06-05', NULL, '2026-06-01', '2026-06-16'),
+    (1, 'AGC2600', NULL, 4, 'Draft', 'Draft', 2, 6, NULL, NULL, '2026-06-01', '2026-06-16'),
     (2, 'AGC4346', NULL, 4, 'Approved', 'Submitted', 3, 6, '2026-06-08', '2026-06-22', '2026-06-01', '2026-06-22'),
     (3, 'AGC2700', NULL, 4, 'Draft', 'Locked', 1, NULL, NULL, NULL, '2026-06-01', '2026-06-01'),
     (4, 'AGC7000', NULL, 4, 'Returned', 'Locked', 2, 6, '2026-06-12', '2026-06-12', '2026-06-01', '2026-06-25'),
@@ -970,7 +970,7 @@ SELECT setval(
     (SELECT COUNT(*) > 0 FROM output.notification)
 );
 
-\ir city_reference_seed.sql
-\ir action_plan_seed.sql
+\ir ../seed/city_reference_seed.sql
+\ir ../seed/action_plan_seed.sql
 
 COMMIT;
