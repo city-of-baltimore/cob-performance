@@ -7,7 +7,8 @@
 
 BEGIN;
 
-\ir city_reference_seed.sql
 \ir action_plan_seed.sql
+\ir city_reference_seed.sql
+\ir service_description_seed.sql
 
 COMMIT;

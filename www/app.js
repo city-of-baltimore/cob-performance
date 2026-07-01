@@ -28,6 +28,23 @@
     }
   }
 
+  function setNavigationScope(message) {
+    var hideServices = Boolean(message && message.hideServices);
+    var showPerformanceReviewing = Boolean(message && message.showPerformanceReviewing);
+    document.body.classList.toggle("hide-services-page", hideServices);
+    document.body.classList.toggle("hide-performance-reviewing", !showPerformanceReviewing);
+    if (hideServices) {
+      document.querySelectorAll('[data-page="services"].active').forEach(function () {
+        setActivePage("metrics");
+      });
+    }
+    if (!showPerformanceReviewing) {
+      document.querySelectorAll('[data-page="reviewer_dashboard"].active, [data-page="measure_review"].active').forEach(function () {
+        setActivePage("landing");
+      });
+    }
+  }
+
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-page]");
     if (!button) return;
@@ -35,10 +52,37 @@
   });
 
   document.addEventListener("click", function (event) {
+    if (event.target.closest("[data-measure-review-action]")) return;
     var row = event.target.closest("[data-measure-id]");
     var addButton = event.target.closest("[data-new-measure]");
     if ((!row && !addButton) || !window.Shiny) return;
     window.Shiny.setInputValue("open_measure_id", addButton ? "new" : row.getAttribute("data-measure-id"), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-measure-review-action]");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    window.Shiny.setInputValue("measure_review_decision", {
+      measureId: Number(button.getAttribute("data-measure-id")),
+      action: button.getAttribute("data-measure-review-action"),
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("[data-guidance-download]") || !window.Shiny) return;
+    window.Shiny.setInputValue("guidance_download_started", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-team-access-id]");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    window.Shiny.setInputValue("open_team_access_id", {
+      accessId: Number(button.getAttribute("data-team-access-id")),
+      nonce: Date.now()
+    }, { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {
@@ -87,6 +131,12 @@
     if (!event.target.closest("#save_risk") || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("risk_save_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#save_team_role") || !window.Shiny) return;
+    event.preventDefault();
+    window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {
@@ -396,7 +446,10 @@
         var container = page.querySelector(".service-metric-selectors[data-service-id='" + serviceId + "']");
         if (!container) return;
         var picker = container.closest(".kpi-picker");
-        var savedMetrics = draft.serviceMetrics[serviceId];
+        var savedMetrics = (draft.serviceMetrics[serviceId] || []).filter(function (value) {
+          return value !== "";
+        });
+        if (savedMetrics.length === 0) return;
         while (container.querySelectorAll(".kpi-select-row").length > 1) {
           container.querySelector(".kpi-select-row:last-child").remove();
         }
@@ -454,8 +507,10 @@
   function updateGoalControls(page) {
     var editors = Array.from(page.querySelectorAll(".goal-editor"));
     var goalCount = editors.length;
+    var maximumGoals = parseInt(page.getAttribute("data-max-goals") || "5", 10);
+    if (!Number.isFinite(maximumGoals) || maximumGoals < 1) maximumGoals = 5;
     var addButton = page.querySelector("#add_goal");
-    if (addButton) addButton.disabled = goalCount >= 5;
+    if (addButton) addButton.disabled = goalCount >= maximumGoals;
     editors.forEach(function (editor, index) {
       var number = editor.querySelector("summary .goal-number");
       var removeButton = editor.querySelector(".remove-goal-button");
@@ -469,7 +524,8 @@
 
   function updateGoalRequirements(page) {
     var editors = Array.from(page.querySelectorAll(".goal-editor"));
-    var goalCount = editors.length;
+    var minimumGoals = parseInt(page.getAttribute("data-min-goals") || "3", 10);
+    if (!Number.isFinite(minimumGoals) || minimumGoals < 1) minimumGoals = 3;
     var draftedCount = editors.filter(function (editor) {
       var statement = editor.querySelector("textarea[id^='goal_statement_']");
       var hasStatement = statement && statement.value.trim() !== "";
@@ -487,16 +543,11 @@
     }).length;
     var goalCountLabel = page.querySelector(".draft-goal-count");
     var alignedCountLabel = page.querySelector(".draft-aligned-count");
-    var remainingLabel = page.querySelector(".remaining-goal-count");
     var minimumChip = page.querySelector(".goals-drafted-stat .status-chip");
     var alignmentChip = page.querySelector(".pillar-alignment-stat .status-chip");
     if (goalCountLabel) goalCountLabel.textContent = draftedCount;
     if (alignedCountLabel) alignedCountLabel.textContent = alignedCount;
-    if (remainingLabel) {
-      var remaining = 5 - goalCount;
-      remainingLabel.textContent = remaining > 0 ? "You can add " + remaining + " more " + (remaining === 1 ? "goal." : "goals.") : "The five-goal maximum has been reached.";
-    }
-    setRequirementChip(minimumChip, draftedCount >= 3 ? "Minimum met" : (3 - draftedCount) + " more required", draftedCount >= 3 ? "success" : "error");
+    setRequirementChip(minimumChip, draftedCount >= minimumGoals ? "Minimum met" : (minimumGoals - draftedCount) + " more required", draftedCount >= minimumGoals ? "success" : "error");
     setRequirementChip(alignmentChip, alignedCount >= 1 ? "Minimum met" : "One required", alignedCount >= 1 ? "success" : "error");
     updateGoalControls(page);
   }
@@ -620,13 +671,6 @@
     if (page.dataset.draftRestored === "true") return;
     page.dataset.draftRestored = "true";
     var draft = suppliedDraft;
-    if (!draft) {
-      try {
-        draft = JSON.parse(window.localStorage.getItem(goalsDraftKey(page)));
-      } catch (error) {
-        draft = null;
-      }
-    }
     if (!draft || !draft.values) return;
     page.dataset.restoringDraft = "true";
     restoreGoalEditors(page, draft.goalIds);
@@ -1009,12 +1053,14 @@
     window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
     window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
     window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
+    window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
   } else {
     document.addEventListener("shiny:connected", function () {
       window.Shiny.addCustomMessageHandler("set-page", setActivePage);
       window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
       window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
       window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
+      window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
     });
   }
 })();

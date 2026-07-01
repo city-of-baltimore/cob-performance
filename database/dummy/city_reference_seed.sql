@@ -31,7 +31,7 @@ VALUES
     ('AGC4313', 'M-R Self-Insurance Fund', NULL, 'City Administrator — Faith Leach (Finance)', false, true),
     ('AGC4314', 'M-R Conditional Purchase Agreements', NULL, 'City Administrator — Faith Leach (Finance)', false, true),
     ('AGC4315', 'M-R TIF Debt Service', NULL, 'City Administrator — Faith Leach (Finance)', false, true),
-    ('AGC4316', 'M-R Health and Welfare Grants', 'Health & Welfare Grants (Family Leage & Legal Aid )', 'Dr. Letitia Dzirasa — Deputy Mayor, Health & Human Services', true, true),
+    ('AGC4316', 'M-R Health and Welfare Grants', 'Health & Welfare Grants (Family League & Legal Aid )', 'Dr. Letitia Dzirasa — Deputy Mayor, Health & Human Services', true, true),
     ('AGC4317', 'M-R Consumer Protection and Business Licensing', 'Department of Consumer Protection and Business Licensing', 'Shamiah Kerney — Deputy City Administrator', false, true),
     ('AGC4321', 'M-R Educational Grants', 'Educational Grants (Family League and others)', 'Dr. Letitia Dzirasa — Deputy Mayor, Health & Human Services', true, true),
     ('AGC4326', 'M-R Civic Promotion', 'Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market)', 'Chief of Staff — John David Merrill', true, true),
@@ -387,9 +387,9 @@ FROM (VALUES
     ('AGC4316', 'Legal Aid', 'SRV0385', false),
     ('AGC4321', 'Family League', 'SRV0385', false),
     ('AGC4321', 'Family League', 'SRV0446', false),
-    ('AGC3100', 'Baltimore Development Corporation', 'SRV0749', false),
-    ('AGC3100', 'Baltimore Development Corporation', 'SRV0750', false),
+    ('AGC3100', 'Baltimore Development Corporation', 'SRV0809', true),
     ('AGC3100', 'Baltimore Development Corporation', 'SRV0810', false),
+    ('AGC3100', 'Baltimore Development Corporation', 'SRV0813', false),
     ('AGC7000', 'Parking Authority', 'SRV0682', false)
 ) AS seed(parent_agency_id, public_name, service_id, is_primary)
 JOIN reference.plan_entity pe ON pe.parent_agency_id = seed.parent_agency_id AND pe.public_name = seed.public_name

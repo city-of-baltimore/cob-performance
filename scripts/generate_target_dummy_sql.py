@@ -113,7 +113,7 @@ TARGET_COLUMNS: dict[str, list[str]] = {
     "performance.pm_service_reassignment": ["reassignment_id", "measure_id", "old_service_id", "new_service_id", "cycle_id", "reason", "changed_date", "changed_by"],
     "performance.plan_service": ["plan_service_id", "plan_id", "service_id", "sort_order"],
     "performance.service_goal_link": ["sgl_id", "plan_service_id", "agency_goal_id", "initiative_id"],
-    "performance.service_risk": ["risk_id", "plan_id", "description"],
+    "performance.service_risk": ["risk_id", "plan_id", "risk_type", "description"],
     "budget.service_fund_amount": ["sfa_id", "plan_service_id", "fund_id", "fy_adopted", "cls_amount", "request_amount", "positions_adopted", "positions_cls", "positions_request", "fy25_actuals", "fy26_actuals"],
     "budget.general_fund_change": ["change_id", "plan_service_id", "object_type", "description", "dollar_change", "position_change", "service_impact", "sort_order"],
     "budget.key_spend_category": ["ksc_id", "plan_service_id", "category", "amount", "description"],

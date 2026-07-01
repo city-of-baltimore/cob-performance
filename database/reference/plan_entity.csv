@@ -23,3 +23,9 @@ entity_id,parent_agency_id,public_name,entity_type,has_own_plan,active
 22,AGC4321,Family League,QuasiAgency,true,true
 23,AGC3100,Baltimore Development Corporation,QuasiAgency,true,true
 24,AGC7000,Parking Authority,QuasiAgency,true,true
+25,AGC4326,Baltimore Civic Fund,QuasiAgency,true,true
+26,AGC4326,Pride of Baltimore,QuasiAgency,true,true
+27,AGC4321,Maryland School of the Blind,QuasiAgency,true,true
+28,AGC4301,Mayor's Office of Government Relations,MayoraltyOffice,true,true
+29,AGC3100,Waterfront Partnership,QuasiAgency,true,true
+30,AGC4321,Baltimore Children's and Youth Fund,QuasiAgency,true,true

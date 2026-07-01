@@ -38,7 +38,7 @@ load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
     reference_agency = query(
-      "SELECT agency_id, agency_name, deputy_mayor_pillar FROM reference.agency WHERE active ORDER BY agency_name"
+      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
     ),
     reference_pillar = query(
       "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"
@@ -52,10 +52,10 @@ load_app_data <- function(connection) {
     ),
     planning_agency_plan = query(
       paste(
-        "SELECT ap.plan_id, ap.agency_id, ap.cycle_id, pc.fiscal_year, ap.plan_status, ap.budget_status, ap.version,",
+        "SELECT ap.plan_id, ap.agency_id, ap.entity_id, ap.cycle_id, pc.fiscal_year, ap.plan_status, ap.budget_status, ap.version,",
         "ap.submitted_at, ap.updated_at",
         "FROM planning.agency_plan ap JOIN planning.plan_cycle pc ON pc.cycle_id = ap.cycle_id",
-        "WHERE ap.agency_id IS NOT NULL ORDER BY pc.fiscal_year DESC"
+        "ORDER BY pc.fiscal_year DESC, ap.plan_id"
       )
     ),
     performance_plan_header = query(
@@ -66,7 +66,7 @@ load_app_data <- function(connection) {
     ),
     reference_service = query(
       paste(
-        "SELECT service_id, agency_id, pillar_id, service_name, service_type, service_description",
+        "SELECT service_id, agency_id, pillar_id, service_name, service_type, service_description, active",
         "FROM reference.service WHERE active ORDER BY agency_id, service_name"
       )
     ),
@@ -102,10 +102,38 @@ load_app_data <- function(connection) {
       "SELECT agency_goal_id, initiative_id FROM performance.agency_goal_initiative_link"
     ),
     performance_pm_goal_link = query(
-      "SELECT agency_goal_id, measure_id FROM performance.pm_goal_link"
+      paste(
+        "SELECT l.agency_goal_id, l.measure_id",
+        "FROM performance.pm_goal_link l",
+        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
+        "WHERE pc.fiscal_year = 2027",
+        "AND m.active",
+        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
+        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')"
+      )
     ),
     performance_pm_service_link = query(
+      paste(
+        "SELECT l.service_id, l.measure_id",
+        "FROM performance.pm_service_link l",
+        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
+        "WHERE pc.fiscal_year = 2027",
+        "AND m.active",
+        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
+        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')",
+        "ORDER BY l.service_id, l.measure_id"
+      )
+    ),
+    performance_pm_service_link_all = query(
       "SELECT service_id, measure_id FROM performance.pm_service_link ORDER BY service_id, measure_id"
+    ),
+    performance_measure_entity_link = query(
+      paste(
+        "SELECT link_id, measure_id, agency_id, service_id, entity_type, entity_id, public_name, source_old_measure_id",
+        "FROM performance.measure_entity_link ORDER BY agency_id, service_id, entity_type, public_name, measure_id"
+      )
     ),
     performance_performance_measure = query(
       paste(
@@ -113,15 +141,17 @@ load_app_data <- function(connection) {
         "update_frequency, formula, desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required,",
         "replicability, disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
         "change_mapping, pillar_id, pillar_goal_id, is_city, is_agency, is_service, active, validated, approval_status, submitted_for_approval_at,",
-        "created_date, last_updated",
-        "FROM performance.performance_measure ORDER BY agency_id, title"
+        "created_date, last_updated, pc.fiscal_year",
+        "FROM performance.performance_measure",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = performance_measure.initial_cycle",
+        "ORDER BY agency_id, title"
       )
     ),
     performance_measure_actuals = query(
       "SELECT measure_id, fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals ORDER BY measure_id, fiscal_year"
     ),
     performance_service_risk = query(
-      "SELECT risk_id, plan_id, description FROM performance.service_risk ORDER BY plan_id, risk_id"
+      "SELECT risk_id, plan_id, risk_type, description FROM performance.service_risk ORDER BY plan_id, risk_id"
     ),
     review_plan_review = query(
       paste(
@@ -137,6 +167,15 @@ load_app_data <- function(connection) {
     review_section_feedback = query(
       "SELECT feedback_id, review_id, section_code, feedback_text, return_required, resolved_at FROM review.section_feedback ORDER BY review_id, section_code, feedback_id"
     ),
+    review_measure_review = query(
+      paste(
+        "SELECT mr.measure_review_id, mr.measure_id, mr.reviewer_id, u.full_name AS reviewer_name,",
+        "mr.decision, mr.feedback, mr.reviewed_at, mr.created_at",
+        "FROM review.measure_review mr",
+        "LEFT JOIN access.\"user\" u ON u.user_id = mr.reviewer_id",
+        "ORDER BY mr.reviewed_at DESC, mr.measure_review_id DESC"
+      )
+    ),
     workflow_plan_status_history = query(
       paste(
         "SELECT psh.history_id, psh.plan_id, psh.changed_by, u.full_name AS changed_by_name,",
@@ -150,14 +189,16 @@ load_app_data <- function(connection) {
     ),
     access_user_agency_access = query(
       paste(
-        "SELECT u.user_id, uaa.agency_id, u.full_name, u.email, uaa.agency_role",
+        "SELECT uaa.access_id, u.user_id, uaa.agency_id, uaa.service_id, u.full_name, u.email,",
+        "uaa.agency_role, uaa.access_level, uaa.budget_access, uaa.performance_plan_access",
         "FROM access.user_agency_access uaa JOIN access.\"user\" u ON u.user_id = uaa.user_id",
         "WHERE u.active ORDER BY uaa.agency_id, u.full_name"
       )
     ),
     access_user_role = query(
       paste(
-        "SELECT ur.user_role_id, ur.user_id, ur.app_role, ur.agency_id, ur.pillar_id, u.full_name, u.email",
+        "SELECT ur.user_role_id, ur.user_id, ur.app_role, ur.agency_id, ur.pillar_id,",
+        "ur.budget_access, ur.adaptive_planning, ur.performance_plan_access, u.full_name, u.email",
         "FROM access.user_role ur JOIN access.\"user\" u ON u.user_id = ur.user_id",
         "WHERE u.active ORDER BY ur.agency_id, ur.app_role, u.full_name"
       )
@@ -211,14 +252,14 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
   DBI::dbWithTransaction(connection, {
     status <- if (submit) {
       "PendingApproval"
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval")) {
+    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
       "Draft"
     } else {
       values$approval_status
     }
     submitted_at <- if (submit) {
       Sys.time()
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval")) {
+    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
       as.POSIXct(NA)
     } else {
       values$submitted_for_approval_at
@@ -278,6 +319,41 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
   })
 }
 
+review_measure_record <- function(connection, measure_id, decision, feedback = "", reviewer_id = NULL) {
+  decision <- as.character(decision)
+  if (!decision %in% c("approve", "return")) stop("Unknown measure review decision")
+  measure_id <- as.integer(measure_id)
+  if (is.null(feedback) || length(feedback) == 0 || is.na(feedback)) feedback <- ""
+  feedback <- trimws(as.character(feedback))
+  reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)
+  review_decision <- if (identical(decision, "approve")) "Approved" else "Returned"
+  approval_status <- if (identical(decision, "approve")) "Validated" else "Returned"
+  if (identical(decision, "return") && !nzchar(feedback)) {
+    stop("Reviewer feedback is required when returning a measure.")
+  }
+  DBI::dbWithTransaction(connection, {
+    changed <- DBI::dbExecute(
+      connection,
+      paste(
+        "UPDATE performance.performance_measure",
+        "SET approval_status=$2::varchar(30), validated=$3, submitted_for_approval_at=NULL, last_updated=now()",
+        "WHERE measure_id=$1"
+      ),
+      params = list(measure_id, approval_status, identical(decision, "approve"))
+    )
+    if (changed != 1) stop("Measure not found")
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO review.measure_review (measure_id, reviewer_id, decision, feedback, modified_by)",
+        "VALUES ($1, $2, $3, $4, $2)"
+      ),
+      params = list(measure_id, reviewer_id, review_decision, feedback)
+    )
+  })
+  invisible(TRUE)
+}
+
 set_measure_active <- function(connection, measure_id, agency_id, active) {
   status_sql <- if (isTRUE(active)) {
     ", approval_status = CASE WHEN approval_status = 'Validated' THEN 'PendingApproval' ELSE approval_status END, validated = false, submitted_for_approval_at = CASE WHEN approval_status = 'Validated' THEN now() ELSE submitted_for_approval_at END"
@@ -292,22 +368,80 @@ set_measure_active <- function(connection, measure_id, agency_id, active) {
   if (changed != 1) stop("Measure not found for this agency")
 }
 
-save_service_risk <- function(connection, risk_id, plan_id, description) {
+save_team_role_assignment <- function(connection, access_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access) {
+  agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  access_id <- as.integer(access_id)
+  full_name <- trimws(as.character(full_name %||% ""))
+  email <- trimws(as.character(email %||% ""))
+  agency_role <- trimws(as.character(agency_role %||% ""))
+  performance_role <- trimws(as.character(performance_role %||% ""))
+  if (!nzchar(full_name)) stop("Person name is required.")
+  if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) stop("A valid email is required.")
+  if (!agency_role %in% agency_role_values) stop("Choose a valid agency role.")
+  if (!performance_role %in% performance_role_values) stop("Choose a valid performance role.")
+
+  DBI::dbWithTransaction(connection, {
+    access <- DBI::dbGetQuery(connection, "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE access_id = $1", params = list(access_id))
+    if (!nrow(access)) stop("Team access row not found.")
+    user_id <- access$user_id[[1]]
+    agency_id <- access$agency_id[[1]]
+    DBI::dbExecute(
+      connection,
+      'UPDATE access."user" SET full_name = $2, email = $3, updated_at = now() WHERE user_id = $1',
+      params = list(user_id, full_name, email)
+    )
+    DBI::dbExecute(
+      connection,
+      "UPDATE access.user_agency_access SET agency_role = $2::varchar(30), access_level = CASE WHEN $2::text = 'Agency Staff' THEN 'ReadOnly' WHEN $2::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END WHERE access_id = $1",
+      params = list(access_id, agency_role)
+    )
+    existing_role <- DBI::dbGetQuery(
+      connection,
+      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) ORDER BY user_role_id LIMIT 1",
+      params = list(user_id, agency_id)
+    )
+    if (nrow(existing_role)) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE access.user_role SET app_role = $2::varchar(30), role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+    } else {
+      DBI::dbExecute(
+        connection,
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, role, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $2::varchar(30), $4, $5, $6)",
+        params = list(user_id, performance_role, agency_id, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+    }
+  })
+  invisible(TRUE)
+}
+
+risk_type_values <- c(
+  "procurement", "federal funding", "state funding", "city funding",
+  "technology", "environmental", "staffing", "legislation", "cross-agency inputs", "other"
+)
+
+save_service_risk <- function(connection, risk_id, plan_id, risk_type, description) {
+  if (is.null(risk_type) || length(risk_type) == 0 || is.na(risk_type)) risk_type <- ""
+  risk_type <- trimws(tolower(as.character(risk_type)))
+  if (!nzchar(risk_type) || !risk_type %in% risk_type_values) stop("Risk type is required")
   if (is.null(description) || length(description) == 0 || is.na(description)) description <- ""
   description <- trimws(as.character(description))
   if (!nzchar(description)) stop("Risk description is required")
   if (is.null(risk_id) || is.na(risk_id)) {
     row <- DBI::dbGetQuery(
       connection,
-      "INSERT INTO performance.service_risk (plan_id, description) VALUES ($1, $2) RETURNING risk_id",
-      params = list(as.integer(plan_id), description)
+      "INSERT INTO performance.service_risk (plan_id, risk_type, description) VALUES ($1, $2, $3) RETURNING risk_id",
+      params = list(as.integer(plan_id), risk_type, description)
     )
     return(row$risk_id[[1]])
   }
   changed <- DBI::dbExecute(
     connection,
-    "UPDATE performance.service_risk SET description=$3 WHERE risk_id=$1 AND plan_id=$2",
-    params = list(as.integer(risk_id), as.integer(plan_id), description)
+    "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
+    params = list(as.integer(risk_id), as.integer(plan_id), risk_type, description)
   )
   if (changed != 1) stop("Risk not found for this plan")
   as.integer(risk_id)
@@ -407,7 +541,7 @@ submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {
     connection,
     paste(
       "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
-      "VALUES ($1, $2, $3, 'Submitted', 'PerformancePlan', now(), 'Submitted from agency workspace prototype.')"
+      "VALUES ($1, $2, $3, 'Submitted', 'PerformancePlan', now(), 'Submitted from agency workspace.')"
     ),
     params = list(plan_id, submitted_by, changed$from_status[[1]])
   )

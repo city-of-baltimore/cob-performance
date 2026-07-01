@@ -124,9 +124,9 @@ SELECT setval(
 -- PLAN_ENTITY_SERVICE -> reference.plan_entity_service
 INSERT INTO reference.plan_entity_service ("pes_id", "entity_id", "service_id", "is_primary")
 VALUES
-    (1, 1, 'SRV0749', true),
-    (2, 1, 'SRV0750', false),
-    (3, 1, 'SRV0810', false),
+    (1, 1, 'SRV0809', true),
+    (2, 1, 'SRV0810', false),
+    (3, 1, 'SRV0813', false),
     (4, 2, 'SRV0855', true),
     (5, 3, 'SRV0903', true),
     (6, 4, 'SRV0904', true),
@@ -519,10 +519,11 @@ VALUES
     (4, 2, 'SRV0925', 2),
     (5, 3, 'SRV0300', 1),
     (6, 4, 'SRV0670', 1),
-    (7, 6, 'SRV0749', 1),
-    (8, 6, 'SRV0750', 2),
+    (7, 6, 'SRV0809', 1),
+    (8, 6, 'SRV0810', 2),
     (9, 8, 'SRV0500', 1),
-    (10, 10, 'SRV0610', 1)
+    (10, 10, 'SRV0610', 1),
+    (11, 6, 'SRV0813', 3)
 ON CONFLICT ("plan_service_id") DO UPDATE SET
     "plan_id" = EXCLUDED."plan_id", "service_id" = EXCLUDED."service_id", "sort_order" = EXCLUDED."sort_order";
 SELECT setval(
@@ -553,20 +554,20 @@ SELECT setval(
 );
 
 -- PLAN_RISK -> performance.service_risk
-INSERT INTO performance.service_risk ("risk_id", "plan_id", "description")
+INSERT INTO performance.service_risk ("risk_id", "plan_id", "risk_type", "description")
 VALUES
-    (1, 1, 'Supply chain delays for replacement vehicle parts could extend fleet downtime beyond targets.'),
-    (2, 2, 'GVRS expansion to new districts depends on continued coordination with BPD and the State''s Attorney''s Office.'),
-    (3, 3, 'Federal funding uncertainty for communicable disease programs could affect testing capacity.'),
-    (4, 4, 'Aging traffic signal infrastructure increases risk of cascading outages during peak summer heat.'),
-    (5, 5, 'Vehicle replacement schedule was delayed due to FY26 supply chain disruptions.'),
-    (6, 6, 'Redevelopment timelines are sensitive to private capital market conditions and interest rates.'),
-    (7, 7, 'Dashboard adoption depends on agency data quality and timely reporting across all departments.'),
-    (8, 8, 'Staffing shortages may limit the pace of community policing foot patrol expansion.'),
-    (9, 9, 'Rising construction costs could reduce the number of affordable units financed within budget.'),
-    (10, 10, 'Dispatch system modernization is contingent on a multi-year IT procurement and integration timeline.')
+    (1, 1, 'procurement', 'Supply chain delays for replacement vehicle parts could extend fleet downtime beyond targets.'),
+    (2, 2, 'cross-agency inputs', 'GVRS expansion to new districts depends on continued coordination with BPD and the State''s Attorney''s Office.'),
+    (3, 3, 'federal funding', 'Federal funding uncertainty for communicable disease programs could affect testing capacity.'),
+    (4, 4, 'technology', 'Aging traffic signal infrastructure increases risk of cascading outages during peak summer heat.'),
+    (5, 5, 'procurement', 'Vehicle replacement schedule was delayed due to FY26 supply chain disruptions.'),
+    (6, 6, 'city funding', 'Redevelopment timelines are sensitive to private capital market conditions and interest rates.'),
+    (7, 7, 'cross-agency inputs', 'Dashboard adoption depends on agency data quality and timely reporting across all departments.'),
+    (8, 8, 'staffing', 'Staffing shortages may limit the pace of community policing foot patrol expansion.'),
+    (9, 9, 'city funding', 'Rising construction costs could reduce the number of affordable units financed within budget.'),
+    (10, 10, 'technology', 'Dispatch system modernization is contingent on a multi-year IT procurement and integration timeline.')
 ON CONFLICT ("risk_id") DO UPDATE SET
-    "plan_id" = EXCLUDED."plan_id", "description" = EXCLUDED."description";
+    "plan_id" = EXCLUDED."plan_id", "risk_type" = EXCLUDED."risk_type", "description" = EXCLUDED."description";
 SELECT setval(
     pg_get_serial_sequence('performance.service_risk', 'risk_id'),
     COALESCE((SELECT MAX("risk_id") FROM performance.service_risk), 1),
@@ -970,7 +971,7 @@ SELECT setval(
     (SELECT COUNT(*) > 0 FROM output.notification)
 );
 
-\ir ../seed/city_reference_seed.sql
 \ir ../seed/action_plan_seed.sql
+\ir ../seed/city_reference_seed.sql
 
 COMMIT;
