@@ -5,14 +5,20 @@ import csv
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+import re
 from typing import Any
+import unicodedata
 
 import openpyxl
 
 
 DEFAULT_PERFORMANCE_OUTPUT = Path("database/seed/performance_plan_seed.sql")
 DEFAULT_USER_OUTPUT = Path("database/seed/user_roles_seed.sql")
+DEFAULT_REFERENCE_AGENCY = Path("database/reference/agency.csv")
 DEFAULT_REFERENCE_SERVICE = Path("database/reference/service.csv")
+DEFAULT_REFERENCE_PLAN_ENTITY = Path("database/reference/plan_entity.csv")
+DEFAULT_REFERENCE_PLAN_ENTITY_SERVICE = Path("database/reference/plan_entity_service.csv")
+DEFAULT_PERFORMANCE_DATA = Path("database/reference/Performance_Data.xlsx")
 FY2027_CYCLE_ID = 4
 FY2027_DATE = date(2026, 6, 1)
 
@@ -83,6 +89,13 @@ def normalize_agency_role(value: Any) -> str:
     return role
 
 
+def normalize_agency_id(value: Any) -> Any:
+    agency_id = clean_value(value)
+    if agency_id in {"AGC3101", "AGC3102", "AGC3103"}:
+        return "AGC3100"
+    return agency_id
+
+
 def normalize_direction(value: Any) -> str:
     direction = "" if value is None else str(value).strip()
     if direction.lower() == "increase":
@@ -99,6 +112,48 @@ def normalize_change_mapping(value: Any) -> Any:
         return None
     mapping = str(value).strip()
     return mapping or None
+
+
+def infer_risk_type(value: Any) -> str | None:
+    text = normalize_match_text(value)
+    if not text:
+        return None
+    if "federal" in text:
+        return "federal funding"
+    if "state" in text:
+        return "state funding"
+    if "legislation" in text or "legislative" in text or "law " in text or "beps" in text:
+        return "legislation"
+    if "procurement" in text or "supply chain" in text or "vendor" in text or "contractor" in text:
+        return "procurement"
+    if "technology" in text or "dashboard" in text or "system" in text or "case management" in text or "it " in text:
+        return "technology"
+    if "environment" in text or "climate" in text or "energy" in text:
+        return "environmental"
+    if "staff" in text or "workforce" in text or "capacity" in text:
+        return "staffing"
+    if "cross agency" in text or "coordination" in text or "partner" in text:
+        return "cross-agency inputs"
+    if "funding" in text or "budget" in text or "cost" in text:
+        return "city funding"
+    return "other"
+
+
+def normalize_match_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^a-z0-9%# ]+", "", text)
+    return text.strip()
+
+
+def extract_code(value: Any, prefix: str) -> str | None:
+    if value is None:
+        return None
+    match = re.search(rf"({prefix}\d+)", str(value), flags=re.IGNORECASE)
+    return match.group(1).upper() if match else None
 
 
 def normalize_cycle_id(value: Any) -> int:
@@ -205,7 +260,7 @@ def generate_user_seed(user_workbook: Path, output_path: Path) -> None:
                 row.get("user_role_id"),
                 row.get("user_id"),
                 app_role,
-                row.get("agency_id"),
+                normalize_agency_id(row.get("agency_id")),
                 row.get("granted_at") or datetime.now(),
                 yes_no(row.get("budget_access"), False),
                 yes_no(row.get("adaptive_planning"), False),
@@ -243,7 +298,7 @@ def generate_user_seed(user_workbook: Path, output_path: Path) -> None:
         access_rows.append(
             [
                 email,
-                row.get("agency_id"),
+                normalize_agency_id(row.get("agency_id")),
                 row.get("service_id"),
                 agency_role,
             ]
@@ -273,16 +328,88 @@ def generate_user_seed(user_workbook: Path, output_path: Path) -> None:
     print(f"Wrote {output_path}")
 
 
-def service_agency_lookup(reference_service_csv: Path) -> dict[str, str]:
+def read_reference_agencies(reference_agency_csv: Path) -> list[dict[str, Any]]:
+    with reference_agency_csv.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {
+                **row,
+                "submit_plan": yes_no(row.get("submit_plan")),
+                "active": yes_no(row.get("active")),
+            }
+            for row in reader
+        ]
+
+
+def read_reference_services(reference_service_csv: Path) -> list[dict[str, Any]]:
     with reference_service_csv.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        return {row["service_id"]: row["agency_id"] for row in reader}
+        return [
+            {
+                **row,
+                "active": yes_no(row.get("active"), True),
+            }
+            for row in reader
+        ]
 
 
-def generate_performance_seed(performance_workbook: Path, output_path: Path, reference_service_csv: Path) -> None:
-    service_agency = service_agency_lookup(reference_service_csv)
-    agency_plan = {"AGC2600": 1, "AGC4346": 2}
-    plan_agency = {1: "AGC2600", 2: "AGC4346"}
+def read_reference_plan_entities(reference_plan_entity_csv: Path) -> list[dict[str, Any]]:
+    with reference_plan_entity_csv.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {
+                **row,
+                "entity_id": int(row["entity_id"]),
+                "has_own_plan": yes_no(row.get("has_own_plan")),
+                "active": yes_no(row.get("active")),
+            }
+            for row in reader
+        ]
+
+
+def read_reference_plan_entity_services(reference_plan_entity_service_csv: Path) -> list[dict[str, Any]]:
+    with reference_plan_entity_service_csv.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {
+                **row,
+                "pes_id": int(row["pes_id"]),
+                "entity_id": int(row["entity_id"]),
+                "is_primary": yes_no(row.get("is_primary")),
+            }
+            for row in reader
+        ]
+
+
+def generate_performance_seed(
+    performance_workbook: Path,
+    output_path: Path,
+    reference_agency_csv: Path,
+    reference_service_csv: Path,
+    reference_plan_entity_csv: Path,
+    reference_plan_entity_service_csv: Path,
+    performance_data_workbook: Path,
+) -> None:
+    agencies = [
+        row for row in read_reference_agencies(reference_agency_csv)
+        if row["active"] and row["submit_plan"]
+    ]
+    services = read_reference_services(reference_service_csv)
+    service_agency = {row["service_id"]: row["agency_id"] for row in services}
+    plan_entities = [
+        row for row in read_reference_plan_entities(reference_plan_entity_csv)
+        if row["active"] and row["has_own_plan"]
+    ]
+    plan_entity_services = read_reference_plan_entity_services(reference_plan_entity_service_csv)
+    agency_plan = {
+        row["agency_id"]: index
+        for index, row in enumerate(agencies, start=1)
+    }
+    plan_agency = {plan_id: agency_id for agency_id, plan_id in agency_plan.items()}
+    entity_plan = {
+        row["entity_id"]: index
+        for index, row in enumerate(plan_entities, start=max(agency_plan.values(), default=0) + 1)
+    }
 
     sections = [
         "-- Generated from Group4_PerformancePlan_Tables.xlsx.",
@@ -298,6 +425,10 @@ def generate_performance_seed(performance_workbook: Path, output_path: Path, ref
         [plan_id, agency_id, None, FY2027_CYCLE_ID, "Draft", "Draft", 1, None, None, None, datetime.now(), datetime.now()]
         for plan_id, agency_id in plan_agency.items()
     ]
+    plan_rows.extend(
+        [plan_id, None, entity_id, FY2027_CYCLE_ID, "Draft", "Draft", 1, None, None, None, datetime.now(), datetime.now()]
+        for entity_id, plan_id in entity_plan.items()
+    )
     sections.append("")
     sections.append(insert_values("planning.agency_plan", ["plan_id", "agency_id", "entity_id", "cycle_id", "plan_status", "budget_status", "version", "assigned_reviewer", "submitted_at", "approved_at", "created_at", "updated_at"], plan_rows, "plan_id"))
     sections.append(reset_sequence("planning.agency_plan", "plan_id"))
@@ -318,7 +449,6 @@ def generate_performance_seed(performance_workbook: Path, output_path: Path, ref
         ("AGENCY_GOAL_PILLAR_LINK", "performance.agency_goal_pillar_link", ["link_id", "agency_goal_id", "pillar_goal_id", "link_type", "alignment_narrative"], "link_id"),
         ("INITIATIVE", "performance.initiative", ["initiative_id", "title", "description", "status"], "initiative_id"),
         ("AGENCY_GOAL_INITIATIVE_LINK", "performance.agency_goal_initiative_link", ["link_id", "agency_goal_id", "initiative_id", "link_type"], "link_id"),
-        ("PLAN_RISK", "performance.service_risk", ["risk_id", "plan_id", "description"], "risk_id"),
     ]
     for sheet, table, columns, pk in mappings:
         rows = read_sheet(performance_workbook, sheet)
@@ -326,8 +456,19 @@ def generate_performance_seed(performance_workbook: Path, output_path: Path, ref
         sections.append(insert_values(table, columns, [[row.get(column) for column in columns] for row in rows], pk))
         sections.append(reset_sequence(table, pk))
 
+    risk_rows = read_sheet(performance_workbook, "PLAN_RISK")
+    sections.append("")
+    sections.append(insert_values(
+        "performance.service_risk",
+        ["risk_id", "plan_id", "risk_type", "description"],
+        [[row.get("risk_id"), row.get("plan_id"), row.get("risk_type") or infer_risk_type(row.get("description")), row.get("description")] for row in risk_rows],
+        "risk_id"
+    ))
+    sections.append(reset_sequence("performance.service_risk", "risk_id"))
+
+    measure_source_rows = read_sheet(performance_workbook, "PERFORMANCE_MEASURE")
     measures = []
-    for row in read_sheet(performance_workbook, "PERFORMANCE_MEASURE"):
+    for row in measure_source_rows:
         is_city = row.get("is_city") or False
         is_agency = row.get("is_agency") or False
         is_service = row.get("is_service") or False
@@ -383,36 +524,106 @@ def generate_performance_seed(performance_workbook: Path, output_path: Path, ref
     sections.append(insert_values("performance.measure_actuals", actual_columns, actuals, "actual_id"))
     sections.append(reset_sequence("performance.measure_actuals", "actual_id"))
 
-    pm_service = read_sheet(performance_workbook, "PM_SERVICE_LINK")
-    service_ids = []
-    for row in pm_service:
-        service_id = row.get("service_id")
-        if service_id and service_id not in service_ids:
-            service_ids.append(service_id)
     plan_service_rows = []
     plan_service_lookup = {}
-    local_service_order_by_plan: dict[int, int] = {}
-    for index, service_id in enumerate(service_ids, start=1):
-        agency_id = service_agency.get(service_id)
-        plan_id = agency_plan.get(agency_id)
-        if plan_id is None:
-            continue
-        local_order = local_service_order_by_plan.get(plan_id, 0) + 1
-        local_service_order_by_plan[plan_id] = local_order
-        plan_service_lookup[(plan_id, local_order)] = index
-        plan_service_rows.append([index, plan_id, service_id, local_order])
+    next_plan_service_id = 1
+    for agency_id, plan_id in agency_plan.items():
+        agency_services = [
+            row for row in services
+            if row["agency_id"] == agency_id
+            and row["active"]
+            and row.get("service_type") == "Performance"
+        ]
+        agency_services.sort(key=lambda row: row["service_name"])
+        for local_order, row in enumerate(agency_services, start=1):
+            plan_service_lookup[(plan_id, local_order)] = next_plan_service_id
+            plan_service_rows.append([next_plan_service_id, plan_id, row["service_id"], local_order])
+            next_plan_service_id += 1
+
+    for entity_id, plan_id in entity_plan.items():
+        entity_service_rows = [
+            row for row in plan_entity_services
+            if row["entity_id"] == entity_id
+        ]
+        entity_service_rows.sort(key=lambda row: (not row["is_primary"], row["service_name"], row["service_id"]))
+        for local_order, row in enumerate(entity_service_rows, start=1):
+            plan_service_rows.append([next_plan_service_id, plan_id, row["service_id"], local_order])
+            next_plan_service_id += 1
     sections.append("")
     sections.append(insert_values("performance.plan_service", ["plan_service_id", "plan_id", "service_id", "sort_order"], plan_service_rows, "plan_service_id"))
     sections.append(reset_sequence("performance.plan_service", "plan_service_id"))
 
     for sheet, table, columns, pk in [
         ("PM_GOAL_LINK", "performance.pm_goal_link", ["link_id", "measure_id", "agency_goal_id"], "link_id"),
-        ("PM_SERVICE_LINK", "performance.pm_service_link", ["link_id", "measure_id", "service_id"], "link_id"),
     ]:
         rows = read_sheet(performance_workbook, sheet)
         sections.append("")
         sections.append(insert_values(table, columns, [[row.get(column) for column in columns] for row in rows], pk))
         sections.append(reset_sequence(table, pk))
+
+    pm_service_rows = read_sheet(performance_workbook, "PM_SERVICE_LINK")
+    existing_service_pairs = {
+        (row.get("measure_id"), row.get("service_id"))
+        for row in pm_service_rows
+    }
+    next_link_id = max((int(row.get("link_id") or 0) for row in pm_service_rows), default=0) + 1
+    supplemental_service_links = []
+    measure_by_agency_title = {
+        (row.get("agency_id"), normalize_match_text(row.get("title"))): row.get("measure_id")
+        for row in measure_source_rows
+        if row.get("agency_id") and row.get("measure_id") and normalize_match_text(row.get("title"))
+    }
+    if performance_data_workbook.exists():
+        performance_data_rows = read_sheet(performance_data_workbook, "query (48)")
+        for row in performance_data_rows:
+            agency_id = extract_code(row.get("agency_id"), "AGC")
+            service_id = extract_code(row.get("service_id"), "SRV")
+            title_key = normalize_match_text(row.get("performance_measure"))
+            measure_id = measure_by_agency_title.get((agency_id, title_key))
+            if not measure_id or not service_id:
+                continue
+            pair = (measure_id, service_id)
+            if pair in existing_service_pairs:
+                continue
+            supplemental_service_links.append({
+                "link_id": next_link_id,
+                "measure_id": measure_id,
+                "service_id": service_id,
+            })
+            existing_service_pairs.add(pair)
+            next_link_id += 1
+    for row in measure_source_rows:
+        title = str(row.get("title") or "")
+        owner = str(row.get("data_owner") or "")
+        if row.get("agency_id") == "AGC4301" and (
+            "Danny Heller" in owner or
+            "CitiStat" in title or
+            "inspections" in title.lower()
+        ):
+            pair = (row.get("measure_id"), "SRV0903")
+            if pair not in existing_service_pairs:
+                supplemental_service_links.append({
+                    "link_id": next_link_id,
+                    "measure_id": row.get("measure_id"),
+                    "service_id": "SRV0903",
+                })
+                existing_service_pairs.add(pair)
+                next_link_id += 1
+    pm_service_rows.extend(supplemental_service_links)
+    sections.append("")
+    if supplemental_service_links:
+        sections.append("-- Supplemental service links derived from Performance_Data.xlsx and targeted plan-entity cleanup.")
+    pm_service_values = ",\n".join(
+        "    (" + ", ".join(sql_literal(row.get(column)) for column in ["link_id", "measure_id", "service_id"]) + ")"
+        for row in pm_service_rows
+    )
+    sections.append(
+        "INSERT INTO performance.pm_service_link (\"link_id\", \"measure_id\", \"service_id\")\n"
+        f"VALUES\n{pm_service_values}\n"
+        "ON CONFLICT (\"measure_id\", \"service_id\") DO UPDATE SET\n"
+        "    \"service_id\" = EXCLUDED.\"service_id\";"
+    )
+    sections.append(reset_sequence("performance.pm_service_link", "link_id"))
 
     agency_goal_plan = {
         row.get("agency_goal_id"): row.get("plan_id")
@@ -453,14 +664,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-workbook", type=Path, required=True)
     parser.add_argument("--performance-output", type=Path, default=DEFAULT_PERFORMANCE_OUTPUT)
     parser.add_argument("--user-output", type=Path, default=DEFAULT_USER_OUTPUT)
+    parser.add_argument("--reference-agency", type=Path, default=DEFAULT_REFERENCE_AGENCY)
     parser.add_argument("--reference-service", type=Path, default=DEFAULT_REFERENCE_SERVICE)
+    parser.add_argument("--reference-plan-entity", type=Path, default=DEFAULT_REFERENCE_PLAN_ENTITY)
+    parser.add_argument("--reference-plan-entity-service", type=Path, default=DEFAULT_REFERENCE_PLAN_ENTITY_SERVICE)
+    parser.add_argument("--performance-data-workbook", type=Path, default=DEFAULT_PERFORMANCE_DATA)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     generate_user_seed(args.user_workbook, args.user_output)
-    generate_performance_seed(args.performance_workbook, args.performance_output, args.reference_service)
+    generate_performance_seed(
+        args.performance_workbook,
+        args.performance_output,
+        args.reference_agency,
+        args.reference_service,
+        args.reference_plan_entity,
+        args.reference_plan_entity_service,
+        args.performance_data_workbook,
+    )
 
 
 if __name__ == "__main__":

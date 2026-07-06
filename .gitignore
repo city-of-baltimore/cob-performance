@@ -50,15 +50,7 @@ po/*~
 rsconnect/
 
 outputs/
-
-# Terraform
-*.tfvars
-azure.conf
-azure.config
-terraform.tfstate
-.terraform
-.terraform/*
-.terraform.lock.hcl
-*.hcl
-*.tfvars
-*.tfplan
+tmp/
+node_modules/
+__pycache__/
+*.pyc

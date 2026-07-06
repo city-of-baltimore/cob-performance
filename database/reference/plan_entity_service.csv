@@ -23,7 +23,13 @@ pes_id,entity_id,service_id,service_name,is_primary
 22,21,SRV0385,Health and Welfare Grants,true
 23,22,SRV0385,Health and Welfare Grants,true
 24,22,SRV0446,Educational Grants,true
-25,23,SRV0749,"Property Acquisition, Disposition and Asset Management",true
-26,23,SRV0750,Housing Rehabilitation Services,false
-27,23,SRV0810,Real Estate Development,false
+25,23,SRV0809,"Retention, Expansion, and Attraction of Businesses",true
+26,23,SRV0810,Real Estate Development,false
+27,23,SRV0813,Technology Development - Emerging Technology Center,false
 28,24,SRV0682,Parking Management,true
+29,26,SRV0820,Pride of Baltimore,true
+30,25,SRV0793,Baltimore Civic Fund,true
+31,27,SRV0385,Maryland School of the Blind,true
+32,29,SRV0811,Waterfront Partnership,true
+33,30,SRV0446,Baltimore Children's and Youth Fund,true
+34,28,SRV0125,Mayor's Office of Government Relations,true

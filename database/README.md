@@ -34,6 +34,7 @@ App code should reference namespaced tables directly, such as `planning.agency_p
 
 - `seed/city_reference_seed.sql` for the agency, service, and plan entity hierarchy
 - `seed/action_plan_seed.sql` for the 2026 Mayor's Action Plan pillars, goals, strategies, narratives, and measures
+- `seed/service_description_seed.sql` for service descriptions sourced from `budget_metadata.xlsx`
 
 Load the schema, then load the reference seed:
 

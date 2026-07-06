@@ -247,17 +247,17 @@ SRV0928,Food Policy & Planning,AGC5700,Performance,3,"Clean, Healthy, and Sustai
 SRV0929,Capital Improvement Program,AGC5700,Performance,6,Modernizing Public Infrastructure,true
 SRV0930,Public Behavioral Health,AGC2700,Performance,3,"Clean, Healthy, and Sustainable Communities",true
 SRV0931,Office of Immigrant Affairs,AGC4393,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",true
-SRV9000,Capital Projects (HLT),AGC2700,Performance,,,true
-SRV9001,Capital Projects (BPD),AGC5900,Performance,,,true
-SRV9002,Capital Projects (CON),AGC4361,Performance,,,true
-SRV9003,Capital Projects (DGS),AGC2600,Performance,,,true
-SRV9004,Capital Projects (DPW),AGC6100,Performance,,,true
-SRV9005,Capital Projects (FIN),AGC2300,Performance,,,true
-SRV9006,Capital Projects (FIR),AGC2500,Performance,,,true
-SRV9007,Capital Projects (HCD),AGC3100,Performance,,,true
-SRV9008,Capital Projects (LIB),AGC3900,Performance,,,true
-SRV9011,Capital Projects (OIT),AGC4303,Performance,,,true
-SRV9012,Capital Projects (PLN),AGC5700,Performance,,,true
-SRV9013,Capital Projects (REC),AGC6300,Performance,,,true
+SRV9000,Capital Projects (HLT),AGC2700,Performance,,,false
+SRV9001,Capital Projects (BPD),AGC5900,Performance,,,false
+SRV9002,Capital Projects (CON),AGC4361,Performance,,,false
+SRV9003,Capital Projects (DGS),AGC2600,Performance,,,false
+SRV9004,Capital Projects (DPW),AGC6100,Performance,,,false
+SRV9005,Capital Projects (FIN),AGC2300,Performance,,,false
+SRV9006,Capital Projects (FIR),AGC2500,Performance,,,false
+SRV9007,Capital Projects (HCD),AGC3100,Performance,,,false
+SRV9008,Capital Projects (LIB),AGC3900,Performance,,,false
+SRV9011,Capital Projects (OIT),AGC4303,Performance,,,false
+SRV9012,Capital Projects (PLN),AGC5700,Performance,,,false
+SRV9013,Capital Projects (REC),AGC6300,Performance,,,false
 SRV0904,Office of Immigrant Affairs,AGC4301,Performance,2,"Prioritizing Youth, Older Adults, and Vulnerable Communities",false
 SRV9009,Capital Projects (MYR),AGC4301,Performance,,,false
