@@ -137,19 +137,52 @@ auth_reset_link <- function(session, token) {
   paste0(sub("/+$", "", base), "/?reset=", token)
 }
 
-auth_smtp_configured <- function() nzchar(Sys.getenv("SMTP_HOST"))
+# Explicit SMTP_* settings win; otherwise SENDGRID_API_KEY selects SendGrid's
+# SMTP relay (username is the literal string "apikey").
+auth_smtp_settings <- function() {
+  host <- Sys.getenv("SMTP_HOST")
+  if (nzchar(host)) {
+    return(list(
+      host = host,
+      port = Sys.getenv("SMTP_PORT", "587"),
+      username = Sys.getenv("SMTP_USER"),
+      password = Sys.getenv("SMTP_PASSWORD"),
+      from = Sys.getenv("SMTP_FROM", Sys.getenv("DEFAULT_FROM_EMAIL", "performance@baltimorecity.gov"))
+    ))
+  }
+  sendgrid_key <- Sys.getenv("SENDGRID_API_KEY")
+  if (nzchar(sendgrid_key)) {
+    return(list(
+      host = "smtp.sendgrid.net",
+      port = Sys.getenv("SMTP_PORT", "587"),
+      username = "apikey",
+      password = sendgrid_key,
+      from = Sys.getenv("DEFAULT_FROM_EMAIL", Sys.getenv("SMTP_FROM", "performance@baltimorecity.gov"))
+    ))
+  }
+  NULL
+}
 
-# Demo-only escape hatch: with no SMTP configured, the reset link can be shown
-# on screen instead of emailed. Never enable outside local/demo environments —
-# it lets anyone claim any account.
+auth_smtp_configured <- function() !is.null(auth_smtp_settings())
+
+# Demo-only escape hatch: shows password links on screen and suppresses all
+# outbound email (seeded addresses belong to real employees). Never enable
+# outside local/demo environments — it lets anyone claim any account.
 auth_dev_links_enabled <- function() tolower(Sys.getenv("AUTH_DEV_LINKS")) %in% c("true", "1", "yes")
 
+# "Display Name <user@host>" -> "user@host" for the SMTP envelope; the
+# friendly form still goes in the From: header.
+auth_bare_address <- function(address) {
+  match <- regmatches(address, regexec("<([^>]+)>", address))[[1]]
+  if (length(match) == 2) match[[2]] else address
+}
+
 auth_send_reset_email <- function(email, link, first_time = FALSE) {
-  if (!auth_smtp_configured()) return(FALSE)
-  from <- Sys.getenv("SMTP_FROM", "performance@baltimorecity.gov")
+  smtp <- auth_smtp_settings()
+  if (is.null(smtp)) return(FALSE)
   subject <- if (first_time) "Set your Beacon password" else "Reset your Beacon password"
   message <- paste0(
-    "From: ", from, "\r\n",
+    "From: ", smtp$from, "\r\n",
     "To: ", email, "\r\n",
     "Subject: ", subject, "\r\n\r\n",
     "Use this link within ", AUTH_TOKEN_MINUTES, " minutes to choose your Beacon password:\r\n\r\n",
@@ -158,13 +191,16 @@ auth_send_reset_email <- function(email, link, first_time = FALSE) {
   )
   tryCatch({
     curl::send_mail(
-      mail_from = from,
+      mail_from = auth_bare_address(smtp$from),
       mail_rcpt = email,
       message = message,
-      smtp_server = paste0("smtp://", Sys.getenv("SMTP_HOST"), ":", Sys.getenv("SMTP_PORT", "587")),
+      smtp_server = paste0("smtp://", smtp$host, ":", smtp$port),
       use_ssl = "force",
-      username = Sys.getenv("SMTP_USER"),
-      password = Sys.getenv("SMTP_PASSWORD")
+      username = smtp$username,
+      password = smtp$password,
+      # Never verbose: curl's SMTP trace prints the AUTH line, which would
+      # leak the credential into container logs.
+      verbose = FALSE
     )
     TRUE
   }, error = function(error) {

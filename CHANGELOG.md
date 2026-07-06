@@ -19,11 +19,16 @@
   `access.password_reset_token` table, expire after 60 minutes, and are single-use
   (all outstanding tokens for a user burn on success). The request form always
   responds identically whether or not the email exists.
-- **Email delivery via SMTP** (`curl::send_mail`) configured with `SMTP_HOST`,
-  `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and `APP_BASE_URL` for
-  link building. With no SMTP configured, links can be shown on screen for local
-  demos only by setting `AUTH_DEV_LINKS=true` (enabled in `docker-compose.yml`,
-  never on a shared host).
+- **Email delivery via SMTP or SendGrid** (`curl::send_mail`). Set
+  `SENDGRID_API_KEY` + `DEFAULT_FROM_EMAIL` (SendGrid's SMTP relay with the
+  literal `apikey` username), or explicit `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
+  `SMTP_PASSWORD`/`SMTP_FROM` which take precedence; `APP_BASE_URL` controls link
+  building. Display-name from addresses (`Name <user@host>`) are parsed to a bare
+  address for the SMTP envelope, and the SMTP trace is disabled so credentials
+  never reach container logs. Verified end to end against SendGrid (queued 250).
+  `AUTH_DEV_LINKS=true` (local demos only, enabled in `docker-compose.yml`) shows
+  links on screen and suppresses all outbound email so demos never mail the real
+  employee addresses in the seed data; never set it on a shared host.
 - **Server-side access gate** — every page render and navigation event checks the
   session's authenticated user; unauthenticated sessions always see the login page
   regardless of nav clicks.

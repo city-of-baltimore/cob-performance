@@ -55,10 +55,17 @@ the attach output.)
 # Required so emailed password links point at the public URL
 fly secrets set APP_BASE_URL="https://cob-performance.fly.dev"
 
-# SMTP for password set/reset emails (any relay or provider)
+# Email for password set/reset links — either SendGrid:
+fly secrets set SENDGRID_API_KEY=SG.... DEFAULT_FROM_EMAIL=performance@baltimorecity.gov
+
+# ...or any generic SMTP relay (explicit SMTP_* settings win over SendGrid):
 fly secrets set SMTP_HOST=smtp.example.com SMTP_PORT=587 \
-  SMTP_USER=apikey SMTP_PASSWORD=... SMTP_FROM=performance@baltimorecity.gov
+  SMTP_USER=... SMTP_PASSWORD=... SMTP_FROM=performance@baltimorecity.gov
 ```
+
+For local email testing, put `SENDGRID_API_KEY` and `DEFAULT_FROM_EMAIL` in the
+gitignored `.env` at the repo root; `docker-compose.yml` passes them through.
+The from address must be a verified sender identity in SendGrid.
 
 Without SMTP configured, password set/reset requests succeed but no link is
 delivered. Do **not** set `AUTH_DEV_LINKS` on Fly — it displays account-takeover
