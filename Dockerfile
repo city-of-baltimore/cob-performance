@@ -3,6 +3,8 @@ FROM rocker/r-ver:4.4.2
 # System libraries for RPostgres (libpq) and the Python export toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
+    pkg-config \
+    zlib1g-dev \
     python3 \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*

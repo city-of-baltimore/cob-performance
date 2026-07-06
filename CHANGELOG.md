@@ -13,6 +13,16 @@
   The template location is now configurable via `PLAN_EXPORT_PPTX_TEMPLATE`, defaulting
   to `templates/agency-performance-plan-template.pptx` in the app directory. As before,
   the export runs without a template when the file is absent.
+- **Schema file could not load on a fresh database**
+  (`database/schema/target_schema.sql`). Constraint-widening `ALTER TABLE` patches
+  for `performance.performance_measure` appeared ~115 lines before the table's
+  `CREATE TABLE`, so `psql -v ON_ERROR_STOP=1` failed with
+  `relation "performance.performance_measure" does not exist`. The patches now sit
+  with the other `performance_measure` patches after the table definition.
+- **Reference seed loader violated a foreign key on a fresh database**
+  (`database/seed/load_reference_seed.sql`). `city_reference_seed.sql` inserts
+  `reference.service` rows that reference `reference.pillar`, but pillars were
+  loaded afterwards by `action_plan_seed.sql`. The load order is now reversed.
 - **`sslmode` in `DATABASE_URL` is no longer silently dropped** (`R/database.R`,
   `connect_app_database()`). The URL parser discarded everything after `?`, so the
   `?sslmode=require` suffix in the Key Vault connection string never reached the
@@ -29,7 +39,8 @@
   `scripts/build_plan_export.py`.
 - **`docker-compose.yml`** — local stack: the app container plus Postgres 18 with the
   target schema and full seed stack (reference data, user roles, performance plans)
-  loaded automatically on first start.
+  loaded automatically on first start. The database is published on host port 5433
+  to avoid clashing with a locally installed Postgres.
 - **`docker/initdb/02_load_seed.sql`** — init wrapper that loads
   `database/seed/load_uploaded_seed.sql` inside the Postgres container.
 - **`.dockerignore`** — keeps Terraform, database SQL, git metadata, and generator
@@ -39,7 +50,7 @@
 
 ```bash
 docker compose up --build
-# app: http://localhost:3838  (db: localhost:5432, postgres/postgres)
+# app: http://localhost:3838  (db: localhost:5433, postgres/postgres)
 ```
 
 Or against an existing database:
