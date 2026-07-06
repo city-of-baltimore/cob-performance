@@ -1,0 +1,69 @@
+entity_type,agency_id,agency,entity_id,public_name,submitter,reviewer,deputy_mayor,ca_office
+Agency,AGC1321,Courts - Orphans' Court,,Courts - Orphans' Court,Ajile Brown,Melanie Lada,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Agency,AGC5500,Office of Equity and Civil Rights,,Office of Equity and Civil Rights,Amber Greene,Melanie Lada,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC3700,Legislative Reference,,Legislative Reference,Ben Guthorn,Ethan Buckborough,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC2600,General Services,,General Services,Berke Attila,Ross Hackett,"Khalil Zaied - Deputy Mayor, Operations",Shamiah Kerney
+Agency,AGC1200,Comptroller,,Comptroller,Bill Henry,Melanie Lada,Independent - Elected Comptroller (Bill Henry),Shamiah Kerney
+Agency,AGC4383,Environmental Control Board,,Environmental Control Board,Brittany Vendryes,Griffin Riddler,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC4393,Office of Immigrant and Multicultural Affairs,,Office of Immigrant and Multicultural Affairs,Catalina Rodriguez-Lima,Melanie Lada,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC3900,Enoch Pratt Free Library,,Enoch Pratt Free Library,Chad Helton,Ross Hackett,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC4310,M-R Office of Small Minority Business Advocacy & Development,,M-R Office of Small Minority Business Advocacy & Development,Christopher Lundy,Ethan Buckborough,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC1900,Board of Elections,,Board of Elections,Clifford Tatum,Nelson Gomes,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Mayoral Service,AGC4301,Mayor's Office,1,Mayor's Office of Performance and Innovation,Dartanion Smith-Williams,Melanie Lada,City Administrator - Faith Leach,John Merrill
+Agency,AGC2100,Employees' Retirement Systems,,Employees' Retirement Systems,David Randall,Ethan Buckborough,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC4341,Office of the Labor Commissioner,,Office of the Labor Commissioner,Deborah Moore-Carter,Ethan Buckborough,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC4309,Office of Children and Family Success,,Office of Children and Family Success,Debra Brooks,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Quasi Agency,AGC4321,Educational Grants (Family League and others),30,Baltimore Children's and Youth Fund,Alysia Lee,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Quasi Agency,AGC4321,Educational Grants (Family League and others),22,Family League,Demaune Millard,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Quasi Agency,AGC4321,Educational Grants (Family League and others),27,Maryland School of the Blind,Robert Hair,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Agency,AGC4100,Liquor Board,,Liquor Board,Douglas Paige,Darren Lu,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,2,Mayor's Office of African American Male Engagement,Dr. Andrey Bundley,Ross Hackett,Chief of Staff - John David Merrill,Shamiah Kerney
+Quasi Agency,AGC4356,Art & Culture (BMA /  Symphony / Zoo / Create Baltimore),16,Baltimore Museum of Art,Dr. Asma Naeem,Ross Hackett,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,3,Mayor's Office of LGBTQ Affairs,Dr. Melanie Bryant,Ross Hackett,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC6300,Recreation and Parks,,Recreation and Parks,Dr. Reginald Moore,Nelson Gomes,"Khalil Zaied - Deputy Mayor, Operations",Shamiah Kerney
+Agency,AGC3500,Law,,Law,Ebony Thompson,Ethan Buckborough,City Administrator - Faith Leach,John Merrill
+Agency,AGC4392,Office of Recovery Programs,,Office of Recovery Programs,Elizabeth Tatum,Ethan Buckborough,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC4381,Office of Homeless Services,,Office of Homeless Services,Ernestina Simmons,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),25,Baltimore Civic Fund,HyeSook Chung,Ethan Buckborough,Chief of Staff - John David Merrill,Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),12,Baltimore Heritage Area,Johns Hopkins,Nelson Gomes,Chief of Staff - John David Merrill,Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),13,Baltimore Public Markets,Shaina Hernandez,Nelson Gomes,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),14,Lexington Market,Shaina Hernandez,Darren Lu,Chief of Staff - John David Merrill,Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),26,Pride of Baltimore,Captain Jan Miles,Nelson Gomes,Chief of Staff - John David Merrill,Shamiah Kerney
+Quasi Agency,AGC4326,Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market),11,Visit Baltimore,Kireem Swinton,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC4308,Office of the Inspector General,,Office of the Inspector General,Isabel Cumming,Melanie Lada,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC6900,State's Attorney's Office,,State's Attorney's Office,Ivan Bates,Melanie Lada,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Agency,AGC3300,Human Resources,,Human Resources,Jacia Falcon,Ethan Buckborough,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC2500,Fire,,Fire,James Wallace,Darren Lu,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Agency,AGC7900,Board of Municipal and Zoning Appeals,,Board of Municipal and Zoning Appeals,Justin Williams,Darren Lu,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4356,Art & Culture (BMA /  Symphony / Zoo / Create Baltimore),17,Walters Art Gallery,Kate Burgin,Ross Hackett,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4356,Art & Culture (BMA /  Symphony / Zoo / Create Baltimore),18,Maryland Zoo,Kirby Fowler,Nelson Gomes,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC3100,Housing and Community Development,,Housing and Community Development,Timothy Keane,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC3100,Housing and Community Development,23,Baltimore Development Corporation,Otis Rolley,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC3100,Housing and Community Development,15,Live Baltimore,Meghan McCorkell,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC3100,Housing and Community Development,29,Waterfront Partnership,Dan Taylor,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC1311,Courts - Circuit Court,,Courts - Circuit Court,Lionel Moore,Melanie Lada,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Agency,AGC4500,Office of Employment Development,,Office of Employment Development,MacKenzie Garvin,Ross Hackett,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4356,Art & Culture (BMA /  Symphony / Zoo / Create Baltimore),19,Baltimore Symphony Orchestra,Mark C. Hanson,Ross Hackett,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4361,Convention Complex (BDC / Convention Center),9,Baltimore Convention Center,Matt Campbell,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC6100,Public Works,,Public Works,Matthew Garbark,Ross Hackett,"Khalil Zaied - Deputy Mayor, Operations",Shamiah Kerney
+Agency,AGC4366,M-R Cable and Communications,,M-R Cable and Communications,Maya Gilmore,Nelson Gomes,Chief of Staff - John David Merrill,Shamiah Kerney
+Agency,AGC1000,City Council,,City Council,Michael Castagnola,Melanie Lada,Independent - Legislative Branch,Shamiah Kerney
+Agency,AGC2300,Finance,,Finance,Michael Moiseyev,Melanie Lada,City Administrator - Faith Leach,John Merrill
+Agency,AGC2700,Health,,Health,Michelle Taylor,Ethan Buckborough,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Agency,AGC1100,City Council Services,,City Council Services,Nancy Mead,Melanie Lada,Independent - Legislative Branch,Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,28,Mayor's Office of Government Relations,Nina Themelis,Melanie Lada,Chief of Staff - John David Merrill,Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,5,Mayor's Office of Older Adult Affairs and Advocacy,Ondoria Harmon,Ross Hackett,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Quasi Agency,AGC7000,Transportation,24,Parking Authority,Peter Little,Nelson Gomes,"Khalil Zaied - Deputy Mayor, Operations",Shamiah Kerney
+Agency,AGC5700,Planning,,Planning,Renata Southard,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC5900,Police,,Police,Richard Worley,Darren Lu,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,7,"Mayor's Office of Art, Culture, and Entertainment",Robyn Murphy,Griffin Riddler,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Quasi Agency,AGC4356,Art & Culture (BMA /  Symphony / Zoo / Create Baltimore),20,Create Baltimore,Robyn Murphy,Ross Hackett,"Calvin Young - Deputy Mayor, Community & Economic Development",Shamiah Kerney
+Agency,AGC6500,Sheriff's Office,,Sheriff's Office,Sam Cogen,Melanie Lada,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,6,Baltimore City Mayor's Office of Overdose Response,Sara Whaley,Ethan Buckborough,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Agency,AGC4346,Office of Neighborhood Safety and Engagement,,Office of Neighborhood Safety and Engagement,Stefanie Mavronis,Darren Lu,"Samuel Johnson - Asst. Deputy Mayor, Public Safety (Acting)",Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,8,Innovation Team,Terrance Smith,Melanie Lada,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC4303,Baltimore City Information Technology (BCIT),,Baltimore City Information Technology (BCIT),Timothy Mayotte,Ethan Buckborough,Shamiah Kerney - Deputy City Administrator,Faith Leach
+Agency,AGC7000,Transportation,,Transportation,Veronica McBeth,Nelson Gomes,"Khalil Zaied - Deputy Mayor, Operations",Shamiah Kerney
+Quasi Agency,AGC4316,Health & Welfare Grants (Family League & Legal Aid ),21,Legal Aid,Vicki Schultz,Nelson Gomes,"Dr. Letitia Dzirasa - Deputy Mayor, Health & Human Services",Shamiah Kerney
+Agency,AGC4371,M-R Baltimore City Public Schools,,M-R Baltimore City Public Schools,Dr. Jermaine Dawson,Ross Hackett,Chief of Staff - John David Merrill,Shamiah Kerney
+Mayoral Service,AGC4301,Mayor's Office,4,Mayor's Office of Infrastructure Development,,,Mayor's Office - Multiple portfolios,Shamiah Kerney

@@ -11,10 +11,15 @@ pages <- list(
   login = "Login",
   landing = "Cycle home",
   reviewer_dashboard = "Plan review",
+  plan_review_detail = "Plan review detail",
+  approval_queue = "Plan approval queue",
+  publishing_queue = "Publishing queue",
   measure_review = "Measure review",
+  bug_fix = "Bug/Fix",
+  role_preview = "Role preview",
   strategic_plan = "City action plan",
   team = "Performance team",
-  plan_history = "Plan history & status",
+  plan_history = "View plan",
   metrics = "Measures review",
   overview = "Agency overview",
   goals = "Agency goals",
@@ -59,6 +64,78 @@ performance_role_choices <- c(
   "SystemAdmin"
 )
 
+access_policy <- list(
+  role_edit_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor", "AgencySubmitter"),
+  role_edit_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff"),
+  plan_edit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  submitter_assignment_app_roles = c("SystemAdmin", "CAOffice", "DeputyMayor"),
+  submitter_assignment_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff", "Admin"),
+  measure_review_app_roles = c("SystemAdmin", "OPIReviewer"),
+  measure_submit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  measure_submit_agency_roles = c("Performance Lead", "Chief of Staff", "Agency Director", "Agency Head", "Admin"),
+  plan_review_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"),
+  final_plan_approval_app_roles = c("SystemAdmin")
+)
+
+has_any_role <- function(values, allowed) {
+  any(values %in% allowed)
+}
+
+can_edit_roles <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$role_edit_app_roles) ||
+    has_any_role(agency_roles, access_policy$role_edit_agency_roles)
+}
+
+can_assign_submitter <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$submitter_assignment_app_roles) ||
+    has_any_role(agency_roles, access_policy$submitter_assignment_agency_roles)
+}
+
+can_edit_plan_sections <- function(app_roles) {
+  has_any_role(app_roles, access_policy$plan_edit_app_roles)
+}
+
+can_review_measures <- function(app_roles) {
+  has_any_role(app_roles, access_policy$measure_review_app_roles)
+}
+
+can_view_plan_approval_queue <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "DeputyMayor", "CAOffice"))
+}
+
+can_review_plans <- function(app_roles) {
+  has_any_role(app_roles, access_policy$plan_review_app_roles)
+}
+
+can_route_plan_reviews <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))
+}
+
+can_submit_measures <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$measure_submit_app_roles) ||
+    has_any_role(agency_roles, access_policy$measure_submit_agency_roles)
+}
+
+can_submit_plans <- function(app_roles) {
+  has_any_role(app_roles, c("AgencySubmitter", "SystemAdmin"))
+}
+
+can_finalize_plans <- function(app_roles) {
+  has_any_role(app_roles, access_policy$final_plan_approval_app_roles)
+}
+
+can_view_application_admin <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
+can_view_performance_reviewing <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
+}
+
+uses_review_administration_mode <- function(app_roles) {
+  has_any_role(app_roles, c("CAOffice", "DeputyMayor"))
+}
+
 risk_type_label <- function(value) {
   labels <- names(risk_type_choices)
   match_index <- match(value, unname(risk_type_choices))
@@ -88,6 +165,19 @@ format_status <- function(status) {
   gsub("([a-z])([A-Z])", "\\1 \\2", status)
 }
 
+measure_status_filter_choices <- function() {
+  c(
+    "All except deprecated",
+    "All statuses",
+    "Draft",
+    "Pending Approval",
+    "Returned",
+    "Validated",
+    "Inactive",
+    "Deprecated"
+  )
+}
+
 agency_plan_status <- function(status) {
   switch(
     as.character(status),
@@ -95,10 +185,10 @@ agency_plan_status <- function(status) {
     AgencyRevised = "Drafting",
     FeedbackReturned = "Returned",
     Returned = "Returned",
-    UnderReview = "Under review",
-    DirectorSignOff = "Under review",
-    DeputyMayorReview = "Under review",
-    CAReview = "Under review",
+    UnderReview = "Reviewer review",
+    DirectorSignOff = "Agency sign-off",
+    DeputyMayorReview = "Deputy Mayor review",
+    CAReview = "CA Office review",
     Approved = "Approved",
     Published = "Published",
     Submitted = "Submitted",
@@ -111,16 +201,23 @@ format_measure_value <- function(value, format_type, display_unit = NA, missing_
   if (is.na(value)) {
     return(missing_label)
   }
+  format_number <- function(number) {
+    format(round(number, 2), big.mark = ",", trim = TRUE, scientific = FALSE)
+  }
+  format_percent <- function(number) {
+    percent_value <- if (!is.na(number) && abs(number) > 0 && abs(number) < 1) number * 100 else number
+    paste0(format_number(percent_value), "%")
+  }
   formatted <- switch(
     format_type,
-    Percent = paste0(value, "%"),
-    Currency = paste0("$", format(value, big.mark = ",", trim = TRUE)),
-    Count = format(value, big.mark = ",", trim = TRUE),
-    Days = paste(value, "days"),
-    Decimal = as.character(value),
-    Rate = as.character(value),
-    Score = as.character(value),
-    as.character(value)
+    Percent = format_percent(value),
+    Currency = paste0("$", format_number(value)),
+    Count = format_number(value),
+    Days = paste(format_number(value), "days"),
+    Decimal = format_number(value),
+    Rate = format_number(value),
+    Score = format_number(value),
+    format_number(value)
   )
   if (!is.na(display_unit) && !format_type %in% c("Percent", "Days")) {
     formatted <- paste(formatted, display_unit)
@@ -133,6 +230,11 @@ fiscal_measure_snapshot_years <- function(today = Sys.Date()) {
   fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
   last_completed_fy <- if (today >= fiscal_year_start) calendar_year else calendar_year - 1L
   list(actual_fy = last_completed_fy, target_fy = last_completed_fy + 1L)
+}
+
+fy_label <- function(year) {
+  year <- suppressWarnings(as.integer(year))
+  ifelse(is.na(year), "FY", sprintf("FY%02d", year %% 100L))
 }
 
 measure_entry_years <- function() {
@@ -210,6 +312,146 @@ plan_display_name <- function(db, plan) {
   agency_name(db, plan$agency_id[[1]])
 }
 
+assignment_key <- function(value) {
+  value <- as.character(value)
+  value[is.na(value)] <- ""
+  value <- tolower(trimws(value))
+  gsub("[^a-z0-9]+", "", value)
+}
+
+entity_role_assignment_rows <- function(db = NULL) {
+  if (!is.null(db) && "workflow_entity_role_assignment" %in% names(db) && nrow(db$workflow_entity_role_assignment)) {
+    rows <- db$workflow_entity_role_assignment
+    return(data.frame(
+      entity_type = rows$entity_type,
+      agency_id = rows$agency_id,
+      agency = rows$agency,
+      entity_id = as.character(rows$entity_id),
+      public_name = rows$public_name,
+      submitter = rows$submitter_name,
+      reviewer = rows$reviewer_name,
+      deputy_mayor = rows$deputy_mayor_name,
+      ca_office = rows$ca_office_name,
+      submitter_user_id = rows$submitter_user_id,
+      reviewer_user_id = rows$reviewer_user_id,
+      deputy_mayor_user_id = rows$deputy_mayor_user_id,
+      ca_office_user_id = rows$ca_office_user_id,
+      stringsAsFactors = FALSE
+    ))
+  }
+  path <- file.path("database", "seed", "entity_role_assignments.csv")
+  if (!file.exists(path)) {
+    return(data.frame(
+      entity_type = character(),
+      agency_id = character(),
+      agency = character(),
+      entity_id = character(),
+      public_name = character(),
+      reviewer = character(),
+      deputy_mayor = character(),
+      ca_office = character(),
+      submitter = character(),
+      stringsAsFactors = FALSE
+    ))
+  }
+  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+plan_role_assignment <- function(db, plan) {
+  assignments <- entity_role_assignment_rows(db)
+  if (is.null(plan) || !nrow(plan) || !nrow(assignments)) return(assignments[0, , drop = FALSE])
+  if (!is.na(plan$entity_id[[1]]) && "entity_id" %in% names(assignments)) {
+    entity_match <- !is.na(assignments$entity_id) & as.character(assignments$entity_id) == as.character(plan$entity_id[[1]])
+    rows <- assignments[entity_match, , drop = FALSE]
+    if (nrow(rows)) return(rows[1, , drop = FALSE])
+  }
+  display_key <- assignment_key(plan_display_name(db, plan))
+  rows <- assignments[assignment_key(assignments$public_name) == display_key, , drop = FALSE]
+  if (nrow(rows)) return(rows[1, , drop = FALSE])
+  if (!is.na(plan$agency_id[[1]]) && "agency_id" %in% names(assignments)) {
+    agency_match <- !is.na(assignments$agency_id) & assignments$agency_id == plan$agency_id[[1]]
+    no_entity <- is.na(assignments$entity_id) | !nzchar(trimws(as.character(assignments$entity_id)))
+    rows <- assignments[agency_match & no_entity, , drop = FALSE]
+    if (nrow(rows)) return(rows[1, , drop = FALSE])
+  }
+  assignments[0, , drop = FALSE]
+}
+
+plan_deputy_mayor_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "deputy_mayor" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$deputy_mayor[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  agency_id <- plan_accounting_agency_id(db, plan)
+  agency <- db$reference_agency[db$reference_agency$agency_id == agency_id, , drop = FALSE]
+  if (!nrow(agency) || !"deputy_mayor_pillar" %in% names(agency)) return("Unassigned")
+  value <- trimws(as.character(agency$deputy_mayor_pillar[[1]] %||% ""))
+  if (!nzchar(value)) "Unassigned" else value
+}
+
+plan_ca_office_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "ca_office" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$ca_office[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  "Unassigned"
+}
+
+plan_submitter_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "submitter" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$submitter[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  agency_id <- plan_accounting_agency_id(db, plan)
+  submitters <- db$access_user_role[
+    db$access_user_role$agency_id == agency_id &
+      db$access_user_role$app_role == "AgencySubmitter",
+    ,
+    drop = FALSE
+  ]
+  if (nrow(submitters)) {
+    labels <- unique(trimws(submitters$full_name[!is.na(submitters$full_name) & nzchar(trimws(submitters$full_name))]))
+    if (length(labels)) return(paste(labels, collapse = "; "))
+  }
+  "Unassigned"
+}
+
+plan_reviewer_label <- function(db, plan) {
+  if (!is.null(plan) && nrow(plan) && "assigned_reviewer_name" %in% names(plan)) {
+    value <- trimws(as.character(plan$assigned_reviewer_name[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  reviews <- db$review_plan_review[db$review_plan_review$plan_id == plan$plan_id[[1]], , drop = FALSE]
+  if (nrow(reviews)) {
+    reviews <- reviews[order(reviews$review_started_at, reviews$review_id, decreasing = TRUE, na.last = TRUE), , drop = FALSE]
+    value <- trimws(as.character(reviews$reviewer_name[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "reviewer" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$reviewer[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  "Unassigned"
+}
+
+performance_plan_title <- function(db, plan, suffix = NULL) {
+  base <- paste(plan_display_name(db, plan), "Performance Plan")
+  if (is.null(suffix) || !nzchar(trimws(suffix))) base else paste(base, suffix, sep = ": ")
+}
+
+plan_export_filename <- function(db, plan, extension, include_review = TRUE) {
+  display_name <- if (!is.null(plan) && nrow(plan)) plan_display_name(db, plan) else "Plan"
+  safe_name <- gsub("[^A-Za-z0-9 _.-]+", "", display_name)
+  safe_name <- gsub("\\s+", " ", trimws(safe_name))
+  safe_name <- gsub("\\s+", "-", safe_name)
+  if (!nzchar(safe_name)) safe_name <- "Plan"
+  paste0(safe_name, "-Performance-Plan", if (isTRUE(include_review)) "-Review" else "", ".", extension)
+}
+
 plan_accounting_agency_id <- function(db, plan) {
   if (is.null(plan) || !nrow(plan)) return(NA_character_)
   if (!is.na(plan$agency_id[[1]])) return(plan$agency_id[[1]])
@@ -277,6 +519,129 @@ plan_service_rows <- function(db, plan) {
   service_rows
 }
 
+is_administration_service <- function(service_rows) {
+  if (is.null(service_rows) || !nrow(service_rows) || !"service_type" %in% names(service_rows)) return(rep(FALSE, if (is.null(service_rows)) 0 else nrow(service_rows)))
+  !is.na(service_rows$service_type) & tolower(trimws(service_rows$service_type)) == "administrative"
+}
+
+scorable_service_rows <- function(service_rows) {
+  if (is.null(service_rows) || !nrow(service_rows)) return(service_rows)
+  service_rows[!is_administration_service(service_rows), , drop = FALSE]
+}
+
+service_body_output_id <- function(service_id) {
+  paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
+}
+
+service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE) {
+  if (is.null(service_row) || !nrow(service_row)) return(NULL)
+  service_id <- service_row$service_id[[1]]
+  service_is_admin <- is_administration_service(service_row)
+  if (is.null(measures)) {
+    measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
+  }
+  if (is.null(metric_choices)) {
+    metric_choices <- setNames(measures$measure_id, measures$title)
+  }
+  services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
+  description <- draft_value(services_draft, paste0("service_description_", service_id), service_row$service_description[[1]])
+  selected_metric_ids <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
+    suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
+  } else if (service_is_admin) {
+    integer(0)
+  } else {
+    service_metric_ids(db, plan, service_id, measures)
+  }
+  selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
+  selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
+  metric_selector_rows <- lapply(seq_along(selected_metrics), function(metric_index) {
+    div(
+      class = "kpi-select-row",
+      selectInput(
+        paste0("service_metric_", service_id, "_", metric_index),
+        label = NULL,
+        choices = c("Select a metric" = "", metric_choices),
+        selected = selected_metrics[metric_index],
+        selectize = FALSE
+      ),
+      if (metric_index > 1) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
+    )
+  })
+  history_years <- 2022:2026
+  metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
+    measure <- measures[measure_index, , drop = FALSE]
+    history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
+    actual_values <- vapply(history_years, function(year) {
+      row <- history[history$fiscal_year == year, , drop = FALSE]
+      if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
+    }, character(1))
+    target_values <- vapply(history_years, function(year) {
+      row <- history[history$fiscal_year == year, , drop = FALSE]
+      if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
+    }, character(1))
+    div(
+      class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_metrics) "active" else ""),
+      `data-measure-id` = as.character(measure$measure_id),
+      div(
+        class = "kpi-preview-header",
+        div(h4(measure$title)),
+        div(
+          class = "chip-row",
+          status_chip(measure$measure_type, "primary"),
+          status_chip(measure$desired_direction, "success"),
+          measure_validation_chip(measure)
+        )
+      ),
+      div(
+        class = "kpi-history-wrap",
+        tags$table(
+          class = "kpi-history-table",
+          tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
+          tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", fy_label(year))))),
+          tags$tbody(
+            tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td)),
+            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td))
+          )
+        )
+      )
+    )
+  })
+  tagList(
+    div(
+      class = "goal-form-field full-width",
+      tags$label(class = "control-label", `for` = paste0("service_description_", service_id), "Service description"),
+      p(class = "goal-field-instruction", "Describe the service in a consistent outcome-oriented structure: start with what the service provides, explain the goal or value it creates for the agency or residents, then name the core activities performed by the service."),
+      p(class = "goal-field-instruction", "A strong description should avoid a simple task list. It should connect administrative, operational, or resident-facing work to the agency's strategic priorities, such as operational success, accountability, effective use of data, service excellence, or attracting and retaining talented people."),
+      p(class = "goal-field-instruction", "Example structure: This service provides executive direction, communications and public relations, fiscal management, human capital management, and performance management for the department. The goal of this service is to drive innovation, promote the agency's strategic plan, and strengthen service excellence. Activities performed by this service include administrative direction, fiscal management, human resource support, performance management, communications, and change management."),
+      textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description)
+    ),
+    if (service_is_admin) div(
+      class = "goal-form-field full-width",
+      div(class = "required-fields-note", "Administration services are visible for planning context, but they do not require metric selection and are not scored in this cycle.")
+    ) else div(
+      class = "goal-form-field full-width kpi-picker service-metric-picker",
+      tags$label(class = "control-label", `for` = paste0("service_metric_", service_id, "_1"), "Metrics"),
+      p(class = "goal-field-instruction", "Choose from the agency's validated performance measures. Review the measure definition and five-year history before selecting it."),
+      p(class = "goal-field-instruction", "Select the metric that best captures the quality, timeliness, efficiency, or outcomes of this service. Choose outcome or leading indicators where possible - avoid selecting metrics that only count activity or workload. A metric can also serve as a goal-level KPI; you may see the same measure appear in both places."),
+      if (length(selected_metric_ids) > 5) div(class = "required-fields-note error-note", "This service has more than 5 metrics selected. Remove metrics until 5 or fewer remain before saving."),
+      div(class = "kpi-selectors service-metric-selectors", `data-service-id` = service_id, metric_selector_rows),
+      div(
+        class = "goal-field-support",
+        strong("Add another metric"),
+        p("Add a metric if this service requires more than one measure to capture performance. Each measure can only be assigned to one service - if a measure is already in use for another service it will be greyed out and unavailable in your selection list."),
+        tags$button(type = "button", class = "civic-button secondary small add-kpi-button", icon("plus"), "Add another metric")
+      ),
+      div(class = "kpi-preview-list", metric_previews),
+      div(
+        class = "goal-field-support new-measure-support",
+        strong("Don't see the right metric?"),
+        p("If none of the available measures adequately captures this service's performance, you can build a new metric. You'll be taken to the measure builder to define it - once submitted, it will be added to your agency's measure library and available for selection here."),
+        tags$button(type = "button", class = "civic-button secondary small", `data-page` = "metrics", `data-new-measure` = "true", icon("plus"), "Build a new measure")
+      )
+    )
+  )
+}
+
 plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.null(plan) || !nrow(plan)) return(db$performance_performance_measure[0, , drop = FALSE])
   if (is.na(plan$plan_id[[1]])) return(db$performance_performance_measure[0, , drop = FALSE])
@@ -318,6 +683,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
 
 measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.null(plan) || !nrow(plan)) return(db$performance_performance_measure[0, , drop = FALSE])
+  agency_id <- plan_accounting_agency_id(db, plan)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     if (include_ineligible && is.na(plan$entity_id[[1]])) {
       library_links <- db$performance_measure_entity_link[
@@ -327,8 +693,12 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
         drop = FALSE
       ]
       if (nrow(library_links)) {
+        linked_ids <- unique(library_links$measure_id)
+        agency_ids <- db$performance_performance_measure$measure_id[
+          db$performance_performance_measure$agency_id == agency_id
+        ]
         rows <- db$performance_performance_measure[
-          db$performance_performance_measure$measure_id %in% unique(library_links$measure_id),
+          db$performance_performance_measure$measure_id %in% unique(c(linked_ids, agency_ids)),
           ,
           drop = FALSE
         ]
@@ -336,11 +706,14 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
       }
     }
     linked_rows <- plan_measure_rows(db, plan, include_ineligible = include_ineligible)
+    if (include_ineligible && is.na(plan$entity_id[[1]]) && nrow(linked_rows)) {
+      agency_rows <- db$performance_performance_measure[db$performance_performance_measure$agency_id == agency_id, , drop = FALSE]
+      linked_rows <- unique(rbind(linked_rows, agency_rows))
+    }
     if (nrow(linked_rows) || !include_ineligible || !is.na(plan$entity_id[[1]])) {
       return(linked_rows[order(linked_rows$title), , drop = FALSE])
     }
   }
-  agency_id <- plan_accounting_agency_id(db, plan)
   rows <- db$performance_performance_measure[db$performance_performance_measure$agency_id == agency_id, , drop = FALSE]
   if (!include_ineligible && nrow(rows)) {
     approval_status <- ifelse(is.na(rows$approval_status), "", rows$approval_status)
@@ -390,7 +763,7 @@ performance_planning_timeline <- function() {
     end_date = as.Date(c("2026-06-30", "2026-08-05", "2026-07-17", "2026-08-12", "2026-09-04", "2026-09-30")),
     date_label = c(
       "June 30",
-      "July 1 - August 5",
+      "Due August 5",
       "July 6 - July 17",
       "Upon submission - August 12",
       "August 5 - September 4",
@@ -398,7 +771,7 @@ performance_planning_timeline <- function() {
     ),
     milestone = c(
       "Agency Performance Plan Guidance is Released and Application Open",
-      "Agencies submit first draft and set up individual meetings with their assigned analyst for in-depth support.",
+      "First draft due. Agencies submit the first draft and set up individual meetings with their assigned analyst for in-depth support.",
       "Training",
       "First drafts scored by analyst using in-application rubric.",
       "Identified agencies present their Performance Plan. Presentations are due three business days prior.",
@@ -428,6 +801,16 @@ timeline_home_items <- function(today = Sys.Date()) {
   )
 }
 
+timeline_all_items <- function(today = Sys.Date()) {
+  timeline <- performance_planning_timeline()
+  timeline$status <- ifelse(
+    timeline$end_date < today,
+    "Completed",
+    ifelse(timeline$start_date <= today & timeline$end_date >= today, "Current", "Upcoming")
+  )
+  timeline
+}
+
 timeline_step_card <- function(row) {
   div(
     class = paste("timeline-step-card", tolower(gsub(" ", "-", row$status[[1]]))),
@@ -443,6 +826,178 @@ snapshot_check_row <- function(label, detail, complete = FALSE) {
     span(class = paste("snapshot-check-icon", if (complete) "complete" else "missing"), `aria-hidden` = "true"),
     div(strong(label), span(detail))
   )
+}
+
+role_capability_row <- function(label, detail, enabled = FALSE) {
+  div(
+    class = paste("role-capability-row", if (enabled) "enabled" else "disabled"),
+    span(class = paste("snapshot-check-icon", if (enabled) "complete" else "missing"), `aria-hidden` = "true"),
+    div(strong(label), span(detail))
+  )
+}
+
+role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "", selected_agency = "", id_prefix = "", agency_input_id = "selected_agency", compact = FALSE) {
+  app_role <- app_roles[[1]]
+  agency_role <- if (length(agency_roles)) agency_roles[[1]] else "No agency title selected"
+  user_choices <- role_preview_user_choices(db)
+  if (!nzchar(selected_user_id) || !selected_user_id %in% unname(user_choices)) {
+    selected_user_id <- default_role_preview_user_id(db)
+  }
+  agency_choices <- agency_selector_choices(db)
+  if (!nzchar(selected_agency) || !selected_agency %in% unname(agency_choices)) {
+    selected_agency <- "agency:AGC2600"
+  }
+  user_input_id <- paste0(id_prefix, "role_preview_user_id")
+  app_role_input_id <- paste0(id_prefix, "role_preview_app_role")
+  agency_role_input_id <- paste0(id_prefix, "role_preview_agency_role")
+  panel_class <- paste("role-preview-panel", if (isTRUE(compact)) "role-preview-panel-compact" else "")
+  div(
+    class = panel_class,
+    div(
+      class = "role-preview-selection-panel",
+      div(class = "eyebrow", "Preview context"),
+      div(
+        class = "role-preview-controls",
+        div(
+          class = "measure-field role-preview-lookup",
+          selectInput(
+            user_input_id,
+            "Preview by user",
+            choices = user_choices,
+            selected = selected_user_id,
+            selectize = TRUE
+          )
+        ),
+        div(
+          class = "measure-field role-preview-lookup",
+          selectInput(
+            agency_input_id,
+            "Agency, mayoral service, or quasi",
+            choices = agency_choices,
+            selected = selected_agency,
+            selectize = TRUE,
+            width = "100%"
+          )
+        ),
+        div(
+          class = "measure-field",
+          selectInput(app_role_input_id, "Performance role", choices = performance_role_choices, selected = app_role, selectize = FALSE)
+        ),
+        div(
+          class = "measure-field",
+          selectInput(agency_role_input_id, "Agency role/title", choices = c("None", agency_role_choices), selected = agency_role, selectize = FALSE)
+        )
+      )
+    ),
+    div(
+      class = "role-preview-summary",
+      div(class = "eyebrow", "Selected access"),
+      h3(paste(app_role, "|", agency_role)),
+      p("This preview uses the selected agency/entity plus the role combination here.")
+    ),
+    div(
+      class = "role-capability-grid",
+      role_capability_row("Plan submission", "Submit the current performance plan.", can_submit_plans(app_roles)),
+      role_capability_row("Measure submission", "Submit new or edited measures for approval.", can_submit_measures(app_roles, agency_roles)),
+      role_capability_row("Measure review", "Approve/validate or return measures with feedback.", can_review_measures(app_roles)),
+      role_capability_row("Performance reviewing", "Open plan/measure review workspaces.", can_view_performance_reviewing(app_roles)),
+      role_capability_row("Team role editing", "Add users and edit team role assignments.", can_edit_roles(app_roles, agency_roles)),
+      role_capability_row("Assign submitters", "Grant AgencySubmitter access to another user.", can_assign_submitter(app_roles, agency_roles)),
+      role_capability_row("Admin measure fields", "Edit citywide scope and Action Plan measure alignment.", can_review_measures(app_roles)),
+      role_capability_row("Final plan approval", "Finalize approval and move payload data into database records.", can_finalize_plans(app_roles)),
+      role_capability_row("Downloads", "Download plan exports and review materials.", TRUE),
+      role_capability_row("Review notes", "View reviewer scores, returned notes, and feedback.", TRUE)
+    )
+  )
+}
+
+role_preview_user_choices <- function(db) {
+  user_rows <- rbind(
+    db$access_user_agency_access[, intersect(c("user_id", "full_name", "email"), names(db$access_user_agency_access)), drop = FALSE],
+    db$access_user_role[, intersect(c("user_id", "full_name", "email"), names(db$access_user_role)), drop = FALSE]
+  )
+  if (!nrow(user_rows)) {
+    return(c("Choose a user" = ""))
+  }
+  user_rows <- user_rows[!is.na(user_rows$user_id), , drop = FALSE]
+  user_rows <- user_rows[!duplicated(user_rows$user_id), , drop = FALSE]
+  user_rows <- user_rows[order(tolower(user_rows$full_name), tolower(user_rows$email)), , drop = FALSE]
+  emails <- ifelse(is.na(user_rows$email), "", as.character(user_rows$email))
+  names <- ifelse(is.na(user_rows$full_name), emails, as.character(user_rows$full_name))
+  labels <- ifelse(
+    nzchar(trimws(emails)),
+    paste0(names, " - ", emails),
+    names
+  )
+  c("Choose a user" = "", stats::setNames(as.character(user_rows$user_id), labels))
+}
+
+matched_user_role_defaults <- function(db, user_id) {
+  agency_rows <- db$access_user_agency_access
+  role_rows <- db$access_user_role
+  matched_roles <- role_rows[as.character(role_rows$user_id) == as.character(user_id), , drop = FALSE]
+  matched_agency_roles <- agency_rows[as.character(agency_rows$user_id) == as.character(user_id), , drop = FALSE]
+
+  app_role <- if (nrow(matched_roles) && matched_roles$app_role[[1]] %in% performance_role_choices) {
+    matched_roles$app_role[[1]]
+  } else {
+    "AgencyViewer"
+  }
+  agency_role <- if (nrow(matched_agency_roles) && matched_agency_roles$agency_role[[1]] %in% agency_role_choices) {
+    matched_agency_roles$agency_role[[1]]
+  } else {
+    "None"
+  }
+  list(app_role = app_role, agency_role = agency_role)
+}
+
+matched_user_submitter_value <- function(db, user_id) {
+  choices <- user_submitter_choices(db, user_id)
+  if (length(choices)) unname(choices)[[1]] else NULL
+}
+
+plan_reviewer_choices <- function(db) {
+  reviewer_role_ids <- if ("access_user_role" %in% names(db) && nrow(db$access_user_role)) {
+    db$access_user_role$user_id[db$access_user_role$app_role %in% c("SystemAdmin", "OPIReviewer")]
+  } else {
+    integer(0)
+  }
+  assigned_ids <- c(
+    if ("planning_agency_plan" %in% names(db) && nrow(db$planning_agency_plan)) db$planning_agency_plan$assigned_reviewer else integer(0),
+    if ("review_plan_review" %in% names(db) && nrow(db$review_plan_review)) db$review_plan_review$reviewer_id else integer(0)
+  )
+  reviewer_ids <- unique(c(reviewer_role_ids, assigned_ids))
+  reviewer_ids <- reviewer_ids[!is.na(reviewer_ids)]
+  if (!length(reviewer_ids)) return(c("Choose a reviewer" = ""))
+
+  user_rows <- if ("access_user" %in% names(db) && nrow(db$access_user)) {
+    db$access_user[db$access_user$user_id %in% reviewer_ids, , drop = FALSE]
+  } else {
+    unique(rbind(
+      db$access_user_role[db$access_user_role$user_id %in% reviewer_ids, intersect(c("user_id", "full_name", "email"), names(db$access_user_role)), drop = FALSE],
+      db$access_user_agency_access[db$access_user_agency_access$user_id %in% reviewer_ids, intersect(c("user_id", "full_name", "email"), names(db$access_user_agency_access)), drop = FALSE]
+    ))
+  }
+  user_rows <- user_rows[!is.na(user_rows$user_id), , drop = FALSE]
+  user_rows <- user_rows[!duplicated(user_rows$user_id), , drop = FALSE]
+  user_rows <- user_rows[order(tolower(user_rows$full_name), tolower(user_rows$email)), , drop = FALSE]
+  labels <- ifelse(
+    !is.na(user_rows$email) & nzchar(trimws(user_rows$email)),
+    paste0(user_rows$full_name, " - ", user_rows$email),
+    user_rows$full_name
+  )
+  c("Choose a reviewer" = "", stats::setNames(as.character(user_rows$user_id), labels))
+}
+
+default_role_preview_user_id <- function(db) {
+  user_rows <- rbind(
+    db$access_user_agency_access[, intersect(c("user_id", "full_name", "email"), names(db$access_user_agency_access)), drop = FALSE],
+    db$access_user_role[, intersect(c("user_id", "full_name", "email"), names(db$access_user_role)), drop = FALSE]
+  )
+  if (!nrow(user_rows) || !"email" %in% names(user_rows)) return("")
+  matches <- user_rows[!is.na(user_rows$email) & tolower(user_rows$email) == "melanie.lada@baltimorecity.gov", , drop = FALSE]
+  if (!nrow(matches)) return("")
+  as.character(matches$user_id[[1]])
 }
 
 nonblank_text <- function(value) {
@@ -499,6 +1054,18 @@ nav_item <- function(id, label, icon_tag, section = NULL, item_class = NULL) {
     span(class = "nav-icon", `aria-hidden` = "true", icon_tag),
     span(class = "nav-label", label)
   )
+}
+
+performance_reviewing_nav_items <- function(approval_first = FALSE) {
+  measure_review <- nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item measure-review-nav-item")
+  plan_review <- nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item")
+  approval_queue <- nav_item("approval_queue", "Plan approval queue", icon("stamp"), item_class = "performance-reviewing-nav-item approval-queue-nav-item")
+  publishing_queue <- nav_item("publishing_queue", "Publishing queue", icon("upload"), item_class = "performance-reviewing-nav-item publishing-nav-item")
+  if (isTRUE(approval_first)) {
+    tagList(measure_review, approval_queue, plan_review, publishing_queue)
+  } else {
+    tagList(measure_review, plan_review, approval_queue, publishing_queue)
+  }
 }
 
 status_chip <- function(label, tone = "primary") {
@@ -598,6 +1165,45 @@ metric_visual <- function(metric) {
       span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), metric_number(metric$current, unit)),
       span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), metric_number(metric$target, unit))
     )
+  )
+}
+
+action_plan_measure_item <- function(db, metric) {
+  matched_id <- suppressWarnings(as.integer(metric$matched_measure_id %||% NA_integer_))
+  matched_measure <- if (!is.na(matched_id)) {
+    db$performance_performance_measure[db$performance_performance_measure$measure_id == matched_id, , drop = FALSE]
+  } else {
+    data.frame()
+  }
+  history <- if (nrow(matched_measure)) {
+    db$performance_measure_actuals[db$performance_measure_actuals$measure_id == matched_id, , drop = FALSE]
+  } else {
+    data.frame()
+  }
+  has_data <- nrow(history) && (any(!is.na(history$annual_actual)) || any(!is.na(history$target_value)))
+  data_summary <- NULL
+  if (has_data) {
+    actual_rows <- history[!is.na(history$annual_actual), , drop = FALSE]
+    target_rows <- history[!is.na(history$target_value), , drop = FALSE]
+    latest_actual <- actual_rows[order(actual_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
+    latest_target <- target_rows[order(target_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
+    data_summary <- div(
+      class = "action-plan-measure-data",
+      if (nrow(latest_actual)) span(tags$strong(paste0(fy_label(latest_actual$fiscal_year[[1]]), " actual: ")), format_measure_value(latest_actual$annual_actual[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]])),
+      if (nrow(latest_target)) span(tags$strong(paste0(fy_label(latest_target$fiscal_year[[1]]), " target: ")), format_measure_value(latest_target$target_value[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]], "Not set")),
+      span(class = "measure-direction-note", paste0(metric$match_type, " to measure ", matched_id))
+    )
+  }
+  div(
+    class = "action-plan-measure-item",
+    div(
+      tags$strong(metric$name),
+      if (!is.null(metric$direction) && !is.na(metric$direction) && nzchar(trimws(metric$direction))) {
+        span(class = "measure-direction-note", metric$direction)
+      },
+      data_summary
+    ),
+    if (has_data) status_chip("Data linked", "success") else status_chip("Awaiting data", "warning")
   )
 }
 
@@ -722,8 +1328,8 @@ pillar_modal <- function(pillar_id, db) {
         tags$section(
           class = "modal-section-block",
           h3("Performance Measures"),
-          p("These are Action Plan performance measures with seeded baseline, current, and target values."),
-          div(class = "metric-viz-list", lapply(pillar$metrics, metric_visual))
+          p("Action Plan measure names are included here. Baselines, actuals, and targets are awaiting validated data."),
+          div(class = "action-plan-measure-list", lapply(pillar$metrics, function(metric) action_plan_measure_item(db, metric)))
         ),
         tags$section(
           class = "modal-section-block",
@@ -745,7 +1351,7 @@ pillar_modal <- function(pillar_id, db) {
   )
 }
 
-page_login <- function() {
+page_login <- function(db, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_agency = "") {
   div(
     class = "login-page",
     div(
@@ -754,99 +1360,428 @@ page_login <- function() {
         class = "brand-lockup brand-large",
         tags$img(class = "brand-mark", src = "baltimore-city-logo.png", alt = "City of Baltimore logo"),
         div(
-          div(class = "brand-product", "B.O.B."),
-          div(class = "brand-subtitle", "Baltimore Outcome Budgeting")
+          div(class = "brand-product", "Beacon"),
+          div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
         )
       ),
       h1("Sign in to continue"),
-      p("Choose the workspace that matches your role. Authentication and role assignment will connect to Microsoft Entra in the next workflow pass."),
+      p("Enter email address to continue sign in."),
       div(
-        class = "login-workspace-grid",
+        class = "login-email-panel",
         div(
-          class = "login-workspace-card",
-          actionButton("login_agency", "Agency", class = "civic-button primary")
+          class = "measure-field login-email-field",
+          textInput("login_email", "Email address", placeholder = "name@baltimorecity.gov")
         ),
-        div(
-          class = "login-workspace-card",
-          actionButton("login_agency_director", "Agency Director", class = "civic-button primary")
-        ),
-        div(
-          class = "login-workspace-card",
-          actionButton("login_reviewer", "Admin", class = "civic-button secondary")
-        )
+        actionButton("login_email_continue", "Continue", class = "civic-button primary")
       ),
       div(class = "support-note", "Need access? Contact performance@baltimorecity.gov.")
     )
   )
 }
 
-page_reviewer_dashboard <- function(db) {
+reviewer_assignment_rows <- function() {
+  path <- file.path("database", "seed", "reviewer_assignments.csv")
+  if (!file.exists(path)) {
+    return(data.frame(agency_name = character(), agency_type = character(), analyst = character(), email = character()))
+  }
+  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+reviewer_assignment_key <- function(value) {
+  value <- as.character(value)
+  value[is.na(value)] <- ""
+  value <- tolower(trimws(value))
+  gsub("[^a-z0-9]+", "", value)
+}
+
+apply_reviewer_assignments <- function(db, joined) {
+  assignments <- reviewer_assignment_rows()
+  entity_assignments <- entity_role_assignment_rows(db)
+  joined$assignment_reviewer_name <- NA_character_
+  joined$assignment_reviewer_email <- NA_character_
+  joined$assignment_agency_type <- NA_character_
+  if (!nrow(joined) || !"submitter_name" %in% names(joined)) {
+    return(joined)
+  }
+  plan_keys <- reviewer_assignment_key(joined$submitter_name)
+  if (nrow(entity_assignments)) {
+    entity_keys <- reviewer_assignment_key(entity_assignments$public_name)
+    entity_match <- match(plan_keys, entity_keys)
+    matched <- !is.na(entity_match)
+    joined$assignment_reviewer_name[matched] <- entity_assignments$reviewer[entity_match[matched]]
+    joined$assignment_agency_type[matched] <- entity_assignments$entity_type[entity_match[matched]]
+  }
+  if (nrow(assignments)) {
+    assignment_keys <- reviewer_assignment_key(assignments$agency_name)
+    match_index <- match(plan_keys, assignment_keys)
+    matched <- !is.na(match_index) & (is.na(joined$assignment_reviewer_name) | !nzchar(joined$assignment_reviewer_name))
+    joined$assignment_reviewer_name[matched] <- assignments$analyst[match_index[matched]]
+    joined$assignment_reviewer_email[matched] <- assignments$email[match_index[matched]]
+    joined$assignment_agency_type[matched] <- assignments$agency_type[match_index[matched]]
+  }
+  joined
+}
+
+plan_action_pillar_names <- function(db, plan_id) {
+  plan_services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
+  service_pillar_ids <- integer(0)
+  if (nrow(plan_services)) {
+    services <- db$reference_service[db$reference_service$service_id %in% plan_services$service_id, , drop = FALSE]
+    service_pillar_ids <- services$pillar_id[!is.na(services$pillar_id)]
+  }
+  goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
+  goal_pillar_ids <- integer(0)
+  if (nrow(goals) && "alignment_code" %in% names(goals)) {
+    aligned_goals <- db$reference_pillar_goal[db$reference_pillar_goal$goal_code %in% goals$alignment_code, , drop = FALSE]
+    goal_pillar_ids <- aligned_goals$pillar_id[!is.na(aligned_goals$pillar_id)]
+  }
+  pillar_ids <- unique(c(service_pillar_ids, goal_pillar_ids))
+  pillars <- db$reference_pillar[db$reference_pillar$pillar_id %in% pillar_ids, , drop = FALSE]
+  if (!nrow(pillars)) return(character(0))
+  pillars <- pillars[order(pillars$sort_order), , drop = FALSE]
+  pillars$pillar_name
+}
+
+plan_review_joined_rows <- function(db) {
   plans <- db$planning_agency_plan
   plans <- plans[order(plans$fiscal_year, plans$updated_at, decreasing = TRUE), , drop = FALSE]
   agency_lookup <- db$reference_agency[, c("agency_id", "agency_name", "deputy_mayor_pillar"), drop = FALSE]
   reviewer_lookup <- unique(db$review_plan_review[, c("plan_id", "reviewer_name", "overall_score", "review_complete"), drop = FALSE])
   joined <- merge(plans, agency_lookup, by = "agency_id", all.x = TRUE)
   joined <- merge(joined, reviewer_lookup, by = "plan_id", all.x = TRUE)
-  measure_queue <- if ("performance_performance_measure" %in% names(db)) {
-    db$performance_performance_measure[db$performance_performance_measure$approval_status == "PendingApproval", , drop = FALSE]
-  } else {
-    data.frame()
+  joined$submitter_name <- vapply(seq_len(nrow(joined)), function(i) plan_display_name(db, joined[i, , drop = FALSE]), character(1))
+  joined <- apply_reviewer_assignments(db, joined)
+  joined$reviewer_display <- ifelse(
+    !is.na(joined$reviewer_name) & nzchar(joined$reviewer_name),
+    joined$reviewer_name,
+    ifelse(
+      !is.na(joined$assigned_reviewer_name) & nzchar(joined$assigned_reviewer_name),
+      joined$assigned_reviewer_name,
+      joined$assignment_reviewer_name
+    )
+  )
+  joined$reviewer_display[is.na(joined$reviewer_display) | !nzchar(joined$reviewer_display)] <- "Unassigned"
+  joined$status_label <- vapply(joined$plan_status, agency_plan_status, character(1))
+  pillar_name_sets <- lapply(joined$plan_id, function(plan_id) plan_action_pillar_names(db, plan_id))
+  joined$action_pillar_label <- vapply(pillar_name_sets, function(names) if (length(names)) paste(names, collapse = ", ") else "No pillar scope assigned", character(1))
+  joined$ca_office_display <- vapply(seq_len(nrow(joined)), function(i) plan_ca_office_label(db, joined[i, , drop = FALSE]), character(1))
+  joined$search_blob <- paste(joined$submitter_name, joined$agency_name, joined$action_pillar_label, joined$plan_status, joined$reviewer_display, joined$ca_office_display)
+  joined
+}
+
+filter_review_rows_for_user <- function(db, rows, app_roles, user_id = NA_integer_) {
+  if (!nrow(rows)) return(rows)
+  portfolio_approver <- user_is_portfolio_approver(db, user_id)
+  if ((!has_any_role(app_roles, "DeputyMayor") && !portfolio_approver) || has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice"))) {
+    return(rows)
   }
+  user_id <- suppressWarnings(as.integer(user_id))
+  role_rows <- db$access_user_role[
+    !is.na(user_id) &
+      db$access_user_role$user_id == user_id &
+      db$access_user_role$app_role == "DeputyMayor",
+    ,
+    drop = FALSE
+  ]
+  agency_ids <- unique(role_rows$agency_id[!is.na(role_rows$agency_id) & nzchar(as.character(role_rows$agency_id))])
+  if (length(agency_ids)) {
+    return(rows[rows$agency_id %in% agency_ids, , drop = FALSE])
+  }
+  pillar_ids <- unique(role_rows$pillar_id[!is.na(role_rows$pillar_id)])
+  if (length(pillar_ids) && "deputy_mayor_pillar" %in% names(rows)) {
+    pillar_names <- db$reference_pillar$pillar_name[db$reference_pillar$pillar_id %in% pillar_ids]
+    return(rows[rows$action_pillar_label %in% pillar_names, , drop = FALSE])
+  }
+  if (portfolio_approver && "deputy_mayor_pillar" %in% names(rows)) {
+    portfolio_matches <- vapply(seq_len(nrow(rows)), function(i) {
+      user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, rows[i, , drop = FALSE]))
+    }, logical(1))
+    return(rows[portfolio_matches, , drop = FALSE])
+  }
+  rows[0, , drop = FALSE]
+}
+
+user_name_matches_text <- function(db, user_id, text) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  if (is.na(user_id) || is.na(text) || !nzchar(trimws(as.character(text)))) return(FALSE)
+  users <- db$access_user[db$access_user$user_id == user_id, , drop = FALSE]
+  if (!nrow(users)) return(FALSE)
+  name_parts <- unlist(strsplit(tolower(users$full_name[[1]]), "\\s+"))
+  name_parts <- name_parts[nzchar(name_parts)]
+  if (!length(name_parts)) return(FALSE)
+  text_key <- tolower(as.character(text))
+  all(vapply(name_parts[c(1, length(name_parts))], function(part) grepl(part, text_key, fixed = TRUE), logical(1)))
+}
+
+user_name_matches_portfolio <- function(db, user_id, portfolio) {
+  user_name_matches_text(db, user_id, portfolio)
+}
+
+user_is_portfolio_approver <- function(db, user_id) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  if (is.na(user_id)) return(FALSE)
+  assignments <- entity_role_assignment_rows(db)
+  assignment_match <- nrow(assignments) &&
+    any(vapply(assignments$deputy_mayor, function(approver) user_name_matches_text(db, user_id, approver), logical(1)), na.rm = TRUE)
+  reference_match <- "deputy_mayor_pillar" %in% names(db$reference_agency) &&
+    any(vapply(db$reference_agency$deputy_mayor_pillar, function(portfolio) user_name_matches_portfolio(db, user_id, portfolio), logical(1)), na.rm = TRUE)
+  assignment_match || reference_match
+}
+
+can_view_plan_approval_queue_context <- function(db, app_roles, user_id = NA_integer_) {
+  can_view_plan_approval_queue(app_roles) || user_is_portfolio_approver(db, user_id)
+}
+
+can_approve_plan_gate_context <- function(db, plan, app_roles, user_id = NA_integer_) {
+  if (is.null(plan) || !nrow(plan)) return(FALSE)
+  status <- as.character(plan$plan_status[[1]])
+  if (identical(status, "CAReview")) {
+    if (
+      has_any_role(app_roles, "DeputyMayor") &&
+        user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)) &&
+        plan_has_approval_stamp(db, plan$plan_id[[1]], "DeputyMayor")
+    ) {
+      return(TRUE)
+    }
+    return(has_any_role(app_roles, "CAOffice") && user_name_matches_text(db, user_id, plan_ca_office_label(db, plan)))
+  }
+  if (identical(status, "DeputyMayorReview")) {
+    return((has_any_role(app_roles, "DeputyMayor") || has_any_role(app_roles, "CAOffice")) && user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)))
+  }
+  FALSE
+}
+
+can_manage_plan_stamp_context <- function(db, plan, stage, app_roles, user_id = NA_integer_) {
+  if (has_any_role(app_roles, "SystemAdmin")) return(TRUE)
+  stage <- as.character(stage)
+  if (identical(stage, "Reviewer")) return(has_any_role(app_roles, c("OPIReviewer", "BBMRReviewer")))
+  if (identical(stage, "DeputyMayor")) {
+    return((has_any_role(app_roles, "DeputyMayor") || has_any_role(app_roles, "CAOffice")) && user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)))
+  }
+  if (identical(stage, "CAOffice")) return(has_any_role(app_roles, "CAOffice") && user_name_matches_text(db, user_id, plan_ca_office_label(db, plan)))
+  FALSE
+}
+
+page_reviewer_dashboard <- function(db, can_view_publish_queue = FALSE, app_roles = character(0), user_id = NA_integer_) {
+  joined <- filter_review_rows_for_user(db, plan_review_joined_rows(db), app_roles, user_id)
+  publishing_rows <- joined[joined$plan_status == "Approved", , drop = FALSE]
+  review_rows <- if (isTRUE(can_view_publish_queue)) {
+    joined[!joined$plan_status %in% c("Approved", "Published", "Amended"), , drop = FALSE]
+  } else {
+    joined
+  }
+  status_choices <- sort(unique(review_rows$status_label))
+  reviewer_choices <- sort(unique(review_rows$reviewer_display[!is.na(review_rows$reviewer_display) & nzchar(review_rows$reviewer_display)]))
   tagList(
     div(
       class = "briefing-header compact",
       div(
         div(class = "eyebrow", "Reviewer front end"),
-        h1("Reviewer Workspace"),
+        h1("Plan Review"),
         p("Review plan submissions across agencies, monitor returned plans, and prepare rubric-based feedback.")
       ),
-      status_chip("Reviewer workspace", "primary")
+      status_chip("Plan review", "primary")
     ),
     div(
       class = "dashboard-grid reviewer-dashboard-grid",
       metric_tile("Plans in queue", sum(joined$plan_status %in% c("Submitted", "UnderReview", "DirectorSignOff", "DeputyMayorReview", "CAReview"), na.rm = TRUE), "Submitted or under review"),
-      metric_tile("Measures in queue", nrow(measure_queue), "Pending OPI or system admin review", if (nrow(measure_queue) > 0) "warning" else NULL),
       metric_tile("Returned", sum(joined$plan_status %in% c("FeedbackReturned", "Returned"), na.rm = TRUE), "Needs agency action", "warning"),
       metric_tile("Approved or published", sum(joined$plan_status %in% c("Approved", "Published", "Amended"), na.rm = TRUE), "Completed review")
     ),
     surface(
-      "Review Workspaces",
-      "Open the queue for the review type you need to work.",
-      div(
-        class = "reviewer-workspace-actions",
-        tags$button(type = "button", class = "civic-button primary", `data-page` = "measure_review", icon("chart-line"), "Measure review"),
-        tags$button(type = "button", class = "civic-button secondary", `data-page` = "reviewer_dashboard", icon("clipboard-check"), "Plan review")
-      )
-    ),
-    surface(
       "Review Queue",
-      "This is the reviewer-facing starting point. The next pass can filter this by assigned role, pillar, agency, and review stage.",
+      "Search and filter plan records by status and assigned reviewer.",
+      div(
+        class = "reviewer-filter-bar",
+        div(class = "measure-field", tags$label(`for` = "reviewer_plan_search", "Search"), tags$input(id = "reviewer_plan_search", class = "form-control", type = "search", placeholder = "Agency, pillar, status, reviewer")),
+        div(class = "measure-field", tags$label(`for` = "reviewer_status_filter", "Status"), tags$select(id = "reviewer_status_filter", class = "form-control", c(tags$option(value = "", "All statuses"), lapply(status_choices, function(choice) tags$option(value = choice, choice))))),
+        div(class = "measure-field", tags$label(`for` = "reviewer_assignee_filter", "Assigned reviewer"), tags$select(id = "reviewer_assignee_filter", class = "form-control", c(tags$option(value = "", "All reviewers"), lapply(reviewer_choices, function(choice) tags$option(value = choice, choice))))),
+        tags$button(type = "button", id = "clear_reviewer_filters", class = "civic-button secondary small reviewer-clear-filters", "Clear filters")
+      ),
       div(
         class = "reviewer-plan-list",
-        lapply(seq_len(nrow(joined)), function(i) {
+        lapply(seq_len(nrow(review_rows)), function(i) {
           div(
             class = "reviewer-plan-row",
+            `data-reviewer-search` = tolower(review_rows$search_blob[i]),
+            `data-reviewer-status` = review_rows$status_label[i],
+            `data-reviewer-assignee` = review_rows$reviewer_display[i],
             div(
-              div(class = "eyebrow", paste0("FY", joined$fiscal_year[i])),
-              h3(if (!is.na(joined$agency_name[i])) joined$agency_name[i] else paste("Plan", joined$plan_id[i])),
-              p(if (!is.na(joined$deputy_mayor_pillar[i])) joined$deputy_mayor_pillar[i] else "No pillar scope assigned")
+              h3(review_rows$submitter_name[i]),
+              p(review_rows$action_pillar_label[i])
             ),
-            div(class = "chip-row", status_chip(agency_plan_status(joined$plan_status[i]), status_tone(joined$plan_status[i])), status_chip(paste("Version", joined$version[i]), "primary")),
+            div(class = "chip-row", status_chip(agency_plan_status(review_rows$plan_status[i]), status_tone(review_rows$plan_status[i])), status_chip(paste("Version", review_rows$version[i]), "primary")),
             div(
               class = "reviewer-plan-meta",
               span("Reviewer"),
-              strong(if (!is.na(joined$reviewer_name[i])) joined$reviewer_name[i] else "Unassigned")
+              strong(review_rows$reviewer_display[i])
             ),
             div(
               class = "reviewer-plan-meta",
               span("Score"),
-              strong(if (!is.na(joined$overall_score[i])) score_out_of_100(joined$overall_score[i]) else "Not scored")
+              strong(if (!is.na(review_rows$overall_score[i])) score_out_of_100(review_rows$overall_score[i]) else "Not scored")
             ),
-            tags$button(type = "button", class = "civic-button secondary small", `data-review-plan` = joined$plan_id[i], icon("clipboard-check"), "Open review")
+            div(
+              class = "reviewer-plan-actions",
+              tags$button(type = "button", class = "civic-button secondary small", `data-review-plan` = review_rows$plan_id[i], icon("clipboard-check"), "Open review"),
+              tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = review_rows$plan_id[i], `data-export-type` = "pdf", `data-include-review` = "true", icon("file-pdf"), "Export PDF")
+            )
           )
         })
       )
     )
+  )
+}
+
+page_publishing_queue <- function(db) {
+  joined <- plan_review_joined_rows(db)
+  publishing_rows <- joined[joined$plan_status == "Approved", , drop = FALSE]
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "System Admin"),
+        h1("Publishing Queue"),
+        p("Review plans approved through the performance review workflow and ready for final publish.")
+      ),
+      status_chip(paste(nrow(publishing_rows), "ready"), "success")
+    ),
+    surface(
+      "Ready to Publish",
+      "Plans in this queue have been routed to ready for publish. Publishing is the final System Admin step that moves approved payload content into database records.",
+      div(
+        class = "reviewer-plan-list publishing-plan-list",
+        if (!nrow(publishing_rows)) {
+          p(class = "empty-state-copy", "No plans are ready for publish.")
+        } else {
+          lapply(seq_len(nrow(publishing_rows)), function(i) {
+            div(
+              class = "reviewer-plan-row publishing-plan-row",
+              div(
+                h3(publishing_rows$submitter_name[i]),
+                p(publishing_rows$action_pillar_label[i])
+              ),
+              div(class = "chip-row", status_chip(agency_plan_status(publishing_rows$plan_status[i]), status_tone(publishing_rows$plan_status[i])), status_chip(paste("Version", publishing_rows$version[i]), "primary")),
+              div(
+                class = "reviewer-plan-meta",
+                span("Deputy Mayor / portfolio"),
+                strong(plan_deputy_mayor_label(db, publishing_rows[i, , drop = FALSE]))
+              ),
+              div(
+                class = "reviewer-plan-meta",
+                span("Score"),
+                strong(if (!is.na(publishing_rows$overall_score[i])) score_out_of_100(publishing_rows$overall_score[i]) else "Not scored")
+              ),
+              tags$button(type = "button", class = "civic-button primary small", `data-review-plan` = publishing_rows$plan_id[i], icon("eye"), "Open")
+            )
+          })
+        }
+      )
+    )
+  )
+}
+
+page_plan_approval_queue <- function(db, app_roles = character(0), user_id = NA_integer_) {
+  joined <- filter_review_rows_for_user(db, plan_review_joined_rows(db), app_roles, user_id)
+  portfolio_approver <- user_is_portfolio_approver(db, user_id)
+  if (has_any_role(app_roles, "SystemAdmin")) {
+    approval_rows <- joined[joined$plan_status %in% c("DeputyMayorReview", "CAReview"), , drop = FALSE]
+  } else if (has_any_role(app_roles, "CAOffice")) {
+    ca_rows <- joined[joined$plan_status == "CAReview", , drop = FALSE]
+    if (nrow(ca_rows)) {
+      ca_matches <- vapply(seq_len(nrow(ca_rows)), function(i) {
+        user_name_matches_text(db, user_id, plan_ca_office_label(db, ca_rows[i, , drop = FALSE]))
+      }, logical(1))
+      ca_rows <- ca_rows[ca_matches, , drop = FALSE]
+    }
+    deputy_rows <- joined[joined$plan_status == "DeputyMayorReview", , drop = FALSE]
+    if (nrow(deputy_rows)) {
+      portfolio_matches <- vapply(seq_len(nrow(deputy_rows)), function(i) {
+        user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, deputy_rows[i, , drop = FALSE]))
+      }, logical(1))
+      deputy_rows <- deputy_rows[portfolio_matches, , drop = FALSE]
+    }
+    approval_rows <- rbind(ca_rows, deputy_rows)
+  } else if (has_any_role(app_roles, "DeputyMayor") || portfolio_approver) {
+    approval_rows <- joined[joined$plan_status == "DeputyMayorReview", , drop = FALSE]
+  } else {
+    approval_rows <- joined[0, , drop = FALSE]
+  }
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "Plan approval"),
+        h1("Plan Approval Queue"),
+        p("Review plans routed to Deputy Mayor or CA Office approval before final publishing.")
+      ),
+      status_chip(paste(nrow(approval_rows), "waiting"), "primary")
+    ),
+    surface(
+      "Approval Queue",
+      NULL,
+      div(
+        class = "reviewer-plan-list",
+        if (!nrow(approval_rows)) {
+          p(class = "empty-state-copy", "No plans are currently waiting for this approval step.")
+        } else {
+          lapply(seq_len(nrow(approval_rows)), function(i) {
+            div(
+              class = "reviewer-plan-row",
+              div(
+                h3(approval_rows$submitter_name[i]),
+                p(approval_rows$action_pillar_label[i])
+              ),
+              div(class = "chip-row", status_chip(agency_plan_status(approval_rows$plan_status[i]), status_tone(approval_rows$plan_status[i])), status_chip(paste("Version", approval_rows$version[i]), "primary")),
+              div(
+                class = "reviewer-plan-meta",
+                span("Deputy Mayor / portfolio"),
+                strong(plan_deputy_mayor_label(db, approval_rows[i, , drop = FALSE]))
+              ),
+              div(
+                class = "reviewer-plan-meta",
+                span("Score"),
+                strong(if (!is.na(approval_rows$overall_score[i])) score_out_of_100(approval_rows$overall_score[i]) else "Not scored")
+              ),
+              div(
+                class = "reviewer-plan-actions",
+                tags$button(type = "button", class = "civic-button primary small", `data-review-plan` = approval_rows$plan_id[i], icon("eye"), "Open"),
+                tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = approval_rows$plan_id[i], `data-export-type` = "pdf", `data-include-review` = "true", icon("file-pdf"), "Export PDF")
+              )
+            )
+          })
+        }
+      )
+    )
+  )
+}
+
+page_plan_review_detail <- function(db, plan_id, can_edit_review = FALSE, can_assign_reviewer = FALSE, include_review = TRUE, can_route_review = FALSE, can_approve_gate = FALSE, can_manage_deputy_stamp = FALSE, can_manage_ca_stamp = FALSE) {
+  plan_id <- suppressWarnings(as.integer(plan_id))
+  if (is.na(plan_id)) {
+    return(tagList(
+      div(
+        class = "briefing-header compact",
+        div(
+          div(class = "eyebrow", "Plan review"),
+          h1("Select a Plan"),
+          p("Choose a plan from the review queue to open the full-page review workspace.")
+        ),
+        actionButton("back_to_review_queue", label = tagList(icon("arrow-left"), "Back to queue"), class = "civic-button secondary small")
+      )
+    ))
+  }
+  history_plan_modal(
+    db,
+    plan_id,
+    can_edit_review = can_edit_review,
+    can_assign_reviewer = can_assign_reviewer,
+    include_review = include_review,
+    full_page = TRUE,
+    can_route_review = can_route_review,
+    can_approve_gate = can_approve_gate,
+    can_manage_deputy_stamp = can_manage_deputy_stamp,
+    can_manage_ca_stamp = can_manage_ca_stamp
   )
 }
 
@@ -923,6 +1858,7 @@ measure_review_card <- function(db, measure) {
         textAreaInput(feedback_id, "Reviewer feedback", rows = 3, placeholder = "Add feedback before returning this measure to the agency."),
         div(
           class = "measure-review-actions",
+          tags$button(type = "button", class = "civic-button secondary", `data-measure-id` = measure$measure_id[[1]], icon("list-check"), "Review criteria"),
           tags$button(type = "button", class = "civic-button secondary", `data-measure-review-action` = "return", `data-measure-id` = measure$measure_id[[1]], icon("rotate-left"), "Return with feedback"),
           tags$button(type = "button", class = "civic-button primary", `data-measure-review-action` = "approve", `data-measure-id` = measure$measure_id[[1]], icon("check"), "Approve")
         )
@@ -964,16 +1900,261 @@ page_measure_review <- function(db) {
   )
 }
 
-page_landing <- function(db, agency_id) {
+feedback_category_choices <- c("Uncategorized", "Bug", "Feature")
+feedback_priority_choices <- c("Unassigned", "Low", "Medium", "High", "Urgent")
+feedback_status_choices <- c("Open", "In Review", "Complete", "Archived")
+
+feedback_system_admin_choices <- function(db) {
+  if (!"access_user_role" %in% names(db) || !nrow(db$access_user_role)) return(c("Unassigned" = ""))
+  admin_rows <- db$access_user_role[db$access_user_role$app_role == "SystemAdmin", , drop = FALSE]
+  admin_rows <- admin_rows[!is.na(admin_rows$user_id), , drop = FALSE]
+  admin_rows <- admin_rows[!duplicated(admin_rows$user_id), , drop = FALSE]
+  if (!nrow(admin_rows)) return(c("Unassigned" = ""))
+  labels <- ifelse(
+    !is.na(admin_rows$email) & nzchar(trimws(admin_rows$email)),
+    paste0(admin_rows$full_name, " - ", admin_rows$email),
+    admin_rows$full_name
+  )
+  c("Unassigned" = "", stats::setNames(as.character(admin_rows$user_id), labels))
+}
+
+feedback_admin_card <- function(row, admin_choices) {
+  feedback_id <- row$feedback_id[[1]]
+  screenshot <- row$screenshot_data[[1]]
+  comment <- row$comment[[1]]
+  assigned_admin_id <- if ("assigned_admin_id" %in% names(row) && !is.na(row$assigned_admin_id[[1]])) as.character(row$assigned_admin_id[[1]]) else ""
+  assigned_admin_label <- if ("assigned_admin_name" %in% names(row) && !is.na(row$assigned_admin_name[[1]])) row$assigned_admin_name[[1]] else "Unassigned"
+  search_text <- paste(row$user_email[[1]], row$comment[[1]], row$page_key[[1]], row$page_url[[1]], assigned_admin_label, collapse = " ")
+  div(
+    class = "feedback-admin-card",
+    `data-feedback-row` = feedback_id,
+    `data-feedback-category` = row$category[[1]],
+    `data-feedback-priority` = row$priority[[1]],
+    `data-feedback-status` = row$status[[1]],
+    `data-feedback-search` = tolower(search_text),
+    div(
+      class = "feedback-admin-card-header",
+      div(
+        div(class = "eyebrow", paste("Feedback #", feedback_id, sep = "")),
+        h3(if (nzchar(trimws(row$user_email[[1]] %||% ""))) row$user_email[[1]] else "No email provided"),
+        span(class = "feedback-admin-date", paste("Submitted", row$created_at[[1]])),
+        span(class = "feedback-admin-date", paste("Assigned to", assigned_admin_label))
+      ),
+      div(
+        class = "feedback-status-stack",
+        status_chip(row$status[[1]], if (identical(row$status[[1]], "Complete")) "success" else if (identical(row$status[[1]], "Archived")) "neutral" else "primary"),
+        status_chip(row$priority[[1]], if (row$priority[[1]] %in% c("High", "Urgent")) "warning" else "primary")
+      )
+    ),
+    p(class = "feedback-comment", comment),
+    if (!is.na(screenshot) && nzchar(trimws(screenshot))) {
+      tags$a(
+        class = "feedback-screenshot-link",
+        href = screenshot,
+        target = "_blank",
+        rel = "noopener",
+        tags$img(src = screenshot, alt = "Submitted screenshot"),
+        span("Open screenshot")
+      )
+    },
+    if (!is.na(row$page_url[[1]]) && nzchar(trimws(row$page_url[[1]]))) {
+      tags$a(class = "feedback-page-link", href = row$page_url[[1]], target = "_blank", rel = "noopener", row$page_url[[1]])
+    },
+    div(
+      class = "feedback-admin-controls",
+      div(
+        class = "measure-field",
+        tags$label(`for` = paste0("feedback_category_", feedback_id), "Category"),
+        tags$select(
+          id = paste0("feedback_category_", feedback_id),
+          lapply(feedback_category_choices, function(choice) {
+            tags$option(value = choice, selected = identical(choice, row$category[[1]]), choice)
+          })
+        )
+      ),
+      div(
+        class = "measure-field",
+        tags$label(`for` = paste0("feedback_priority_", feedback_id), "Priority"),
+        tags$select(
+          id = paste0("feedback_priority_", feedback_id),
+          lapply(feedback_priority_choices, function(choice) {
+            tags$option(value = choice, selected = identical(choice, row$priority[[1]]), choice)
+          })
+        )
+      ),
+      div(
+        class = "measure-field",
+        tags$label(`for` = paste0("feedback_status_", feedback_id), "Status"),
+        tags$select(
+          id = paste0("feedback_status_", feedback_id),
+          lapply(feedback_status_choices, function(choice) {
+            tags$option(value = choice, selected = identical(choice, row$status[[1]]), choice)
+          })
+        )
+      ),
+      div(
+        class = "measure-field",
+        tags$label(`for` = paste0("feedback_assigned_admin_", feedback_id), "Assigned System Admin"),
+        tags$select(
+          id = paste0("feedback_assigned_admin_", feedback_id),
+          lapply(names(admin_choices), function(label) {
+            value <- admin_choices[[label]]
+            tags$option(value = value, selected = identical(value, assigned_admin_id), label)
+          })
+        )
+      )
+    ),
+    div(
+      class = "feedback-admin-actions",
+      tags$button(type = "button", class = "civic-button secondary", `data-feedback-save` = feedback_id, icon("floppy-disk"), "Save"),
+      tags$button(type = "button", class = "civic-button secondary", `data-feedback-complete` = feedback_id, icon("check"), "Mark complete"),
+      tags$button(type = "button", class = "civic-button secondary", `data-feedback-archive` = feedback_id, icon("box-archive"), "Archive"),
+      tags$button(type = "button", class = "civic-button danger", `data-feedback-delete` = feedback_id, icon("trash"), "Delete")
+    )
+  )
+}
+
+page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  feedback <- db$application_feedback_request
+  admin_choices <- feedback_system_admin_choices(db)
+  status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
+  feedback_status_count <- function(status) {
+    if (!length(status_counts) || !status %in% names(status_counts)) return(0L)
+    as.integer(status_counts[[status]])
+  }
+  filtered_feedback <- feedback
+  search <- if (is.null(search) || length(search) == 0 || is.na(search[[1]])) "" else as.character(search[[1]])
+  search <- tolower(trimws(search))
+  category_filter <- if (is.null(category_filter) || length(category_filter) == 0) character(0) else as.character(category_filter)
+  priority_filter <- if (is.null(priority_filter) || length(priority_filter) == 0) character(0) else as.character(priority_filter)
+  status_filter <- if (is.null(status_filter) || length(status_filter) == 0) character(0) else as.character(status_filter)
+  category_filter <- category_filter[nzchar(category_filter)]
+  priority_filter <- priority_filter[nzchar(priority_filter)]
+  status_filter <- status_filter[nzchar(status_filter)]
+  if (nrow(filtered_feedback) && nzchar(search)) {
+    haystack <- tolower(paste(
+      filtered_feedback$user_email,
+      filtered_feedback$comment,
+      filtered_feedback$page_key,
+      filtered_feedback$page_url,
+      filtered_feedback$assigned_admin_name,
+      sep = " "
+    ))
+    filtered_feedback <- filtered_feedback[grepl(search, haystack, fixed = TRUE), , drop = FALSE]
+  }
+  if (nrow(filtered_feedback) && length(category_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$category %in% category_filter, , drop = FALSE]
+  }
+  if (nrow(filtered_feedback) && length(priority_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$priority %in% priority_filter, , drop = FALSE]
+  }
+  if (nrow(filtered_feedback) && length(status_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$status %in% status_filter, , drop = FALSE]
+  }
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "Application"),
+        h1("Bug/Fix"),
+        p("Review feedback, categorize requests, set priority, and close out completed fixes.")
+      ),
+      status_chip("System Admin", "primary")
+    ),
+    div(
+      class = "dashboard-grid reviewer-dashboard-grid",
+      metric_tile("Open", feedback_status_count("Open"), "Feedback needing triage"),
+      metric_tile("In review", feedback_status_count("In Review"), "Being worked"),
+      metric_tile("Complete", feedback_status_count("Complete"), "Closed requests", "success"),
+      metric_tile("Archived", feedback_status_count("Archived"), "Stored for reference", "primary")
+    ),
+    surface(
+      "Feedback Requests",
+      "Filter, categorize, prioritize, archive, delete, or mark requests complete.",
+      div(
+        class = "feedback-filter-grid",
+        div(class = "measure-field", textInput("feedback_search", "Search", value = search, placeholder = "Search email, page, or comment")),
+        div(class = "measure-field", selectInput("feedback_category_filter", "Category", choices = feedback_category_choices, selected = category_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_priority_filter", "Priority", choices = feedback_priority_choices, selected = priority_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_status_filter", "Status", choices = feedback_status_choices, selected = status_filter, multiple = TRUE))
+      ),
+      if (!nrow(feedback)) {
+        div(class = "empty-state", h3("No feedback yet"), p("Submitted feedback will appear here for System Admin review."))
+      } else if (!nrow(filtered_feedback)) {
+        div(class = "empty-state", h3("No matching feedback"), p("Clear or adjust the filters to see more requests."))
+      } else {
+        div(class = "feedback-admin-list", lapply(seq_len(nrow(filtered_feedback)), function(i) feedback_admin_card(filtered_feedback[i, , drop = FALSE], admin_choices)))
+      }
+    )
+  )
+}
+
+feedback_modal_ui <- function(user_email = "", page_label = "") {
+  div(
+    class = "custom-modal-backdrop feedback-modal-backdrop",
+    `data-close-input` = "close_feedback_modal",
+    div(
+      class = "custom-modal feedback-modal-panel",
+      role = "dialog",
+      `aria-modal` = "true",
+      `aria-labelledby` = "feedback_modal_title",
+      div(
+        class = "modal-header",
+        div(
+          div(class = "eyebrow", "Application feedback"),
+          h2(id = "feedback_modal_title", "Send Feedback"),
+          p("Tell us what happened, what you expected, or what would make the app easier to use.")
+        ),
+        tags$button(id = "close_feedback_modal", type = "button", class = "icon-button", `aria-label` = "Close feedback", icon("xmark"))
+      ),
+      div(
+        class = "feedback-form-grid",
+        div(class = "measure-field", textInput("feedback_email", "Email", value = user_email)),
+        div(class = "measure-field", textInput("feedback_page_label", "Current page", value = page_label))
+      ),
+      textAreaInput("feedback_comment", "Comment", rows = 5, placeholder = "Describe the bug, fix, or feature request."),
+      div(
+        class = "feedback-screenshot-tools",
+        tags$label(class = "civic-button secondary feedback-upload-label", icon("paperclip"), span("Upload image"), tags$input(id = "feedback_screenshot_file", type = "file", accept = "image/*")),
+        span("You can also paste a screenshot while this form is open.")
+      ),
+      tags$input(id = "feedback_screenshot_data", type = "hidden", value = ""),
+      div(id = "feedback_screenshot_preview", class = "feedback-screenshot-preview", "No screenshot attached"),
+      div(
+        class = "modal-actions",
+        tags$button(type = "button", id = "submit_feedback", class = "civic-button primary", icon("paper-plane"), "Submit feedback")
+      )
+    )
+  )
+}
+
+page_role_preview <- function(db, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_agency = "") {
+  div(
+    class = "builder-page role-preview-page",
+    div(
+      class = "briefing-header",
+      div(
+        class = "briefing-copy",
+        div(class = "eyebrow", "Application"),
+        h1("Role preview"),
+        p("Preview user access, role permissions, and working plan context.")
+      )
+    ),
+    role_preview_panel(db, app_roles, agency_roles, selected_user_id, selected_agency)
+  )
+}
+
+page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_roles = character(0)) {
   ctx <- selected_context(db, agency_id)
   plan <- ctx$plan
   agency <- ctx$agency
   header <- ctx$header
   services <- plan_service_rows(db, plan)
-  measures <- measure_library_rows(db, plan, include_ineligible = TRUE)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
-  validated_count <- sum(measures$validated)
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
+  selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan$plan_id, , drop = FALSE]
   overview_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "overview") else NULL
   overview_text <- if (nrow(overview)) overview$overview[[1]] else ""
@@ -984,13 +2165,19 @@ page_landing <- function(db, agency_id) {
   web_address <- draft_value(overview_draft, "agency_website", web_address)
   primary_contact <- if (nrow(header) && !is.na(header$primary_contact_name[[1]])) header$primary_contact_name[[1]] else "Unassigned"
   contact_email <- if (nrow(header) && !is.na(header$primary_contact_email[[1]])) header$primary_contact_email[[1]] else "Not provided"
-  timeline_items <- timeline_home_items(Sys.Date())
+  review_admin_mode <- uses_review_administration_mode(app_roles)
+  timeline_items <- timeline_all_items(Sys.Date())
+  scorable_services <- scorable_service_rows(services)
   goal_readiness <- goal_draft_readiness(db, plan, goals)
   complete_goal_count <- goal_readiness$complete_count
   aligned_goal_count <- goal_readiness$aligned_count
   minimum_goals <- goal_minimum_count(plan)
-  service_metric_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$service_id %in% services$service_id])
-  services_with_metrics <- sum(services$service_id %in% service_metric_service_ids)
+  service_metric_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$service_id %in% scorable_services$service_id])
+  services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
+  goal_measure_counts <- plan_goal_measure_counts(db, goals)
+  service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
+  goals_over_measure_limit <- goal_measure_counts[goal_measure_counts$measure_count > 5, , drop = FALSE]
+  services_over_measure_limit <- service_measure_counts[service_measure_counts$measure_count > 5, , drop = FALSE]
   overview_complete <- nonblank_text(overview_text) &&
     nonblank_text(vision_text) &&
     nonblank_text(web_address)
@@ -1001,20 +2188,23 @@ page_landing <- function(db, agency_id) {
   )
   goals_missing <- c(
     if (complete_goal_count < minimum_goals) paste(minimum_goals - complete_goal_count, "more complete goals"),
-    if (aligned_goal_count < 1) "one Action Plan alignment"
+    if (aligned_goal_count < 1) "one Action Plan alignment",
+    if (nrow(goals_over_measure_limit)) paste(nrow(goals_over_measure_limit), "goal(s) over 5 KPIs")
   )
   maximum_goals <- goal_maximum_count(plan)
-  goals_complete <- complete_goal_count >= minimum_goals && complete_goal_count <= maximum_goals && aligned_goal_count >= 1
-  missing_service_names <- if (nrow(services)) services$service_name[!services$service_id %in% service_metric_service_ids] else character(0)
-  services_complete <- submitter_is_mayoral_service(db, agency_id) || (nrow(services) > 0 && services_with_metrics == nrow(services))
-  measures_complete <- nrow(measures) > 0 && validated_count == nrow(measures)
+  goals_complete <- complete_goal_count >= minimum_goals && complete_goal_count <= maximum_goals && aligned_goal_count >= 1 && !nrow(goals_over_measure_limit)
+  missing_service_names <- if (nrow(scorable_services)) scorable_services$service_name[!scorable_services$service_id %in% service_metric_service_ids] else character(0)
+  services_complete <- submitter_is_mayoral_service(db, agency_id) || (nrow(scorable_services) == 0 || (services_with_metrics == nrow(scorable_services) && !nrow(services_over_measure_limit)))
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures)
   risks_complete <- nrow(risks) > 0
   service_detail <- if (submitter_is_mayoral_service(db, agency_id)) {
     "Not required for mayoral service plans"
-  } else if (!nrow(services)) {
-    "Missing: services"
+  } else if (nrow(services_over_measure_limit)) {
+    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics")
+  } else if (!nrow(scorable_services)) {
+    "No service metrics required for Administration services"
   } else if (services_complete) {
-    paste("All", nrow(services), "services have metrics")
+    paste("All", nrow(scorable_services), "scored services have metrics")
   } else {
     listed_services <- paste(head(missing_service_names, 3), collapse = ", ")
     more_services <- if (length(missing_service_names) > 3) paste("and", length(missing_service_names) - 3, "more") else ""
@@ -1027,12 +2217,7 @@ page_landing <- function(db, agency_id) {
       div(
         div(class = "eyebrow", "Performance cycle"),
         h1("Agency Performance Planning"),
-        p(paste("Track", ctx$display_name, "plan status, assigned contacts, services, measures, and risks before moving into the builder.")),
-        div(
-          class = "chip-row",
-          status_chip(format_status(plan$plan_status), status_tone(plan$plan_status)),
-          status_chip(paste("Version", plan$version), "primary")
-        )
+        p(if (review_admin_mode) "Track the full performance planning timeline and move into review queues or team administration." else "View the current timeline and performance planning guidance.")
       ),
       div(class = "briefing-meta", paste("Updated", plan$updated_at))
     ),
@@ -1051,31 +2236,6 @@ page_landing <- function(db, agency_id) {
           icon("file-word"),
           "View Performance Planning Guidance"
         )
-      )
-    ),
-    surface(
-      "Plan Status",
-      "Current plan details and a quick read on sections that are loaded or still need work.",
-      tagList(
-        tags$button(type = "button", class = "civic-button secondary small plan-status-history-link", `data-page` = "plan_history", icon("clock-rotate-left"), "Plan History & Status"),
-        div(
-          class = "plan-status-grid",
-          div(
-            class = "app-table plan-record-table",
-            div(class = "table-row table-head", span("Field"), span("Value")),
-            div(class = "table-row", span("Plan status"), status_chip(format_status(plan$plan_status), status_tone(plan$plan_status))),
-            div(class = "table-row", span("Primary contact"), span(primary_contact)),
-            div(class = "table-row", span("Contact email"), span(contact_email))
-          ),
-          div(
-            class = "snapshot-check-list",
-            snapshot_check_row("Agency overview and vision", if (overview_complete) "Overview, vision, and website are complete" else paste("Missing:", paste(overview_missing, collapse = ", ")), overview_complete),
-            snapshot_check_row("Goals and KPIs", if (goals_complete) paste(complete_goal_count, "complete goals with Action Plan alignment") else paste("Missing:", paste(goals_missing, collapse = ", ")), goals_complete),
-            snapshot_check_row("Services", service_detail, services_complete),
-            snapshot_check_row("Measures", if (measures_complete) paste("All", nrow(measures), "measures validated") else paste("Missing:", nrow(measures) - validated_count, "validated measures"), measures_complete),
-            snapshot_check_row("Risks", if (risks_complete) paste(nrow(risks), "risks registered") else "Missing: at least one risk", risks_complete)
-          )
-        ),
       )
     )
   )
@@ -1105,8 +2265,9 @@ page_strategic_plan <- function(db, agency_id) {
     div(
       class = "dashboard-grid action-plan-dashboard",
       action_plan_stat(length(strategic_plan), "Pillars"),
-      action_plan_stat(sum(vapply(strategic_plan, function(pillar) length(pillar$goals), integer(1))), "Goals"),
-      action_plan_stat(sum(vapply(strategic_plan, function(pillar) length(pillar$metrics), integer(1))), "Metrics")
+      action_plan_stat(sum(vapply(strategic_plan, function(pillar) length(pillar$goals), integer(1))), "Goals")
+      ,
+      action_plan_stat(sum(vapply(strategic_plan, function(pillar) length(pillar$metrics), integer(1))), "Measures")
     ),
     surface(
       "Pillars",
@@ -1160,18 +2321,75 @@ team_rows_for_plan <- function(db, agency_id) {
 team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
   plan <- current_plan(db, agency_id)
   accounting_agency_id <- plan_accounting_agency_id(db, plan)
-  access <- db$access_user_agency_access[db$access_user_agency_access$access_id == access_id, , drop = FALSE]
+  parent_agency_name <- agency_name(db, accounting_agency_id)
+  entity_name <- if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) plan_display_name(db, plan) else NA_character_
+  is_new <- identical(as.character(access_id), "new")
+  access <- if (is_new) {
+    data.frame(
+      access_id = NA_integer_,
+      user_id = NA_integer_,
+      agency_id = accounting_agency_id,
+      service_id = NA_character_,
+      full_name = "",
+      email = "",
+      agency_role = "Agency Staff",
+      stringsAsFactors = FALSE
+    )
+  } else {
+    db$access_user_agency_access[db$access_user_agency_access$access_id == as.integer(access_id), , drop = FALSE]
+  }
   if (!nrow(access)) return(NULL)
-  user_roles <- db$access_user_role[
-    db$access_user_role$user_id == access$user_id[[1]] &
-      (is.na(db$access_user_role$agency_id) | db$access_user_role$agency_id == accounting_agency_id),
-    ,
-    drop = FALSE
-  ]
+  user_roles <- if (is_new) {
+    data.frame()
+  } else {
+    db$access_user_role[
+      db$access_user_role$user_id == access$user_id[[1]] &
+        (is.na(db$access_user_role$agency_id) | db$access_user_role$agency_id == accounting_agency_id),
+      ,
+      drop = FALSE
+    ]
+  }
   agency_role <- access$agency_role[[1]]
   performance_role <- if (nrow(user_roles)) user_roles$app_role[[1]] else "AgencyViewer"
   role_row <- if (nrow(user_roles)) user_roles[1, , drop = FALSE] else data.frame()
-  disabled_attr <- if (can_edit) NULL else "disabled"
+  readonly_field <- function(label, value) {
+    div(
+      class = "measure-field team-readonly-field",
+      tags$span(class = "team-readonly-label", label),
+      tags$span(class = "team-readonly-value", value %||% "Not set")
+    )
+  }
+  access_fields <- if (can_edit) {
+    div(
+      class = "measure-form-grid",
+      div(class = "measure-field", textInput("team_full_name", "Person name", value = access$full_name[[1]])),
+      div(class = "measure-field", textInput("team_email", "Email", value = access$email[[1]])),
+      div(class = "measure-field", selectInput("team_agency_role", "Agency role", choices = agency_role_choices, selected = agency_role, selectize = FALSE)),
+      div(class = "measure-field", selectInput("team_performance_role", "Performance role", choices = performance_role_choices, selected = performance_role, selectize = FALSE)),
+      div(class = "measure-field", checkboxInput("team_budget_access", "Budget access", value = if (nrow(role_row)) isTRUE(role_row$budget_access[[1]]) else FALSE)),
+      div(class = "measure-field", checkboxInput("team_adaptive_planning", "Adaptive planning", value = if (nrow(role_row)) isTRUE(role_row$adaptive_planning[[1]]) else FALSE)),
+      div(class = "measure-field", checkboxInput("team_performance_plan_access", "Performance plan access", value = if (nrow(role_row)) isTRUE(role_row$performance_plan_access[[1]]) else TRUE))
+    )
+  } else {
+    div(
+      class = "measure-form-grid team-readonly-grid",
+      readonly_field("Person name", access$full_name[[1]]),
+      readonly_field("Email", access$email[[1]]),
+      readonly_field("Agency role", agency_role),
+      readonly_field("Performance role", performance_role),
+      readonly_field("Budget access", if (nrow(role_row) && isTRUE(role_row$budget_access[[1]])) "Yes" else "No"),
+      readonly_field("Adaptive planning", if (nrow(role_row) && isTRUE(role_row$adaptive_planning[[1]])) "Yes" else "No"),
+      readonly_field("Performance plan access", if (!nrow(role_row) || isTRUE(role_row$performance_plan_access[[1]])) "Yes" else "No")
+    )
+  }
+  save_actions <- if (can_edit) {
+    div(
+      class = "measure-submit-group",
+      tags$button(id = "save_team_role", type = "button", class = "civic-button primary", if (is_new) "Add team member" else "Save changes")
+    )
+  } else {
+    div(class = "measure-submit-group", actionButton("close_team_role_modal_footer", "Close", class = "civic-button secondary"))
+  }
   div(
     class = "custom-modal-backdrop measure-modal-backdrop",
     `data-close-input` = "close_team_role_modal",
@@ -1181,7 +2399,7 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
         class = "custom-modal-header",
         div(
           class = "measure-modal-title-block",
-          h2(access$full_name[[1]]),
+          h2(if (is_new) "Add team member" else access$full_name[[1]]),
           div(class = "chip-row measure-modal-status-row", status_chip(if (can_edit) "Editable" else "View only", if (can_edit) "success" else "warning"))
         ),
         actionButton("close_team_role_modal", "Close", class = "civic-button secondary small")
@@ -1191,62 +2409,100 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
         tags$section(
           class = "modal-section-block measure-form-section",
           h3("User Criteria"),
-          if (!can_edit) p(class = "goal-field-instruction", "Only Agency Directors and Admin users can change role assignments."),
           div(
-            class = "measure-form-grid",
-            div(class = "measure-field", textInput("team_full_name", "Person name", value = access$full_name[[1]])),
-            div(class = "measure-field", textInput("team_email", "Email", value = access$email[[1]])),
-            div(class = "measure-field", selectInput("team_agency_role", "Agency role", choices = agency_role_choices, selected = agency_role, selectize = FALSE)),
-            div(class = "measure-field", selectInput("team_performance_role", "Performance role", choices = performance_role_choices, selected = performance_role, selectize = FALSE)),
-            div(class = "measure-field", checkboxInput("team_budget_access", "Budget access", value = if (nrow(role_row)) isTRUE(role_row$budget_access[[1]]) else FALSE)),
-            div(class = "measure-field", checkboxInput("team_adaptive_planning", "Adaptive planning", value = if (nrow(role_row)) isTRUE(role_row$adaptive_planning[[1]]) else FALSE)),
-            div(class = "measure-field", checkboxInput("team_performance_plan_access", "Performance plan access", value = if (nrow(role_row)) isTRUE(role_row$performance_plan_access[[1]]) else TRUE))
-          )
+            class = "goal-field-instruction",
+            p(tags$strong("Parent agency: "), parent_agency_name),
+            if (!is.na(entity_name)) p(tags$strong("Plan entity: "), entity_name)
+          ),
+          if (!can_edit) p(class = "goal-field-instruction", "Role assignment changes are limited by app role, agency role, and scope."),
+          access_fields
         )
       ),
       div(
         class = "measure-modal-actions",
         div(),
-        div(
-          class = "measure-submit-group",
-          tags$button(id = "save_team_role", type = "button", class = "civic-button primary", disabled = disabled_attr, "Save changes")
-        )
+        save_actions
       )
     )
   )
 }
 
-page_team <- function(db, agency_id, can_manage_team = FALSE) {
+page_team <- function(db, agency_id, can_manage_team = FALSE, team_scope_choices = NULL) {
+  if (!is.null(team_scope_choices) && length(team_scope_choices) > 0 && !agency_id %in% unname(team_scope_choices)) {
+    agency_id <- unname(team_scope_choices)[[1]]
+  }
+  plan <- current_plan(db, agency_id)
+  page_title <- performance_plan_title(db, plan, "Team & Roles")
+  page_description <- if (can_manage_team) {
+    "Review and update user role assignments for this plan."
+  } else {
+    "Review who owns plan sections, metric approvals, and final submission. Role edits are limited by app role, agency role, and scope."
+  }
+  plan_id <- if (!is.null(plan) && nrow(plan)) plan$plan_id[[1]] else NA_integer_
   team <- team_rows_for_plan(db, agency_id)
+  add_button <- if (can_manage_team) {
+    tags$button(type = "button", class = "civic-button primary small", `data-team-access-id` = "new", icon("user-plus"), "Add team member")
+  }
+  team_scope_dropdown <- if (!is.null(team_scope_choices) && length(team_scope_choices) > 1) {
+    selected_team_scope <- if (agency_id %in% unname(team_scope_choices)) agency_id else unname(team_scope_choices)[[1]]
+    div(
+      class = "team-scope-selector",
+      selectInput(
+        "team_scope_agency",
+        "Agency team scope",
+        choices = team_scope_choices,
+        selected = selected_team_scope,
+        selectize = TRUE,
+        width = "100%"
+      )
+    )
+  }
   if (nrow(team) == 0) {
-    return(surface(
-      "Team & Roles",
-      "Review who owns plan sections, metric approvals, and final submission.",
-      div(class = "empty-state", h3("No team members assigned"), p("Add user access rows to populate this page."))
+    return(builder_page(
+      page_title,
+      page_description,
+      surface(
+        "Team members",
+        "Review role assignments and access for this plan.",
+        div(class = "team-page-actions", team_scope_dropdown, add_button),
+        div(class = "empty-state", h3("No team members assigned"), p("Add user access rows to populate this page."))
+      ),
+      plan_id = plan_id,
+      section_key = "team",
+      show_save = FALSE,
+      show_status = FALSE
     ))
   }
-  surface(
-    "Team & Roles",
-    if (can_manage_team) "Review and update user role assignments for this plan." else "Review who owns plan sections, metric approvals, and final submission. Role edits are limited to Agency Directors and Admin users.",
-    div(
-      class = "app-table team-role-table",
-      div(class = "table-row table-head", span("Person"), span("Agency role"), span("Performance role")),
-      lapply(seq_len(nrow(team)), function(i) {
-        div(
-          class = "table-row",
-          span(team$full_name[i]),
-          span(team$agency_role[i]),
-          span(
-            tags$button(
-              type = "button",
+  builder_page(
+    page_title,
+    page_description,
+    surface(
+      "Team members",
+      "Review role assignments and access for this plan.",
+      div(class = "team-page-actions", team_scope_dropdown, add_button),
+      div(
+        class = "app-table team-role-table",
+        div(class = "table-row table-head", span("Person"), span("Agency role"), span("Performance role")),
+        lapply(seq_len(nrow(team)), function(i) {
+          div(
+            class = "table-row team-role-row",
+            role = "button",
+            tabindex = "0",
+            `data-team-access-id` = team$access_id[i],
+            span(team$full_name[i]),
+            span(team$agency_role[i]),
+            span(
               class = paste("role-link-button", if (!can_manage_team) "view-only" else ""),
-              `data-team-access-id` = team$access_id[i],
               team$performance_role[i]
             )
           )
-        )
-      })
-    )
+        })
+      )
+    ),
+    plan_id = plan_id,
+    section_key = "team",
+    show_save = FALSE,
+    show_status = FALSE
   )
 }
 
@@ -1288,6 +2544,106 @@ goal_kpi_choice_rows <- function(db, plan, goals) {
   rows[order(rows$title), , drop = FALSE]
 }
 
+plan_goal_measure_counts <- function(db, goals) {
+  if (is.null(goals) || !nrow(goals)) return(data.frame(agency_goal_id = integer(), measure_count = integer()))
+  links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id %in% goals$agency_goal_id, , drop = FALSE]
+  if (!nrow(links)) return(data.frame(agency_goal_id = goals$agency_goal_id, measure_count = 0L))
+  counts <- stats::aggregate(measure_id ~ agency_goal_id, data = unique(links[, c("agency_goal_id", "measure_id"), drop = FALSE]), FUN = length)
+  names(counts)[names(counts) == "measure_id"] <- "measure_count"
+  merge(data.frame(agency_goal_id = goals$agency_goal_id), counts, by = "agency_goal_id", all.x = TRUE)
+}
+
+plan_service_measure_counts <- function(db, plan, services) {
+  if (is.null(services) || !nrow(services)) return(data.frame(plan_service_id = integer(), service_id = character(), measure_count = integer()))
+  counts <- data.frame(
+    plan_service_id = services$plan_service_id,
+    service_id = services$service_id,
+    measure_count = vapply(services$service_id, function(service_id) length(unique(service_metric_ids(db, plan, service_id, include_ineligible = TRUE))), integer(1)),
+    stringsAsFactors = FALSE
+  )
+  counts
+}
+
+plan_selected_measure_ids <- function(db, plan, goals, services) {
+  goal_ids <- if (is.null(goals) || !nrow(goals)) integer(0) else goals$agency_goal_id
+  goal_measure_ids <- unique(db$performance_pm_goal_link$measure_id[db$performance_pm_goal_link$agency_goal_id %in% goal_ids])
+  scorable_services <- scorable_service_rows(services)
+  service_measure_ids <- if (is.null(scorable_services) || !nrow(scorable_services)) integer(0) else unique(unlist(lapply(scorable_services$service_id, function(service_id) service_metric_ids(db, plan, service_id, include_ineligible = TRUE)), use.names = FALSE))
+  unique(c(goal_measure_ids, service_measure_ids))
+}
+
+plan_readiness_summary <- function(db, submitter_value, plan) {
+  if (is.null(plan) || !nrow(plan)) return(list(rows = list(), has_errors = TRUE))
+  services <- plan_service_rows(db, plan)
+  goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
+  risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
+  selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
+  overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan$plan_id, , drop = FALSE]
+  overview_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "overview") else NULL
+  overview_text <- draft_value(overview_draft, "agency_summary", if (nrow(overview)) overview$overview[[1]] else "")
+  vision_text <- draft_value(overview_draft, "agency_vision", if (nrow(overview)) overview$vision[[1]] else "")
+  web_address <- draft_value(overview_draft, "agency_website", if (nrow(overview)) overview$web_address[[1]] else "")
+  goal_readiness <- goal_draft_readiness(db, plan, goals)
+  complete_goal_count <- goal_readiness$complete_count
+  aligned_goal_count <- goal_readiness$aligned_count
+  minimum_goals <- goal_minimum_count(plan)
+  maximum_goals <- goal_maximum_count(plan)
+  goal_measure_counts <- plan_goal_measure_counts(db, goals)
+  scorable_services <- scorable_service_rows(services)
+  service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
+  goals_over_measure_limit <- goal_measure_counts[goal_measure_counts$measure_count > 5, , drop = FALSE]
+  services_over_measure_limit <- service_measure_counts[service_measure_counts$measure_count > 5, , drop = FALSE]
+  service_metric_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$service_id %in% scorable_services$service_id])
+  services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
+  missing_service_names <- if (nrow(scorable_services)) scorable_services$service_name[!scorable_services$service_id %in% service_metric_service_ids] else character(0)
+  overview_missing <- c(
+    if (!nonblank_text(overview_text)) "overview",
+    if (!nonblank_text(vision_text)) "vision",
+    if (!nonblank_text(web_address)) "website"
+  )
+  overview_complete <- !length(overview_missing)
+  goals_missing <- c(
+    if (complete_goal_count < minimum_goals) paste(minimum_goals - complete_goal_count, "more complete goals"),
+    if (complete_goal_count > maximum_goals) paste("reduce to", maximum_goals, "goals"),
+    if (aligned_goal_count < 1) "one Action Plan alignment",
+    if (nrow(goals_over_measure_limit)) paste(nrow(goals_over_measure_limit), "goal(s) over 5 KPIs")
+  )
+  goals_complete <- !length(goals_missing)
+  services_complete <- submitter_is_mayoral_service(db, submitter_value) || (nrow(scorable_services) == 0 || (services_with_metrics == nrow(scorable_services) && !nrow(services_over_measure_limit)))
+  service_detail <- if (submitter_is_mayoral_service(db, submitter_value)) {
+    "Not required for mayoral service plans"
+  } else if (nrow(services_over_measure_limit)) {
+    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics")
+  } else if (!nrow(scorable_services)) {
+    "No service metrics required for Administration services"
+  } else if (services_complete) {
+    paste("All", nrow(scorable_services), "scored services have metrics")
+  } else {
+    listed_services <- paste(head(missing_service_names, 3), collapse = ", ")
+    more_services <- if (length(missing_service_names) > 3) paste("and", length(missing_service_names) - 3, "more") else ""
+    paste("Missing metrics:", listed_services, more_services)
+  }
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures)
+  measures_detail <- if (measures_complete) {
+    paste("All", length(selected_measure_ids), "plan measures validated")
+  } else if (!length(selected_measure_ids)) {
+    "Missing: at least one plan measure"
+  } else {
+    paste("Missing validation:", paste(head(invalid_selected_measures$title, 3), collapse = ", "), if (nrow(invalid_selected_measures) > 3) paste("and", nrow(invalid_selected_measures) - 3, "more") else "")
+  }
+  risks_complete <- nrow(risks) > 0
+  rows <- list(
+    list(label = "Agency overview and vision", detail = if (overview_complete) "Overview, vision, and website are complete" else paste("Missing:", paste(overview_missing, collapse = ", ")), complete = overview_complete),
+    list(label = "Goals and KPIs", detail = if (goals_complete) paste(complete_goal_count, "complete goals with Action Plan alignment") else paste("Missing:", paste(goals_missing, collapse = ", ")), complete = goals_complete),
+    list(label = "Services", detail = service_detail, complete = services_complete),
+    list(label = "Measures", detail = measures_detail, complete = measures_complete),
+    list(label = "Risks", detail = if (risks_complete) paste(nrow(risks), "risks registered") else "Missing: at least one risk", complete = risks_complete)
+  )
+  list(rows = rows, has_errors = any(!vapply(rows, function(row) isTRUE(row$complete), logical(1))))
+}
+
 measure_library_status <- function(measure) {
   if (is.null(measure) || !nrow(measure)) return(list(label = "Draft", tone = "warning"))
   change_mapping <- if ("change_mapping" %in% names(measure)) measure$change_mapping[[1]] else NA_character_
@@ -1327,13 +2683,75 @@ agency_selector_choices <- function(db) {
   choices[order(names(choices))]
 }
 
+agency_choices_only <- function(db) {
+  choices <- agency_selector_choices(db)
+  choices[startsWith(unname(choices), "agency:")]
+}
+
+user_submitter_choices <- function(db, user_id) {
+  valid_choices <- agency_selector_choices(db)
+  valid_values <- unname(valid_choices)
+  user_id <- as.character(user_id %||% "")
+  if (!nzchar(user_id)) return(valid_choices[0])
+  agency_rows <- db$access_user_agency_access[as.character(db$access_user_agency_access$user_id) == user_id, , drop = FALSE]
+  role_rows <- db$access_user_role[as.character(db$access_user_role$user_id) == user_id, , drop = FALSE]
+  values <- character(0)
+
+  if (nrow(agency_rows)) {
+    service_ids <- unique(agency_rows$service_id[!is.na(agency_rows$service_id)])
+    if (length(service_ids) && "reference_plan_entity_service" %in% names(db) && "reference_plan_entity" %in% names(db)) {
+      entity_links <- db$reference_plan_entity_service[db$reference_plan_entity_service$service_id %in% service_ids, , drop = FALSE]
+      entities <- db$reference_plan_entity[
+        db$reference_plan_entity$entity_id %in% entity_links$entity_id &
+          db$reference_plan_entity$active &
+          db$reference_plan_entity$has_own_plan,
+        ,
+        drop = FALSE
+      ]
+      values <- c(values, paste0("entity:", entities$entity_id))
+    }
+    agency_ids <- unique(agency_rows$agency_id[!is.na(agency_rows$agency_id)])
+    values <- c(values, paste0("agency:", agency_ids))
+  }
+
+  if (nrow(role_rows)) {
+    role_agency_ids <- unique(role_rows$agency_id[!is.na(role_rows$agency_id)])
+    values <- c(values, paste0("agency:", role_agency_ids))
+  }
+
+  assignments <- entity_role_assignment_rows(db)
+  if (nrow(assignments) && "submitter" %in% names(assignments)) {
+    assignment_matches <- vapply(
+      assignments$submitter,
+      function(submitter) user_name_matches_text(db, user_id, submitter),
+      logical(1)
+    )
+    assignment_rows <- assignments[assignment_matches, , drop = FALSE]
+    if (nrow(assignment_rows)) {
+      entity_ids <- suppressWarnings(as.integer(assignment_rows$entity_id))
+      entity_ids <- entity_ids[!is.na(entity_ids)]
+      values <- c(values, paste0("entity:", entity_ids))
+
+      agency_assignment_rows <- assignment_rows[
+        is.na(suppressWarnings(as.integer(assignment_rows$entity_id))) |
+          !nzchar(trimws(as.character(assignment_rows$entity_id))),
+        ,
+        drop = FALSE
+      ]
+      if (nrow(agency_assignment_rows)) {
+        agency_ids <- unique(agency_assignment_rows$agency_id[!is.na(agency_assignment_rows$agency_id) & nzchar(trimws(agency_assignment_rows$agency_id))])
+        values <- c(values, paste0("agency:", agency_ids))
+      }
+    }
+  }
+
+  values <- unique(values[nzchar(values) & values %in% valid_values])
+  valid_choices[valid_values %in% values]
+}
+
 plan_uses_draft_payload <- function(plan) {
   if (is.null(plan) || !nrow(plan)) return(FALSE)
   !plan$plan_status[[1]] %in% c("Approved", "Published")
-}
-
-user_can_submit_plan <- function() {
-  TRUE
 }
 
 section_draft_payload <- function(db, plan_id, section_key) {
@@ -1356,7 +2774,31 @@ draft_value <- function(draft, field_id, fallback = "") {
   as.character(value)
 }
 
-builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE) {
+validate_measure_selection_limit <- function(payload_json, section_key, limit = 5L) {
+  payload <- tryCatch(jsonlite::fromJSON(payload_json, simplifyVector = FALSE), error = function(error) NULL)
+  if (is.null(payload)) return(NULL)
+  selection_groups <- list()
+  label <- "measure selections"
+  if (identical(section_key, "goals")) {
+    selection_groups <- payload$kpis %||% list()
+    label <- "KPIs"
+  } else if (identical(section_key, "services")) {
+    selection_groups <- payload$serviceMetrics %||% list()
+    label <- "metrics"
+  }
+  if (!length(selection_groups)) return(NULL)
+  over_limit <- names(selection_groups)[vapply(selection_groups, function(values) {
+    values <- as.character(unlist(values))
+    sum(nzchar(values)) > limit
+  }, logical(1))]
+  if (length(over_limit)) {
+    paste0("Each ", if (identical(section_key, "goals")) "goal" else "service", " can have no more than ", limit, " ", label, ". Please reduce selections before saving.")
+  } else {
+    NULL
+  }
+}
+
+builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL) {
   rubric_note <- "Rubric criteria are provided at the bottom of this page for reference."
   description <- if (section_key %in% c("overview", "goals", "services")) {
     paste(description, rubric_note)
@@ -1371,7 +2813,12 @@ builder_page <- function(title, description, body, plan_id, section_key, show_sa
         h1(title),
         p(description)
       ),
-      if (show_status) status_chip("Draft", "warning")
+      div(
+        class = "builder-header-actions",
+        if (show_status) status_chip("Draft", "warning"),
+        if (locked) span(class = "header-autosave-status locked", locked_message %||% "This plan is view-only right now. Fields are locked.")
+        else if (show_save) span(id = "plan_save_status", class = "header-autosave-status", "Loading the shared draft...")
+      )
     ),
     div(
       class = "builder-page-content",
@@ -1382,14 +2829,7 @@ builder_page <- function(title, description, body, plan_id, section_key, show_sa
       `data-plan-locked` = if (locked) "true" else "false",
       body
     ),
-    if (locked) div(
-      class = "sticky-save-bar compact-save-bar locked-save-bar",
-      span("This plan has been submitted and fields are locked while it is in review.")
-    ) else if (show_save) div(
-      class = "sticky-save-bar compact-save-bar",
-      span(id = "plan_save_status", "Loading the shared draft..."),
-      tags$button(id = "save_plan_draft", type = "button", class = "civic-button primary small compact-save-button", icon("floppy-disk"), "Save draft")
-    )
+    NULL
   )
 }
 
@@ -1409,6 +2849,16 @@ review_summary_for_plan <- function(db, plan_id) {
   scores <- db$review_section_score[db$review_section_score$review_id == review$review_id[[1]], , drop = FALSE]
   feedback <- db$review_section_feedback[db$review_section_feedback$review_id == review$review_id[[1]], , drop = FALSE]
   list(review = review, scores = scores, feedback = feedback)
+}
+
+filter_review_scores_to_scorable_services <- function(scores, scorable_plan_service_ids) {
+  if (is.null(scores) || !nrow(scores)) return(scores)
+  scores[
+    scores$target_type != "service" |
+      (!is.na(scores$target_id) & scores$target_id %in% scorable_plan_service_ids),
+    ,
+    drop = FALSE
+  ]
 }
 
 draft_section_count <- function(db, plan_id) {
@@ -1450,21 +2900,427 @@ agency_director_contact <- function(db, plan) {
     ,
     drop = FALSE
   ]
-  if (nrow(director_rows)) return(paste(director_rows$full_name[[1]], "-", director_rows$email[[1]]))
+  if (nrow(director_rows)) return(director_rows$full_name[[1]])
   approver_rows <- db$access_user_role[
     db$access_user_role$agency_id == agency_id & db$access_user_role$app_role == "AgencyApprover",
     ,
     drop = FALSE
   ]
-  if (nrow(approver_rows)) return(paste(approver_rows$full_name[[1]], "-", approver_rows$email[[1]]))
+  if (nrow(approver_rows)) return(approver_rows$full_name[[1]])
   header <- db$performance_plan_header[db$performance_plan_header$plan_id == plan$plan_id[[1]], , drop = FALSE]
-  if (nrow(header)) return(paste(header$primary_contact_name[[1]], "-", header$primary_contact_email[[1]]))
+  if (nrow(header) && !is.na(header$primary_contact_name[[1]]) && nzchar(trimws(header$primary_contact_name[[1]]))) return(header$primary_contact_name[[1]])
   "Director-level contact not assigned"
 }
 
 score_out_of_100 <- function(score) {
   if (is.na(score)) return("Not scored")
-  paste0(round(as.numeric(score) * 25), "/100")
+  numeric_score <- as.numeric(score)
+  if (numeric_score <= 4) numeric_score <- numeric_score * 25
+  paste0(round(numeric_score), "/100")
+}
+
+plan_review_expected_count <- function(goal_count, service_count) {
+  nrow(plan_review_criteria("plan_overview")) +
+    nrow(plan_review_criteria("plan_measures")) +
+    nrow(plan_review_criteria("plan_risks")) +
+    nrow(plan_review_criteria("plan_data")) +
+    goal_count * nrow(plan_review_criteria("goal")) +
+    service_count * nrow(plan_review_criteria("service"))
+}
+
+plan_review_scored_count <- function(scores) {
+  if (is.null(scores) || !nrow(scores)) return(0L)
+  sum(!is.na(scores$score))
+}
+
+submitted_plan_statuses <- function() {
+  c("Submitted", "UnderReview", "DirectorSignOff", "DeputyMayorReview", "CAReview", "Approved", "Published", "Amended")
+}
+
+review_approvable_statuses <- function() {
+  c("Submitted", "UnderReview", "FeedbackReturned", "Returned", "AgencyRevised")
+}
+
+plan_gate_stage <- function(plan_status) {
+  switch(
+    as.character(plan_status),
+    DeputyMayorReview = "DeputyMayor",
+    CAReview = "CAOffice",
+    NA_character_
+  )
+}
+
+plan_gate_next_status <- function(plan_status) {
+  switch(
+    as.character(plan_status),
+    DeputyMayorReview = "CAReview",
+    CAReview = "Approved",
+    NA_character_
+  )
+}
+
+route_target_label <- function(role, person) {
+  person <- trimws(as.character(person %||% ""))
+  if (!nzchar(person) || identical(tolower(person), "unassigned")) role else paste(role, "-", person)
+}
+
+plan_review_route_choices <- function(db = NULL, plan = NULL) {
+  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
+  ca_label <- if (!is.null(db) && !is.null(plan)) route_target_label("CA Office", plan_ca_office_label(db, plan)) else "CA Office"
+  c(
+    stats::setNames("Returned", submitter_label),
+    stats::setNames("DeputyMayorReview", deputy_label),
+    stats::setNames("CAReview", ca_label),
+    "Ready for publish" = "Approved"
+  )
+}
+
+plan_review_default_route <- function(plan_status) {
+  plan_status <- as.character(plan_status %||% "")
+  if (identical(plan_status, "CAReview")) return("Approved")
+  if (identical(plan_status, "DeputyMayorReview")) return("CAReview")
+  "DeputyMayorReview"
+}
+
+publishing_route_choices <- function(db = NULL, plan = NULL) {
+  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  reviewer_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Reviewer", plan_reviewer_label(db, plan)) else "Reviewer"
+  deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
+  ca_label <- if (!is.null(db) && !is.null(plan)) route_target_label("CA Office", plan_ca_office_label(db, plan)) else "CA Office"
+  c(
+    stats::setNames("Returned", submitter_label),
+    stats::setNames("UnderReview", reviewer_label),
+    stats::setNames("DeputyMayorReview", deputy_label),
+    stats::setNames("CAReview", ca_label)
+  )
+}
+
+approval_return_route_choices <- function(stage, db = NULL, plan = NULL) {
+  reviewer_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Reviewer", plan_reviewer_label(db, plan)) else "Reviewer"
+  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
+  if (identical(as.character(stage), "CAOffice")) {
+    choices <- c("DeputyMayorReview", "UnderReview", "Returned")
+    names(choices) <- c(deputy_label, reviewer_label, submitter_label)
+    return(choices)
+  }
+  choices <- c("UnderReview", "Returned")
+  names(choices) <- c(reviewer_label, submitter_label)
+  choices
+}
+
+measure_validation_chip <- function(measure) {
+  approval_status <- if (!is.null(measure) && nrow(measure) && "approval_status" %in% names(measure)) measure$approval_status[[1]] else NA_character_
+  if (!is.na(approval_status) && identical(approval_status, "Validated")) {
+    status_chip("Validated", "success")
+  } else {
+    status_chip("Not Validated", "error")
+  }
+}
+
+approval_stage_label <- function(stage) {
+  switch(
+    as.character(stage),
+    Reviewer = "Reviewer",
+    DeputyMayor = "Deputy Mayor",
+    CAOffice = "CA Office",
+    format_status(stage)
+  )
+}
+
+approval_stage_stamp_label <- function(stage) {
+  switch(
+    as.character(stage),
+    Reviewer = "Reviewer Approved",
+    DeputyMayor = "Deputy Mayor Approved",
+    CAOffice = "CA Office Approved",
+    paste(approval_stage_label(stage), "Approved")
+  )
+}
+
+plan_has_approval_stamp <- function(db, plan_id, stage) {
+  stamps <- db$workflow_plan_approval_stamp[db$workflow_plan_approval_stamp$plan_id == plan_id & db$workflow_plan_approval_stamp$approval_stage == stage, , drop = FALSE]
+  nrow(stamps) > 0
+}
+
+plan_workflow_history_panel <- function(db, plan_id, can_add_admin_stamps = FALSE) {
+  stamps <- db$workflow_plan_approval_stamp[db$workflow_plan_approval_stamp$plan_id == plan_id, , drop = FALSE]
+  history <- db$workflow_plan_status_history[db$workflow_plan_status_history$plan_id == plan_id, , drop = FALSE]
+  if (nrow(stamps)) stamps <- stamps[order(stamps$approved_at, stamps$stamp_id, decreasing = TRUE), , drop = FALSE]
+  if (nrow(history)) history <- history[order(history$changed_at, history$history_id, decreasing = TRUE), , drop = FALSE]
+  stamp_card <- function(stage) {
+    rows <- stamps[stamps$approval_stage == stage, , drop = FALSE]
+    if (!nrow(rows)) {
+      return(div(class = "approval-stamp-card missing", div(class = "eyebrow", approval_stage_stamp_label(stage)), strong("Not stamped"), span("Awaiting approval stamp")))
+    }
+    row <- rows[1, , drop = FALSE]
+    actor <- row$approved_by_name[[1]] %||% row$added_by_name[[1]] %||% "User not recorded"
+    added_by <- row$added_by_name[[1]] %||% "User not recorded"
+    div(
+      class = "approval-stamp-card",
+      div(class = "eyebrow", approval_stage_stamp_label(stage)),
+      strong(actor),
+      span(paste("Stamped", as.character(row$approved_at[[1]]))),
+      if (!identical(actor, added_by)) span(paste("Added by", added_by))
+    )
+  }
+  div(
+    class = "history-modal-section history-modal-section-wide workflow-history-panel",
+    h3("Plan Routing & Approval History"),
+    div(
+      class = "approval-stamp-grid",
+      stamp_card("Reviewer"),
+      stamp_card("DeputyMayor"),
+      stamp_card("CAOffice")
+    ),
+    if (isTRUE(can_add_admin_stamps)) div(
+      class = "admin-stamp-actions",
+      lapply(c("Reviewer", "DeputyMayor", "CAOffice"), function(stage) {
+        has_stamp <- plan_has_approval_stamp(db, plan_id, stage)
+        tags$button(
+          type = "button",
+          class = paste("civic-button secondary small", if (has_stamp) "danger-lite" else ""),
+          `data-plan-stamp-stage` = stage,
+          `data-plan-stamp-action` = if (has_stamp) "remove" else "add",
+          `data-plan-id` = plan_id,
+          icon(if (has_stamp) "rotate-left" else "stamp"),
+          paste(if (has_stamp) "Remove" else "Add", approval_stage_label(stage), "stamp")
+        )
+      })
+    ),
+    tags$details(
+      class = "workflow-history-details",
+      tags$summary("Routing history"),
+      if (!nrow(history)) {
+        p(class = "empty-state-copy", "No routing history has been recorded.")
+      } else {
+        div(
+          class = "workflow-history-list",
+          lapply(seq_len(nrow(history)), function(i) {
+            div(
+              class = "workflow-history-row",
+              strong(paste(agency_plan_status(history$from_status[i]), "to", agency_plan_status(history$to_status[i]))),
+              span(paste(as.character(history$changed_at[i]), "-", history$changed_by_name[i] %||% "User not recorded")),
+              if (!is.na(history$notes[i]) && nzchar(history$notes[i])) p(history$notes[i])
+            )
+          })
+        )
+      }
+    )
+  )
+}
+
+review_score_legend <- function() {
+  div(
+    class = "review-score-legend",
+    div(strong("1"), span("Incomplete")),
+    div(strong("2"), span("Developing")),
+    div(strong("3"), span("Strong")),
+    div(strong("4"), span("Exemplary"))
+  )
+}
+
+plan_review_criteria <- function(level) {
+  criterion_rows <- function(section_code, criterion_code, label, weight, score1, score2, score3, score4) {
+    data.frame(
+      section_code = section_code,
+      criterion_code = criterion_code,
+      label = label,
+      weight = weight,
+      score1 = score1,
+      score2 = score2,
+      score3 = score3,
+      score4 = score4,
+      stringsAsFactors = FALSE
+    )
+  }
+  goal_score1 <- c(
+    "Goal is vague, initiative-based, or describes an activity rather than an intended result",
+    "A Pillar Goal is named but the agency goal has no discernible connection to it",
+    "Initiative is unrelated to the goal, or no initiative is identified",
+    "Initiative is missing, a single vague phrase, or a restatement of the goal",
+    "KPI measures only activity counts or outputs with no connection to the goal's intended result",
+    "KPI is missing, undefined, or the calculation method is unclear",
+    "No baseline and no target identified"
+  )
+  goal_score2 <- c(
+    "Goal names an intended result but is missing two or more SMART elements (specific, measurable, achievable, relevant, time-bound); or mixes outcomes with activities",
+    "The named Pillar Goal is a stretch; the connection requires significant inference or is only tangentially related",
+    "A connection to the goal can be inferred but is not stated; the logic requires assumptions to follow",
+    "Initiative is named but lacks scope, timeline, or ownership; feasibility is unclear",
+    "KPI is partially aligned to the goal but primarily reflects workload, throughput, or a single narrow service area",
+    "KPI is named but two or more required elements are absent (e.g., definition, data source, formula, direction of success, responsible owner)",
+    "Some historical data exists but the baseline is incomplete, undated, or unreliable; no validated target is set"
+  )
+  goal_score3 <- c(
+    "Goal is outcome-oriented and meets at least four SMART elements; may lack a clear time-bound element or have minor specificity gaps",
+    "The named Pillar Goal is a reasonable match; the connection is logical but not a precise fit",
+    "A logical link between the initiative and goal is present but the causal reasoning is not fully spelled out",
+    "Initiative has a described scope and is generally feasible; timeline or ownership may be implied rather than explicit",
+    "KPI is aligned to the goal and captures at least one meaningful outcome or leading indicator; may not fully reflect performance across all services or units contributing to the goal",
+    "Most required elements are present; one or two have minor gaps in clarity, sourcing, or operationalization",
+    "A baseline is established and a target exists, but the target lacks validation, a rationale for the level chosen, or a clear time-bound achievement date"
+  )
+  goal_score4 <- c(
+    "Goal is fully SMART: specific, measurable, clearly outcome-based, realistic, and explicitly time-bound",
+    "The named Pillar Goal is a clear and direct match for what the agency goal is trying to achieve",
+    "The initiative clearly advances the goal; the causal logic - how this work produces the intended result - is explicitly stated",
+    "Initiative has a clear scope, a defined or implied timeline, and explicit ownership; a reviewer could understand what is being done, by whom, and roughly when",
+    "KPI clearly and directly measures whether the goal is being achieved; emphasizes outcomes and leading indicators; reflects performance across the services, initiatives, or units the goal encompasses",
+    "All required elements are complete and clearly documented: definition, data source, formula or calculation method, direction of success, frequency, and responsible owner; a reviewer outside the agency could replicate the measure",
+    "A reliable baseline is documented; a target, threshold, or SLA is clearly defined with a rationale, is time-bound, and is ready for management use"
+  )
+  criteria <- list(
+    plan_overview = criterion_rows(
+      "S1",
+      c("OVERVIEW", "VISION"),
+      c("Agency Overview", "Vision & Linkage to Mayor's Action Plan"),
+      c(5, 5),
+      c("Missing, placeholder, or too vague to convey agency purpose", "No connection to the Mayor's Action Plan is present, or the vision is missing entirely"),
+      c("Describes activities or programs but does not articulate the agency's role in producing outcomes", "A reference to the Action Plan is included but feels appended or generic; the connection to the agency's actual work is not apparent"),
+      c("Conveys agency purpose clearly but remains somewhat broad or operationally framed", "The vision reflects a plausible connection to the administration's strategic priorities, but the alignment is indirect or requires inference to follow"),
+      c("Clear, concise, outcome-oriented statement of why the agency exists and what it aims to achieve", "The vision is clearly oriented toward the administration's strategic priorities; a reader can understand how the agency's work contributes to the Mayor's Action Plan without needing additional explanation")
+    ),
+    goal = criterion_rows(
+      "S2",
+      c("GOALQUAL", "PILLAR", "INITCOH", "INITCON", "KPIQUAL", "KPIDFN", "KPITGT"),
+      c("Goal Quality", "Pillar Goal Alignment", "Strategic Coherence", "Concreteness of Initiative", "KPI Quality", "KPI Definition & Validation Rigor", "KPI Baseline & Target Readiness"),
+      c(10, 7, 8, 7, 10, 10, 10),
+      goal_score1,
+      goal_score2,
+      goal_score3,
+      goal_score4
+    ),
+    service = criterion_rows(
+      "S3",
+      c("METQUAL", "METDFN", "METTGT"),
+      c("Metric Quality", "Definition & Validation Rigor", "Baseline & Target Readiness"),
+      c(5, 5, 5),
+      c("Metrics are not aligned to the services being tracked, or only restate the KPI", "Metrics are missing, undefined, or cannot be consistently calculated", "No baseline or expected threshold identified for any metric"),
+      c("Metrics are primarily workload or activity counts (e.g., number of permits issued, calls answered); provide limited insight into service quality or performance", "Metrics are named but two or more required elements are absent (definition, data source, formula, direction, owner)", "Some historical data exists but baselines are partial, undated, or inconsistent across metrics"),
+      c("Metrics are aligned to the service and include useful process or service quality indicators; may lack leading measures or actionability for frontline managers", "Most required elements are present; one or two have minor gaps in clarity or operationalization", "Baselines are established for most metrics; targets or thresholds exist but may lack rationale, validation, or time-bound achievement dates"),
+      c("Metrics are highly actionable, clearly aligned to specific services or initiatives, and include at least one leading indicator that helps managers diagnose performance and explain KPI results", "All required elements are complete and clearly documented: definition, data source, formula, direction of success, frequency, and responsible owner; a reviewer outside the agency could replicate the measure", "Baselines are documented and reliable; targets, thresholds, or SLAs are clearly defined with rationale, are time-bound, and are ready for management use")
+    ),
+    plan_measures = criterion_rows(
+      "S3",
+      "FAMMEAS",
+      "Family of Measures",
+      5,
+      "All measures come from a single category (e.g., all outputs, all activity counts); no variation in measure type",
+      "Measures span two categories (e.g., outputs and efficiency) but do not include effectiveness or outcome-level measures",
+      "Measures span three or more categories (e.g., outputs, efficiency, and outcomes or quality); breadth is present but the highest-order measure for the service is not clearly identified",
+      "Measures span as many categories as appropriate for the service; the highest-order measure type is used whenever possible."
+    ),
+    plan_risks = criterion_rows(
+      "S5",
+      "RISK",
+      "Risk Identification",
+      5,
+      "No risk section is present, or risks listed are budget/staffing enhancement requests rather than genuine operational or external risks",
+      "Risks are listed but are generic, boilerplate, or interchangeable across agencies (e.g., 'staff turnover,' 'budget cuts') with no agency-specific context",
+      "Risks are generally plausible and agency-specific; some include context about likelihood or impact, but mitigations are absent or surface-level",
+      "Risks are specific, realistic, and grounded in the agency's operating environment; each includes enough context to understand the potential impact, and at least some mitigations or contingencies are identified"
+    ),
+    plan_data = criterion_rows(
+      "S6",
+      "DATAREADY",
+      "Data Infrastructure & Stewardship",
+      10,
+      "No data stewards identified and no description of how performance data is collected or maintained",
+      "Data stewards are identified but are senior executives or directors rather than the staff who actually own and maintain the data; reporting pathway is unclear",
+      "Data stewards are identified and are generally the correct operational owners of the data; reporting pathway is described but may have gaps in frequency, format, or accountability",
+      "Clearly accountable data stewards who are knowledgeable about the data are identified by name or role; reporting pathway, frequency, and format are clearly described; the plan demonstrates data is ready to support ongoing performance management"
+    )
+  )
+  criteria[[level]]
+}
+
+review_input_id <- function(prefix, section_code, criterion_code, target_type, target_id) {
+  paste(prefix, section_code, criterion_code, target_type, if (is.na(target_id) || is.null(target_id)) "plan" else target_id, sep = "__")
+}
+
+review_existing_score <- function(scores, section_code, criterion_code, target_type = "plan", target_id = NA_integer_) {
+  if (!nrow(scores)) return(data.frame())
+  target_id_value <- if (is.na(target_id) || is.null(target_id)) NA_integer_ else as.integer(target_id)
+  target_match <- if (is.na(target_id_value)) is.na(scores$target_id) else !is.na(scores$target_id) & scores$target_id == target_id_value
+  rows <- scores[
+    scores$section_code == section_code &
+      scores$criterion_code == criterion_code &
+      scores$target_type == target_type &
+      target_match,
+    ,
+    drop = FALSE
+  ]
+  if (!nrow(rows)) return(rows)
+  rows[1, , drop = FALSE]
+}
+
+review_criterion_reference <- function(criterion) {
+  score_labels <- c(
+    "1" = criterion$score1[[1]],
+    "2" = criterion$score2[[1]],
+    "3" = criterion$score3[[1]],
+    "4" = criterion$score4[[1]]
+  )
+  tags$details(
+    class = "review-criterion-reference",
+    tags$summary("Rubric reference"),
+    tags$ul(lapply(names(score_labels), function(score) tags$li(tags$strong(paste0(score, ": ")), score_labels[[score]])))
+  )
+}
+
+review_score_controls <- function(scores, criteria, target_type = "plan", target_id = NA_integer_, editable = FALSE) {
+  lapply(seq_len(nrow(criteria)), function(i) {
+    criterion <- criteria[i, , drop = FALSE]
+    existing <- review_existing_score(scores, criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+    score_value <- if (nrow(existing) && !is.na(existing$score[[1]])) as.character(existing$score[[1]]) else ""
+    note_value <- if (nrow(existing) && !is.na(existing$justification[[1]])) existing$justification[[1]] else ""
+    score_id <- review_input_id("review_score", criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+    notes_id <- review_input_id("review_notes", criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+    div(
+      class = "review-score-row",
+      `data-section-code` = criterion$section_code[[1]],
+      `data-criterion-code` = criterion$criterion_code[[1]],
+      `data-target-type` = target_type,
+      `data-target-id` = if (is.na(target_id) || is.null(target_id)) "" else target_id,
+      `data-weight` = criterion$weight[[1]],
+      div(
+        class = "review-score-label",
+        strong(criterion$label[[1]]),
+        span(paste0(criterion$weight[[1]], " pts")),
+        review_criterion_reference(criterion)
+      ),
+      selectInput(score_id, "Score", choices = c("Not scored" = "", "1", "2", "3", "4"), selected = score_value, selectize = FALSE, width = "100%"),
+      textAreaInput(notes_id, "Reviewer notes", value = note_value, rows = 2, width = "100%"),
+      if (!editable) tags$script(HTML(sprintf("setTimeout(function(){var a=document.getElementById('%s');var b=document.getElementById('%s'); if(a)a.disabled=true; if(b)b.disabled=true;},0);", score_id, notes_id)))
+    )
+  })
+}
+
+review_score_block <- function(title, scores, criteria, target_type = "plan", target_id = NA_integer_, editable = FALSE, open = FALSE) {
+  tags$details(
+    class = "review-score-block",
+    open = if (open) TRUE else NULL,
+    tags$summary(title),
+    div(class = "review-score-grid", review_score_controls(scores, criteria, target_type, target_id, editable))
+  )
+}
+
+review_score_export_entries <- function(scores, criteria, target_type = "plan", target_id = NA_integer_) {
+  lapply(seq_len(nrow(criteria)), function(i) {
+    criterion <- criteria[i, , drop = FALSE]
+    existing <- review_existing_score(scores, criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+    score_value <- if (nrow(existing) && !is.na(existing$score[[1]])) paste0(existing$score[[1]], "/4") else "Not scored"
+    weighted_value <- if (nrow(existing) && "weighted_score" %in% names(existing) && !is.na(existing$weighted_score[[1]])) round(existing$weighted_score[[1]], 1) else ""
+    note_value <- if (nrow(existing) && !is.na(existing$justification[[1]])) existing$justification[[1]] else ""
+    list(
+      criterion = criterion$label[[1]],
+      score = score_value,
+      weighted_score = weighted_value,
+      notes = note_value
+    )
+  })
 }
 
 review_notes_summary <- function(review_bits) {
@@ -1501,11 +3357,11 @@ measure_history_card <- function(db, measure_id, current_fy = 2027, label = "Mea
     if (nrow(row)) format_measure_value(row$target_value[[1]], measure$format_type[[1]], measure$display_unit[[1]], "Not set") else "Not set"
   }
   columns <- c(
-    paste0("FY", actual_years[1:4], " Actual"),
-    paste0("FY", current_fy - 1, " Target"),
-    paste0("FY", current_fy - 1, " Actual"),
-    paste0("FY", current_fy, " Target"),
-    paste0("FY", current_fy + 1, " Target")
+    paste(fy_label(actual_years[1:4]), "Actual"),
+    paste(fy_label(current_fy - 1), "Target"),
+    paste(fy_label(current_fy - 1), "Actual"),
+    paste(fy_label(current_fy), "Target"),
+    paste(fy_label(current_fy + 1), "Target")
   )
   values <- c(
     actual_values[1:4],
@@ -1517,7 +3373,12 @@ measure_history_card <- function(db, measure_id, current_fy = 2027, label = "Mea
   div(
     class = "history-measure-card",
     h5(measure$title[[1]]),
-    div(class = "chip-row", status_chip(measure$measure_type[[1]], "primary"), status_chip(measure$desired_direction[[1]], "success")),
+    div(
+      class = "chip-row",
+      status_chip(measure$measure_type[[1]], "primary"),
+      status_chip(measure$desired_direction[[1]], "success"),
+      measure_validation_chip(measure)
+    ),
     div(
       class = "metric-export-table history-measure-table",
       div(class = "metric-export-row metric-export-head", lapply(columns, span)),
@@ -1543,12 +3404,14 @@ measure_export_entry <- function(db, measure_id, current_fy = 2027) {
     title = measure$title[[1]],
     type = measure$measure_type[[1]],
     direction = measure$desired_direction[[1]],
+    validation_status = if (isTRUE(measure$validated[[1]]) && identical(measure$approval_status[[1]], "Validated")) "Validated" else "Not Validated",
+    approval_status = measure$approval_status[[1]],
     columns = as.list(c(
-      paste0("FY", actual_years[1:4], " Actual"),
-      paste0("FY", current_fy - 1, " Target"),
-      paste0("FY", current_fy - 1, " Actual"),
-      paste0("FY", current_fy, " Target"),
-      paste0("FY", current_fy + 1, " Target")
+      paste(fy_label(actual_years[1:4]), "Actual"),
+      paste(fy_label(current_fy - 1), "Target"),
+      paste(fy_label(current_fy - 1), "Actual"),
+      paste(fy_label(current_fy), "Target"),
+      paste(fy_label(current_fy + 1), "Target")
     )),
     values = as.list(c(
       actual_values[1:4],
@@ -1560,7 +3423,7 @@ measure_export_entry <- function(db, measure_id, current_fy = 2027) {
   )
 }
 
-plan_export_payload <- function(db, plan_id) {
+plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   plan <- db$planning_agency_plan[db$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
   if (!nrow(plan)) stop("Plan not found")
   agency <- db$reference_agency[db$reference_agency$agency_id == plan_accounting_agency_id(db, plan), , drop = FALSE]
@@ -1570,7 +3433,9 @@ plan_export_payload <- function(db, plan_id) {
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
-  review_bits <- review_summary_for_plan(db, plan_id)
+  review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
+  scorable_plan_service_ids <- services$plan_service_id[services$service_id %in% scorable_service_rows(service_rows)$service_id]
+  review_bits$scores <- filter_review_scores_to_scorable_services(review_bits$scores, scorable_plan_service_ids)
   current_fy <- max(db$planning_agency_plan$fiscal_year, na.rm = TRUE)
 
   goal_payload <- lapply(seq_len(nrow(goals)), function(i) {
@@ -1582,16 +3447,23 @@ plan_export_payload <- function(db, plan_id) {
       title = goals$title[i],
       initiatives = as.list(initiative_rows$title),
       kpis = Filter(Negate(is.null), lapply(linked_kpis$measure_id, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
-      alignment = if (nzchar(goals$alignment[i])) goals$alignment[i] else NULL
+      alignment = if (nzchar(goals$alignment[i])) goals$alignment[i] else NULL,
+      review_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("goal"), "goal", goal_id) else list()
     )
   })
 
   service_payload <- lapply(seq_len(nrow(service_rows)), function(i) {
     metric_ids <- service_metric_ids(db, plan, service_rows$service_id[i], include_ineligible = TRUE)
+    plan_service <- services[services$service_id == service_rows$service_id[i], , drop = FALSE]
+    plan_service_id <- if (nrow(plan_service)) plan_service$plan_service_id[[1]] else NA_integer_
+    service_is_admin <- is_administration_service(service_rows[i, , drop = FALSE])
     list(
       name = service_rows$service_name[i],
       description = service_rows$service_description[i],
-      metrics = Filter(Negate(is.null), lapply(metric_ids, function(measure_id) measure_export_entry(db, measure_id, current_fy)))
+      service_type = service_rows$service_type[i],
+      scoring_exempt = isTRUE(service_is_admin),
+      metrics = if (service_is_admin) list() else Filter(Negate(is.null), lapply(metric_ids, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
+      review_scores = if (isTRUE(include_review) && !service_is_admin) review_score_export_entries(review_bits$scores, plan_review_criteria("service"), "service", plan_service_id) else list()
     )
   })
 
@@ -1602,14 +3474,26 @@ plan_export_payload <- function(db, plan_id) {
     version = plan$version[[1]],
     agency_contact = agency_director_contact(db, plan),
     overview = if (nrow(overview)) list(overview = overview$overview[[1]], vision = overview$vision[[1]], web_address = overview$web_address[[1]]) else list(),
-    review = list(
-      reviewer = if (!is.null(review_bits$review)) review_bits$review$reviewer_name[[1]] else "Not assigned",
+    overview_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_) else list(),
+    include_review = isTRUE(include_review),
+    review = if (isTRUE(include_review)) list(
+      reviewer = plan_reviewer_label(db, plan),
       score = if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored",
       notes = as.list(review_notes_summary(review_bits))
-    ),
+    ) else list(),
     goals = goal_payload,
     services = service_payload,
-    risks = as.list(risks$description)
+    risk_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_risks"), "plan", NA_integer_) else list(),
+    plan_scores = if (isTRUE(include_review)) c(
+      review_score_export_entries(review_bits$scores, plan_review_criteria("plan_measures"), "plan", NA_integer_),
+      review_score_export_entries(review_bits$scores, plan_review_criteria("plan_data"), "plan", NA_integer_)
+    ) else list(),
+    risks = lapply(seq_len(nrow(risks)), function(i) {
+      list(
+        category = risk_type_label(risks$risk_type[[i]]),
+        description = risks$description[[i]]
+      )
+    })
   )
 }
 
@@ -1623,9 +3507,9 @@ plan_export_python <- function() {
   stop("No Python executable is available for plan exports.")
 }
 
-build_plan_export_file <- function(db, plan_id, output_file, export_type) {
+build_plan_export_file <- function(db, plan_id, output_file, export_type, include_review = TRUE) {
   payload_file <- tempfile(fileext = ".json")
-  jsonlite::write_json(plan_export_payload(db, plan_id), payload_file, auto_unbox = TRUE, null = "null", pretty = TRUE)
+  jsonlite::write_json(plan_export_payload(db, plan_id, include_review), payload_file, auto_unbox = TRUE, null = "null", pretty = TRUE)
   script_path <- normalizePath(file.path("scripts", "build_plan_export.py"), winslash = "/", mustWork = TRUE)
   template_path <- "C:/Users/melanie.lada/AppData/Local/Temp/Agency Performance Plan Template.pptx"
   args <- c("--input", payload_file, "--output", output_file, "--type", export_type)
@@ -1639,24 +3523,35 @@ build_plan_export_file <- function(db, plan_id, output_file, export_type) {
   invisible(output_file)
 }
 
-history_plan_card <- function(db, plan, current_plan_id) {
+history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_submit_plan = FALSE) {
   review_bits <- review_summary_for_plan(db, plan$plan_id[[1]])
   review <- review_bits$review
-  feedback <- review_bits$feedback
-  open_feedback <- if (nrow(feedback)) sum(feedback$return_required & is.na(feedback$resolved_at), na.rm = TRUE) else 0
   score_label <- if (!is.null(review)) score_out_of_100(review$overall_score[[1]]) else "No score yet"
+  reviewer_label <- plan_reviewer_label(db, plan)
   is_current <- plan$plan_id[[1]] == current_plan_id
   drafts <- db$planning_plan_section_draft[db$planning_plan_section_draft$plan_id == plan$plan_id[[1]], , drop = FALSE]
   latest_draft <- if (nrow(drafts)) max(drafts$updated_at, na.rm = TRUE) else NA
   updated_label <- if (is_current && plan_is_editable(plan) && !is.na(latest_draft)) "Draft updated" else "Updated"
   updated_value <- if (is_current && plan_is_editable(plan) && !is.na(latest_draft)) latest_draft else plan$updated_at[[1]]
+  readiness <- plan_readiness_summary(db, submitter_value, plan)
   div(
     class = paste("history-plan-card", if (is_current) "current" else ""),
     div(
       class = "history-plan-card-header",
       div(
         div(class = "eyebrow", if (is_current) "Current cycle" else "Past plan"),
-        h2(paste0("FY", plan$fiscal_year[[1]], " Performance Plan")),
+        div(
+          class = "history-plan-title-row",
+          h2(performance_plan_title(db, plan)),
+          div(
+            class = "history-title-actions",
+            tags$button(type = "button", class = "civic-button secondary small", `data-review-plan` = plan$plan_id[[1]], `data-include-review` = "false", icon("eye"), "View"),
+            tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = plan$plan_id[[1]], `data-export-type` = "pdf", `data-include-review` = "false", icon("file-pdf"), "Export"),
+            if (is_current && plan_is_editable(plan) && can_submit_plan) {
+              tags$button(type = "button", class = "civic-button primary small", `data-submit-plan` = plan$plan_id[[1]], icon("paper-plane"), "Submit")
+            }
+          )
+        ),
         div(
           class = "chip-row",
           status_chip(agency_plan_status(plan$plan_status[[1]]), status_tone(plan$plan_status[[1]])),
@@ -1666,19 +3561,24 @@ history_plan_card <- function(db, plan, current_plan_id) {
       div(class = "history-plan-updated", span(updated_label), strong(as.character(updated_value)))
     ),
     div(
-      class = "history-review-strip",
-      div(span("Reviewer"), strong(if (!is.null(review)) review$reviewer_name[[1]] else "Not assigned")),
-      div(span("Review status"), strong(if (!is.null(review) && isTRUE(review$review_complete[[1]])) "Complete" else if (!is.null(review)) "In progress" else "Not started")),
-      div(span("Rubric grade"), strong(score_label)),
-      div(span("Open feedback"), strong(open_feedback)),
-      tags$button(type = "button", class = "civic-button secondary small history-review-detail-button", `data-review-plan` = plan$plan_id[[1]], icon("clipboard-check"), "Review details")
+      class = "history-review-box",
+      div(class = "eyebrow", "Review"),
+      div(
+        class = "history-review-strip",
+        div(span("Reviewer"), strong(reviewer_label)),
+        div(span("Review status"), strong(if (!is.null(review) && isTRUE(review$review_complete[[1]])) "Complete" else if (!is.null(review)) "In progress" else "Not started")),
+        div(span("Rubric grade"), strong(score_label)),
+        div(
+          class = "history-review-actions",
+          tags$button(type = "button", class = "civic-button secondary small history-review-detail-button", `data-review-plan` = plan$plan_id[[1]], `data-include-review` = "true", icon("eye"), "View"),
+          tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = plan$plan_id[[1]], `data-export-type` = "pdf", `data-include-review` = "true", icon("file-pdf"), "Export")
+        )
+      )
     ),
     div(
-      class = "history-plan-actions",
-      if (is_current && plan_is_editable(plan) && user_can_submit_plan()) tags$button(type = "button", class = "civic-button primary small", `data-submit-plan` = plan$plan_id[[1]], icon("paper-plane"), "Submit plan"),
-      tags$button(type = "button", class = "civic-button secondary small", `data-review-plan` = plan$plan_id[[1]], icon("eye"), "Review plan"),
-      tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = plan$plan_id[[1]], `data-export-type` = "pdf", icon("file-pdf"), "Export PDF"),
-      tags$button(type = "button", class = "civic-button secondary small", `data-export-plan` = plan$plan_id[[1]], `data-export-type` = "pptx", icon("file-powerpoint"), "Export PowerPoint")
+      class = "history-readiness-list",
+      div(class = "eyebrow", "Plan readiness"),
+      lapply(readiness$rows, function(row) snapshot_check_row(row$label, row$detail, row$complete))
     )
   )
 }
@@ -1758,7 +3658,7 @@ duplicate_plan_sections_to_draft <- function(connection, db, source_plan_id, tar
   invisible(TRUE)
 }
 
-page_plan_history <- function(db, agency_id) {
+page_plan_history <- function(db, agency_id, can_submit_plan = FALSE) {
   selected <- parse_submitter_value(agency_id)
   if (identical(selected$type, "entity")) {
     plans <- db$planning_agency_plan[!is.na(db$planning_agency_plan$entity_id) & db$planning_agency_plan$entity_id == selected$id, , drop = FALSE]
@@ -1768,15 +3668,15 @@ page_plan_history <- function(db, agency_id) {
   plans <- plans[order(plans$fiscal_year, decreasing = TRUE), , drop = FALSE]
   plan <- current_plan(db, agency_id)
   builder_page(
-    "Plan History & Status",
-    "Review prior submissions, current draft state, reviewer feedback, and export-ready plan content.",
+    performance_plan_title(db, plan, "Review Plan"),
+    "Review prior submissions, current draft state, and export-ready plan content.",
     tagList(
       surface(
         "Plan Records",
-        "Open past plans, duplicate an approved plan into the current draft, and review released feedback beside the submitted content.",
+        "Open plan details, review submitted content, and export the current plan.",
         div(
           class = "history-plan-list",
-          lapply(seq_len(nrow(plans)), function(i) history_plan_card(db, plans[i, , drop = FALSE], plan$plan_id[[1]]))
+          lapply(seq_len(nrow(plans)), function(i) history_plan_card(db, plans[i, , drop = FALSE], plan$plan_id[[1]], agency_id, can_submit_plan))
         )
       )
     ),
@@ -1787,7 +3687,7 @@ page_plan_history <- function(db, agency_id) {
   )
 }
 
-history_plan_modal <- function(db, plan_id) {
+history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_reviewer = FALSE, include_review = TRUE, full_page = FALSE, can_route_review = FALSE, can_approve_gate = FALSE, can_manage_deputy_stamp = FALSE, can_manage_ca_stamp = FALSE) {
   plan <- db$planning_agency_plan[db$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
   if (!nrow(plan)) return(NULL)
   payload_preview <- plan_uses_draft_payload(plan)
@@ -1799,7 +3699,7 @@ history_plan_modal <- function(db, plan_id) {
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
-  review_bits <- review_summary_for_plan(db, plan_id)
+  review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
   notes_summary <- review_notes_summary(review_bits)
   current_fy <- max(db$planning_agency_plan$fiscal_year, na.rm = TRUE)
@@ -1811,45 +3711,229 @@ history_plan_modal <- function(db, plan_id) {
   web_address <- draft_value(overview_draft, "agency_website", web_address)
   saved_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) as.character(unlist(goals_draft$goalIds)) else as.character(goals$agency_goal_id)
   saved_goal_ids <- saved_goal_ids[nzchar(saved_goal_ids)]
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, service_rows)
+  selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
+  show_measure_validation_warning <- plan$plan_status[[1]] %in% submitted_plan_statuses() && nrow(invalid_selected_measures) > 0
+  scorable_service_count <- nrow(scorable_service_rows(service_rows))
+  scorable_plan_service_ids <- services$plan_service_id[services$service_id %in% scorable_service_rows(service_rows)$service_id]
+  review_bits$scores <- filter_review_scores_to_scorable_services(review_bits$scores, scorable_plan_service_ids)
+  expected_review_items <- plan_review_expected_count(length(saved_goal_ids), scorable_service_count)
+  scored_review_items <- plan_review_scored_count(review_bits$scores)
+  action_plan_alignment_met <- nrow(review_bits$scores) &&
+    any(review_bits$scores$criterion_code == "PILLAR" & !is.na(review_bits$scores$score), na.rm = TRUE)
+  assigned_reviewer_id <- if (!is.null(review_bits$review) && !is.na(review_bits$review$reviewer_id[[1]])) {
+    as.character(review_bits$review$reviewer_id[[1]])
+  } else if (!is.na(plan$assigned_reviewer[[1]])) {
+    as.character(plan$assigned_reviewer[[1]])
+  } else {
+    ""
+  }
 
-  div(
-    class = "custom-modal-backdrop history-modal-backdrop",
-    `data-close-input` = "close_history_plan_modal",
-    div(
-      class = "custom-modal history-modal-panel",
+  backdrop_attrs <- if (isTRUE(full_page)) {
+    list(class = "plan-review-workspace")
+  } else {
+    list(class = "custom-modal-backdrop history-modal-backdrop", `data-close-input` = "close_history_plan_modal")
+  }
+  panel_class <- if (isTRUE(full_page)) "history-modal-panel plan-review-full-page" else "custom-modal history-modal-panel"
+  panel <- div(
+      class = panel_class,
       div(
         class = "custom-modal-header history-modal-header",
         div(
-          div(class = "eyebrow", "Plan review"),
-          h2(paste0("FY", plan$fiscal_year[[1]], " Performance Plan")),
+          div(class = "eyebrow", if (isTRUE(include_review)) "Plan review" else "Plan details"),
+          div(
+            class = "history-plan-title-row",
+            h2(performance_plan_title(db, plan)),
+            if (can_assign_reviewer && identical(plan$plan_status[[1]], "Approved")) {
+              div(
+                class = "history-title-actions approval-action-panel publishing-detail-actions",
+                div(
+                  class = "review-route-control",
+                  selectInput(
+                    "publishing_detail_route_status",
+                    "Return to",
+                    choices = publishing_route_choices(db, plan),
+                    selected = "UnderReview",
+                    selectize = FALSE,
+                    width = "34rem"
+                  )
+                ),
+                tags$button(type = "button", id = "return_publishing_plan", class = "civic-button secondary small", `data-plan-id` = plan_id, icon("route"), "Return"),
+                tags$button(type = "button", id = "publish_plan", class = "civic-button primary small", `data-plan-id` = plan_id, icon("upload"), "Publish")
+              )
+            } else if (isTRUE(include_review) && (can_route_review || can_assign_reviewer) && (
+              plan$plan_status[[1]] %in% review_approvable_statuses() ||
+                (plan_has_approval_stamp(db, plan_id, "Reviewer") && !isTRUE(can_assign_reviewer))
+            )) {
+              reviewer_has_stamp <- plan_has_approval_stamp(db, plan_id, "Reviewer")
+              route_instead_of_rescind <- isTRUE(can_assign_reviewer)
+              div(
+                class = "history-title-actions approval-action-panel review-approval-actions",
+                if ((can_route_review || route_instead_of_rescind) && plan$plan_status[[1]] %in% review_approvable_statuses()) div(
+                  class = "review-route-control",
+                  selectInput(
+                    "plan_review_next_status",
+                    "Route to",
+                    choices = plan_review_route_choices(db, plan),
+                    selected = plan_review_default_route(plan$plan_status[[1]]),
+                    selectize = FALSE,
+                    width = "34rem"
+                  )
+                ),
+                tags$button(
+                  type = "button",
+                  id = "approve_plan_review",
+                  class = paste("civic-button small", if (reviewer_has_stamp && !route_instead_of_rescind) "secondary danger-lite" else "primary"),
+                  `data-plan-review-id` = plan_id,
+                  `data-approval-action` = if (reviewer_has_stamp && !route_instead_of_rescind) "rescind" else "approve",
+                  icon(if (reviewer_has_stamp && !route_instead_of_rescind) "rotate-left" else "circle-check"),
+                  if (reviewer_has_stamp && !route_instead_of_rescind) "Reviewer Rescind" else "Route to"
+                )
+              )
+            } else if (isTRUE(include_review) && isTRUE(can_approve_gate) && (
+              plan$plan_status[[1]] %in% c("DeputyMayorReview", "CAReview") ||
+                (plan_has_approval_stamp(db, plan_id, "DeputyMayor") && isTRUE(can_manage_deputy_stamp)) ||
+                (plan_has_approval_stamp(db, plan_id, "CAOffice") && isTRUE(can_manage_ca_stamp))
+            )) {
+              gate_stage <- plan_gate_stage(plan$plan_status[[1]])
+              if (
+                is.na(gate_stage) ||
+                  (identical(gate_stage, "DeputyMayor") && !isTRUE(can_manage_deputy_stamp)) ||
+                  (identical(gate_stage, "CAOffice") && !isTRUE(can_manage_ca_stamp))
+              ) {
+                gate_stage <- if (plan_has_approval_stamp(db, plan_id, "CAOffice") && isTRUE(can_manage_ca_stamp)) "CAOffice" else "DeputyMayor"
+              }
+              gate_has_stamp <- plan_has_approval_stamp(db, plan_id, gate_stage)
+              div(
+                class = "history-title-actions approval-action-panel",
+                div(
+                  class = "approval-return-stack",
+                  div(
+                    class = "review-route-control approval-return-control",
+                    selectInput(
+                      "plan_gate_return_status",
+                      "Return to",
+                      choices = approval_return_route_choices(gate_stage, db, plan),
+                      selected = if (identical(gate_stage, "CAOffice")) "DeputyMayorReview" else "UnderReview",
+                      selectize = FALSE,
+                      width = "100%"
+                    )
+                  ),
+                  div(
+                    class = "review-route-control approval-return-note",
+                    textInput("plan_gate_return_note", "Return reason", value = "", placeholder = "Required note")
+                  ),
+                  tags$button(
+                    type = "button",
+                    id = "return_plan_gate",
+                    class = "civic-button secondary small",
+                    `data-plan-id` = plan_id,
+                    `data-approval-stage` = gate_stage,
+                    icon("reply"),
+                    "Return"
+                  )
+                ),
+                tags$button(
+                  type = "button",
+                  id = "approve_plan_gate",
+                  class = paste("civic-button small", if (gate_has_stamp) "secondary danger-lite" else "primary"),
+                  `data-plan-id` = plan_id,
+                  `data-approval-stage` = gate_stage,
+                  `data-approval-action` = if (gate_has_stamp) "rescind" else "approve",
+                  icon(if (gate_has_stamp) "rotate-left" else "circle-check"),
+                  if (gate_has_stamp) paste(approval_stage_label(gate_stage), "Rescind") else paste(approval_stage_label(gate_stage), "Approve")
+                )
+              )
+            }
+          ),
           div(class = "chip-row", status_chip(agency_plan_status(plan$plan_status[[1]]), status_tone(plan$plan_status[[1]])), status_chip(paste("Version", plan$version[[1]]), "primary")),
-          p(class = "history-modal-contact", tags$strong("Agency contact: "), agency_director_contact(db, plan))
+          div(
+            class = "history-modal-contact-stack",
+            p(class = "history-modal-contact", tags$strong("Plan contact: "), agency_director_contact(db, plan)),
+            p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
+          )
         ),
-        actionButton("close_history_plan_modal", "X", class = "icon-button history-modal-close", `aria-label` = "Close plan review")
+        if (isTRUE(full_page)) actionButton("back_to_review_queue", label = tagList(icon("arrow-left"), "Back to queue"), class = "civic-button secondary small")
+        else actionButton("close_history_plan_modal", "X", class = "icon-button history-modal-close", `aria-label` = "Close plan review")
+      ),
+      if (show_measure_validation_warning) div(
+        class = "required-fields-note error-note plan-validation-warning",
+        strong("Warning: submitted plan includes non-validated measures."),
+        span(paste(
+          "Not validated:",
+          paste(head(invalid_selected_measures$title, 5), collapse = ", "),
+          if (nrow(invalid_selected_measures) > 5) paste("and", nrow(invalid_selected_measures) - 5, "more") else ""
+        ))
+      ),
+      if (isTRUE(include_review)) plan_workflow_history_panel(db, plan_id, can_add_admin_stamps = can_assign_reviewer),
+      if (isTRUE(include_review)) div(
+        class = "review-modal-summary",
+        `data-expected-review-items` = expected_review_items,
+        div(
+          class = "review-summary-feedback",
+          div(class = "eyebrow", "Assigned reviewer"),
+          if (can_assign_reviewer) div(
+            class = "reviewer-assignment-panel",
+            div(
+              class = "measure-field",
+              selectInput(
+                "plan_review_reviewer_id",
+                "Assigned reviewer",
+                choices = plan_reviewer_choices(db),
+                selected = assigned_reviewer_id,
+                selectize = TRUE
+              )
+            ),
+            tags$button(type = "button", id = "save_plan_reviewer", class = "civic-button secondary small", `data-plan-review-id` = plan_id, icon("user-check"), "Save reviewer")
+          ) else div(
+            class = "assigned-reviewer-readonly",
+            strong(plan_reviewer_label(db, plan))
+          )
+        ),
+        div(
+          class = "review-summary-card",
+          span("Overall score"),
+          strong(if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored")
+        ),
+        div(
+          class = "review-summary-card",
+          span("Rubric progress"),
+          strong(class = "review-progress-value", paste0(scored_review_items, " of ", expected_review_items))
+        ),
+        div(
+          class = "review-summary-card",
+          span("Goals to score"),
+          strong(length(saved_goal_ids))
+        ),
+        div(
+          class = "review-summary-card",
+          span("Services to score"),
+          strong(scorable_service_count)
+        ),
+        div(
+          class = "review-summary-card",
+          span("Action Plan alignment"),
+          strong(if (action_plan_alignment_met) "Met" else "7 point penalty")
+        )
       ),
       div(
         class = "history-modal-grid",
         div(
-          class = "history-modal-section",
+          class = "history-modal-section history-modal-section-wide",
           h3("Overview & Vision"),
           if (nrow(overview) || !is.null(overview_draft)) tagList(
             p(tags$strong("Overview: "), overview_text),
             p(tags$strong("Vision: "), vision_text),
-            p(tags$strong("Web address: "), web_address)
-          ) else p("No overview record is available for this plan.")
-        ),
-        div(
-          class = "history-modal-section",
-          h3("Reviewer Feedback"),
-          if (!is.null(review_bits$review)) tagList(
-            p(tags$strong("Reviewer: "), review_bits$review$reviewer_name[[1]]),
-            p(tags$strong("Overall score: "), score_out_of_100(review_bits$review$overall_score[[1]])),
-            div(
-              class = "notes-summary",
-              h4("Notes summary"),
-              tags$ol(lapply(notes_summary, tags$li))
-            )
-          ) else p("No reviewer notes have been released for this plan.")
+            p(tags$strong("Web address: "), web_address),
+            if (isTRUE(include_review)) review_score_block("Score overview and vision", review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_, can_edit_review, open = TRUE)
+          ) else tagList(
+            p("No overview record is available for this plan."),
+            if (isTRUE(include_review)) review_score_block("Score overview and vision", review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_, can_edit_review, open = TRUE)
+          )
         )
       ),
       div(
@@ -1889,6 +3973,12 @@ history_plan_modal <- function(db, plan_id) {
                 div(class = "history-measure-list", lapply(kpi_ids, function(measure_id) measure_history_card(db, measure_id, current_fy)))
               ),
               if (nzchar(alignment)) div(class = "history-alignment-note", status_chip("Action Plan Aligned", "success"), span(alignment))
+              ,
+              if (isTRUE(include_review)) tags$details(
+                class = "review-score-block",
+                tags$summary("Score this goal"),
+                div(class = "review-score-grid", review_score_controls(review_bits$scores, plan_review_criteria("goal"), "goal", suppressWarnings(as.integer(goal_id)) %||% -i, can_edit_review))
+              )
             )
           })
         ) else p("No goals are available for this plan.")
@@ -1900,6 +3990,7 @@ history_plan_modal <- function(db, plan_id) {
           class = "history-modal-list",
           lapply(seq_len(nrow(service_rows)), function(i) {
             service_id <- service_rows$service_id[i]
+            service_is_admin <- is_administration_service(service_rows[i, , drop = FALSE])
             description <- draft_value(services_draft, paste0("service_description_", service_id), service_rows$service_description[i])
             metric_ids <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
               suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
@@ -1911,9 +4002,24 @@ history_plan_modal <- function(db, plan_id) {
               class = "history-modal-record",
               h4(service_rows$service_name[i]),
               p(description),
+              if (service_is_admin) div(class = "required-fields-note", "Administration service: not scored and no service metrics required this cycle."),
               if (length(metric_ids)) tagList(
                 div(class = "eyebrow", "Performance Metrics"),
                 div(class = "history-measure-list", lapply(metric_ids, function(measure_id) measure_history_card(db, measure_id, current_fy)))
+              ),
+              if (isTRUE(include_review) && !service_is_admin) tags$details(
+                class = "review-score-block",
+                tags$summary("Score this service"),
+                div(
+                  class = "review-score-grid",
+                  review_score_controls(
+                    review_bits$scores,
+                    plan_review_criteria("service"),
+                    "service",
+                    services$plan_service_id[match(service_id, services$service_id)],
+                    can_edit_review
+                  )
+                )
               )
             )
           })
@@ -1924,11 +4030,41 @@ history_plan_modal <- function(db, plan_id) {
         h3("Risks"),
         if (nrow(risks)) div(
           class = "history-modal-list",
-          lapply(seq_len(nrow(risks)), function(i) div(class = "history-modal-record", p(risks$description[i])))
-        ) else p("No risks are available for this plan.")
+          lapply(seq_len(nrow(risks)), function(i) {
+            div(
+              class = "history-modal-record",
+              div(class = "chip-row", status_chip(risk_type_label(risks$risk_type[i]), "primary")),
+              p(risks$description[i])
+            )
+          }),
+          if (isTRUE(include_review)) review_score_block("Score risks and dependencies", review_bits$scores, plan_review_criteria("plan_risks"), "plan", NA_integer_, can_edit_review, open = TRUE)
+        ) else tagList(
+          p("No risks are available for this plan."),
+          if (isTRUE(include_review)) review_score_block("Score risks and dependencies", review_bits$scores, plan_review_criteria("plan_risks"), "plan", NA_integer_, can_edit_review, open = TRUE)
+        )
+      ),
+      if (isTRUE(include_review)) div(
+        class = "history-modal-section review-rubric-section",
+        h3("Plan-Level Review Scores"),
+        p("Enter 1-4 scores for whole-plan criteria. Goal, service, overview, and risk criteria are scored beside their content above. Family of Measures applies to the whole plan."),
+        div(
+          class = "review-score-stack",
+          review_score_block("Family of Measures", review_bits$scores, plan_review_criteria("plan_measures"), "plan", NA_integer_, can_edit_review, open = TRUE),
+          review_score_block("Data & Reporting Readiness", review_bits$scores, plan_review_criteria("plan_data"), "plan", NA_integer_, can_edit_review, open = TRUE)
+        ),
+        textAreaInput("plan_review_internal_notes", "Internal reviewer notes", value = if (!is.null(review_bits$review) && !is.na(review_bits$review$internal_notes[[1]])) review_bits$review$internal_notes[[1]] else "", rows = 3)
+      ),
+      if (isTRUE(include_review) && can_edit_review) div(
+        class = "review-save-bar",
+        `data-expected-review-items` = expected_review_items,
+        div(
+          span(class = "review-save-status", "Review autosaves as you score."),
+          strong(class = "review-progress-value", paste0(scored_review_items, " of ", expected_review_items, " scored"))
+        ),
+        tags$span(id = "save_plan_review_scores", `data-plan-review-id` = plan_id, class = "review-autosave-anchor", `aria-hidden` = "true")
       )
-    )
   )
+  do.call(div, c(backdrop_attrs, list(panel)))
 }
 
 measure_label <- function(text, help, required = FALSE) {
@@ -1999,7 +4135,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -2036,6 +4172,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   div(
     class = "custom-modal-backdrop measure-modal-backdrop",
     `data-close-input` = "close_measure_modal",
+    `data-can-edit` = if (can_edit_form) "true" else "false",
     div(
       class = "custom-modal measure-editor-modal",
       div(
@@ -2150,7 +4287,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             lapply(measure_entry_years(), function(year) {
               div(
                 class = "measure-year-row",
-                h4(paste0("FY", year)),
+                h4(fy_label(year)),
                 measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format),
                 measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes")),
                 measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format),
@@ -2181,7 +4318,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   )
 }
 
-page_metrics <- function(db, agency_id, status_filter = "Validated") {
+page_metrics <- function(db, agency_id, status_filter = "All except deprecated") {
   plan <- current_plan(db, agency_id)
   measures <- measure_library_rows(db, plan, include_ineligible = TRUE)
   status_labels <- if (nrow(measures)) {
@@ -2189,16 +4326,19 @@ page_metrics <- function(db, agency_id, status_filter = "Validated") {
   } else {
     character(0)
   }
-  status_choices <- c("All statuses", sort(unique(status_labels)))
-  selected_status <- status_filter %||% "Validated"
-  if (!selected_status %in% status_choices) selected_status <- "All statuses"
-  if (!identical(selected_status, "All statuses")) {
+  status_choices <- unique(c(measure_status_filter_choices(), sort(unique(status_labels))))
+  selected_status <- status_filter %||% "All except deprecated"
+  if (!selected_status %in% status_choices) selected_status <- "All except deprecated"
+  if (identical(selected_status, "All except deprecated")) {
+    measures <- measures[status_labels != "Deprecated", , drop = FALSE]
+    status_labels <- status_labels[status_labels != "Deprecated"]
+  } else if (!identical(selected_status, "All statuses")) {
     measures <- measures[status_labels == selected_status, , drop = FALSE]
     status_labels <- status_labels[status_labels == selected_status]
   }
   snapshot_years <- fiscal_measure_snapshot_years()
   builder_page(
-    "Measures",
+    performance_plan_title(db, plan, "Measures"),
     "Review, update, and submit agency performance measures for validation.",
     surface(
       "Measure Library",
@@ -2209,6 +4349,11 @@ page_metrics <- function(db, agency_id, status_filter = "Validated") {
           class = "measure-library-filter",
           selectInput("measure_status_filter", "Status", choices = status_choices, selected = selected_status, selectize = FALSE)
         ),
+        div(
+          class = "measure-library-search",
+          tags$label(`for` = "measure_library_search", "Search"),
+          tags$input(id = "measure_library_search", class = "form-control", type = "search", placeholder = "Search measures")
+        ),
         span(class = "measure-library-count", paste(nrow(measures), if (nrow(measures) == 1) "measure" else "measures"))
       ),
       div(
@@ -2216,7 +4361,7 @@ page_metrics <- function(db, agency_id, status_filter = "Validated") {
         div(
           class = "table-row table-head metrics-row",
           span("Measure"),
-          span(paste0("FY", substr(snapshot_years$actual_fy, 3, 4), " Actual / FY", substr(snapshot_years$target_fy, 3, 4), " Target")),
+          span(paste(fy_label(snapshot_years$actual_fy), "Actual /", fy_label(snapshot_years$target_fy), "Target")),
           span("Status"),
           span("Updated")
         ),
@@ -2231,6 +4376,7 @@ page_metrics <- function(db, agency_id, status_filter = "Validated") {
             type = "button",
             class = "table-row metrics-row measure-library-row",
             `data-measure-id` = measures$measure_id[i],
+            `data-measure-search` = tolower(paste(measures$title[i], actual, target, status_meta$label, format(as.POSIXct(measures$last_updated[i]), "%b %d, %Y"))),
             span(measures$title[i]),
             span(paste(actual, "/", target)),
             status_chip(status_meta$label, status_meta$tone),
@@ -2247,11 +4393,11 @@ page_metrics <- function(db, agency_id, status_filter = "Validated") {
   )
 }
 
-page_overview <- function(db, agency_id) {
+page_overview <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   mv <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan$plan_id, , drop = FALSE]
   builder_page(
-    "Agency Overview & Vision",
+    performance_plan_title(db, plan, "Overview & Vision"),
     "Define the agency's resident-facing purpose and the future it is working toward.",
     tagList(
       surface(
@@ -2277,7 +4423,7 @@ page_overview <- function(db, agency_id) {
             ),
             textAreaInput("agency_vision", label = NULL, rows = 5, value = mv$vision)
           ),
-          div(class = "website-field", textInput("agency_website", "Agency web address", value = mv$web_address))
+          div(class = "website-field", textInput("agency_website", "Agency public web address", value = mv$web_address))
         )
       ),
       surface(
@@ -2320,11 +4466,11 @@ page_overview <- function(db, agency_id) {
     ),
     plan_id = plan$plan_id,
     section_key = "overview",
-    locked = !plan_is_editable(plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
-page_goals <- function(db, agency_id) {
+page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
@@ -2338,6 +4484,7 @@ page_goals <- function(db, agency_id) {
   minimum_goals_label <- goal_count_word(minimum_goals)
   maximum_goals_label <- goal_count_word(maximum_goals)
   remaining_count <- max(0, maximum_goals - goal_count)
+  editor_count <- max(1L, goal_count)
   pillar_goal_codes <- db$reference_pillar_goal$goal_code
   pillar_goal_labels <- paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)
   alignment_choices <- c("Not aligned" = "", setNames(pillar_goal_codes, pillar_goal_labels))
@@ -2377,7 +4524,7 @@ page_goals <- function(db, agency_id) {
   }
 
   builder_page(
-    "Agency Goals, Initiatives & KPIs",
+    performance_plan_title(db, plan, "Goals, Initiatives & KPIs"),
     paste0("Set ", minimum_goals_label, " to ", maximum_goals_label, " outcome-oriented goals and define how the agency will achieve and measure each one."),
     div(
       class = "goals-page",
@@ -2412,9 +4559,18 @@ page_goals <- function(db, agency_id) {
         paste0("Write each goal as a SMART, outcome-based result. Then add an initiative, KPI, and optional Action Plan Pillar Goal. You must add at least ", minimum_goals_label, " goals, max is ", maximum_goals_label, "."),
         div(
           class = "goal-editor-list",
-          lapply(seq_len(goal_count), function(i) {
-            goal_id <- goals$agency_goal_id[i]
-            initiative_link <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goal_id, , drop = FALSE]
+          lapply(seq_len(editor_count), function(i) {
+            is_seed_goal <- i <= goal_count
+            goal_id <- if (is_seed_goal) as.character(goals$agency_goal_id[i]) else "draft-1"
+            goal_title <- if (is_seed_goal) as.character(goals$title[i]) else ""
+            if (is.na(goal_title)) goal_title <- ""
+            goal_alignment <- if (is_seed_goal) as.character(goals$alignment_code[i]) else ""
+            if (is.na(goal_alignment)) goal_alignment <- ""
+            initiative_link <- if (is_seed_goal) {
+              db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goal_id, , drop = FALSE]
+            } else {
+              db$performance_agency_goal_initiative_link[0, , drop = FALSE]
+            }
             initiative_values <- character(0)
             if (nrow(initiative_link) > 0) {
               initiative_rows <- db$performance_initiative[match(initiative_link$initiative_id, db$performance_initiative$initiative_id), , drop = FALSE]
@@ -2429,7 +4585,11 @@ page_goals <- function(db, agency_id) {
                 if (initiative_index > 1) tags$button(type = "button", class = "initiative-remove-button", title = "Remove initiative", `aria-label` = "Remove initiative", icon("xmark"))
               )
             })
-            measure_link <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goal_id, , drop = FALSE]
+            measure_link <- if (is_seed_goal) {
+              db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goal_id, , drop = FALSE]
+            } else {
+              db$performance_pm_goal_link[0, , drop = FALSE]
+            }
             selected_measure <- if (nrow(measure_link) > 0) as.character(measure_link$measure_id) else character(0)
             initial_kpis <- if (length(selected_measure) > 0) selected_measure else ""
             kpi_selector_rows <- lapply(seq_along(initial_kpis), function(kpi_index) {
@@ -2463,15 +4623,20 @@ page_goals <- function(db, agency_id) {
                 `data-measure-id` = as.character(measure$measure_id),
                 div(
                   class = "kpi-preview-header",
-                  div(span("Selected performance measure", class = "goal-number"), h4(measure$title)),
-                  div(class = "chip-row", status_chip(measure$desired_direction, "success"), status_chip(measure$measure_type, "primary"))
+                  div(h4(measure$title)),
+                  div(
+                    class = "chip-row",
+                    status_chip(measure$measure_type, "primary"),
+                    status_chip(measure$desired_direction, "success"),
+                    measure_validation_chip(measure)
+                  )
                 ),
                 div(
                   class = "kpi-history-wrap",
                   tags$table(
                     class = "kpi-history-table",
                     tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
-                    tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", paste0("FY", year))))),
+                    tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", fy_label(year))))),
                     tags$tbody(
                       tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td)),
                       tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td))
@@ -2487,8 +4652,8 @@ page_goals <- function(db, agency_id) {
               tags$summary(
                 div(
                   class = "goal-editor-summary",
-                  div(span(paste("Goal", i), class = "goal-number"), strong(goals$title[i])),
-                  status_chip(if (nzchar(goals$alignment_code[i])) "Action Plan Aligned" else "Not Action Plan Aligned", if (nzchar(goals$alignment_code[i])) "success" else "primary")
+                  div(span(paste("Goal", i), class = "goal-number"), strong(if (nzchar(goal_title)) goal_title else "Untitled goal")),
+                  status_chip(if (nzchar(goal_alignment)) "Action Plan Aligned" else "Not Action Plan Aligned", if (nzchar(goal_alignment)) "success" else "primary")
                 )
               ),
               div(
@@ -2498,24 +4663,25 @@ page_goals <- function(db, agency_id) {
                   class = "goal-form-field full-width goal-statement-field",
                   tags$label(class = "control-label", `for` = paste0("goal_statement_", goal_id), "Goal statement"),
                   p(class = "goal-field-instruction", "Describe what your agency intends to achieve this fiscal year, expressed as an outcome for Baltimore residents. Your goal should be specific, measurable, and time-bound - not a description of work your agency will do."),
-                  textAreaInput(paste0("goal_statement_", goal_id), label = NULL, rows = 3, value = goals$title[i])
+                  textAreaInput(paste0("goal_statement_", goal_id), label = NULL, rows = 3, value = goal_title)
                 ),
                 div(
                   class = "goal-form-field full-width initiative-picker",
-                  tags$label(class = "control-label", `for` = paste0("goal_initiative_", goal_id), "FY2027 initiatives"),
+                  tags$label(class = "control-label", `for` = paste0("goal_initiative_", goal_id), "FY27 initiatives"),
                   p(class = "goal-field-instruction", "Identify one key action or project your agency will undertake this year to advance this goal. Be specific about what will be done and who is responsible - avoid restating the goal in different words."),
                   div(class = "initiative-inputs", `data-goal-id` = goal_id, initiative_input_rows),
                   tags$button(type = "button", class = "civic-button secondary small add-initiative-button", icon("plus"), "Add initiative")
                 ),
                 div(
                   class = "goal-form-field",
-                  selectInput(paste0("goal_alignment_", goal_id), "Action Plan Pillar Goal (optional, one agency goal must align)", choices = alignment_choices, selected = goals$alignment_code[i], selectize = FALSE)
+                  selectInput(paste0("goal_alignment_", goal_id), "Action Plan Pillar Goal (optional, one agency goal must align)", choices = alignment_choices, selected = goal_alignment, selectize = FALSE)
                 ),
                 div(
                   class = "goal-form-field full-width kpi-picker",
                   tags$label(class = "control-label", `for` = paste0("goal_kpi_", goal_id, "_1"), "Key performance indicators"),
                   p(class = "goal-field-instruction", "Choose from the agency's validated performance measures. Review the measure definition and five-year history before selecting it."),
                   p(class = "goal-field-instruction", "Select the measure that best captures whether this goal is being achieved. Choose outcome or leading indicators where possible - avoid selecting measures that only count activity or workload. A KPI can also serve as a service-level metric; you may see the same measure appear in both places."),
+                  if (length(selected_measure) > 5) div(class = "required-fields-note error-note", "This goal has more than 5 KPIs selected. Remove KPIs until 5 or fewer remain before saving."),
                   div(class = "kpi-selectors", `data-goal-id` = goal_id, kpi_selector_rows),
                   div(
                     class = "goal-field-support",
@@ -2526,7 +4692,7 @@ page_goals <- function(db, agency_id) {
                   div(class = "kpi-preview-list", kpi_previews),
                   div(
                     class = "goal-field-support new-measure-support",
-                    strong("Don't see the right measure?"),
+                    strong("Don't see the right KPI?"),
                     p("If none of the available measures adequately captures progress toward this goal, you can build a new measure. You'll be taken to the measure builder to define it - once submitted, it will be added to your agency's measure library and available for selection here."),
                   tags$button(type = "button", class = "civic-button secondary small", `data-page` = "metrics", `data-new-measure` = "true", icon("plus"), "Build a new measure")
                   )
@@ -2539,7 +4705,7 @@ page_goals <- function(db, agency_id) {
             )
           })
         ),
-        actions = tags$button(id = "add_goal", type = "button", class = "civic-button primary", disabled = if (goal_count >= maximum_goals) "disabled" else NULL, icon("plus"), "Add goal")
+        actions = tags$button(id = "add_goal", type = "button", class = "civic-button primary", disabled = if (editor_count >= maximum_goals) "disabled" else NULL, icon("plus"), "Add goal")
       ),
       surface(
         "Goals scoring rubric",
@@ -2559,9 +4725,9 @@ page_goals <- function(db, agency_id) {
           ),
           tags$details(
             class = "rubric-section",
-            tags$summary(div(strong("FY2027 initiatives"), span("2 criteria"))),
+            tags$summary(div(strong("FY27 initiatives"), span("2 criteria"))),
             goal_rubric_table(
-              "FY2027 initiatives scoring rubric",
+              "FY27 initiatives scoring rubric",
               tagList(
               goal_rubric_row("Strategic Coherence", "8", "The initiative is unrelated to the goal, or no initiative is identified.", "A connection can be inferred, but the logic requires assumptions to follow.", "A logical link is present, but the causal reasoning is not fully explained.", "The initiative clearly advances the goal, and the causal logic is explicit."),
                 goal_rubric_row("Concreteness of Initiative", "7", "The initiative is missing, vague, or restates the goal.", "The initiative lacks scope, timeline, or ownership; feasibility is unclear.", "Scope is described and feasible; timeline or ownership may be implied.", "The initiative has clear scope, timeline, ownership, and an understandable delivery approach.")
@@ -2600,16 +4766,15 @@ page_goals <- function(db, agency_id) {
     ),
     plan_id = plan$plan_id,
     section_key = "goals",
-    locked = !plan_is_editable(plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
-page_services <- function(db, agency_id) {
+page_services <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   service_rows <- plan_service_rows(db, plan)
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
-  metric_choices <- setNames(measures$measure_id, measures$title)
-  history_years <- 2022:2026
+  services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
   service_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4) {
     tags$tr(
       tags$th(scope = "row", criterion),
@@ -2640,7 +4805,7 @@ page_services <- function(db, agency_id) {
     )
   }
   builder_page(
-    "Agency Services",
+    performance_plan_title(db, plan, "Services"),
     "Review each service description and select the metrics that show whether the service is delivering results.",
     tagList(
       surface(
@@ -2652,95 +4817,32 @@ page_services <- function(db, agency_id) {
           `data-plan-id` = plan$plan_id,
           lapply(seq_len(nrow(service_rows)), function(i) {
           service_id <- service_rows$service_id[i]
-          selected_metric_ids <- service_metric_ids(db, plan, service_id, measures)
+          service_is_admin <- is_administration_service(service_rows[i, , drop = FALSE])
+          selected_metric_ids <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
+            suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
+          } else if (service_is_admin) {
+            integer(0)
+          } else {
+            service_metric_ids(db, plan, service_id, measures)
+          }
+          selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
           selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
-          metric_selector_rows <- lapply(seq_along(selected_metrics), function(metric_index) {
-            div(
-              class = "kpi-select-row",
-              selectInput(
-                paste0("service_metric_", service_id, "_", metric_index),
-                label = NULL,
-                choices = c("Select a metric" = "", metric_choices),
-                selected = selected_metrics[metric_index],
-                selectize = FALSE
-              ),
-              if (metric_index > 1) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
-            )
-          })
-          metric_previews <- lapply(seq_len(nrow(measures)), function(measure_index) {
-            measure <- measures[measure_index, , drop = FALSE]
-            history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-            actual_values <- vapply(history_years, function(year) {
-              row <- history[history$fiscal_year == year, , drop = FALSE]
-              if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
-            }, character(1))
-            target_values <- vapply(history_years, function(year) {
-              row <- history[history$fiscal_year == year, , drop = FALSE]
-              if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
-            }, character(1))
-            div(
-              class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_metrics) "active" else ""),
-              `data-measure-id` = as.character(measure$measure_id),
-              div(
-                class = "kpi-preview-header",
-                div(span("Selected metric", class = "goal-number"), h4(measure$title)),
-                div(class = "chip-row", status_chip(measure$desired_direction, "success"), status_chip(measure$measure_type, "primary"))
-              ),
-              div(
-                class = "kpi-history-wrap",
-                tags$table(
-                  class = "kpi-history-table",
-                  tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
-                  tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", paste0("FY", year))))),
-                  tags$tbody(
-                    tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td)),
-                    tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td))
-                  )
-                )
-              )
-            )
-          })
           tags$details(
             class = "goal-editor service-editor",
             `data-service-id` = service_id,
+            `data-selected-metrics` = paste(selected_metrics[nzchar(selected_metrics)], collapse = ","),
             tags$summary(
               div(
                 class = "goal-editor-summary",
                 div(span(paste("Service", i), class = "goal-number"), strong(service_rows$service_name[i])),
-                span(class = "status-chip tone-primary service-metric-count", paste(sum(nzchar(selected_metrics)), if (sum(nzchar(selected_metrics)) == 1) "Metric" else "Metrics"))
+                span(class = "status-chip tone-primary service-metric-count", if (service_is_admin) "Not scored" else paste(sum(nzchar(selected_metrics)), if (sum(nzchar(selected_metrics)) == 1) "Metric" else "Metrics"))
               )
             ),
-            div(
-              class = "goal-editor-body service-editor-body",
-              `aria-hidden` = "true",
-              div(
-                class = "goal-form-field full-width",
-                tags$label(class = "control-label", `for` = paste0("service_description_", service_id), "Service description"),
-                p(class = "goal-field-instruction", "Describe the service in a consistent outcome-oriented structure: start with what the service provides, explain the goal or value it creates for the agency or residents, then name the core activities performed by the service."),
-                p(class = "goal-field-instruction", "A strong description should avoid a simple task list. It should connect administrative, operational, or resident-facing work to the agency's strategic priorities, such as operational success, accountability, effective use of data, service excellence, or attracting and retaining talented people."),
-                p(class = "goal-field-instruction", "Example structure: This service provides executive direction, communications and public relations, fiscal management, human capital management, and performance management for the department. The goal of this service is to drive innovation, promote the agency's strategic plan, and strengthen service excellence. Activities performed by this service include administrative direction, fiscal management, human resource support, performance management, communications, and change management."),
-                textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = service_rows$service_description[i])
-              ),
-              div(
-                class = "goal-form-field full-width kpi-picker service-metric-picker",
-                tags$label(class = "control-label", `for` = paste0("service_metric_", service_id, "_1"), "Metrics"),
-                p(class = "goal-field-instruction", "Choose from the agency's validated performance measures. Review the measure definition and five-year history before selecting it."),
-                p(class = "goal-field-instruction", "Select the metric that best captures the quality, timeliness, efficiency, or outcomes of this service. Choose outcome or leading indicators where possible - avoid selecting metrics that only count activity or workload. A metric can also serve as a goal-level KPI; you may see the same measure appear in both places."),
-                div(class = "kpi-selectors service-metric-selectors", `data-service-id` = service_id, metric_selector_rows),
-                div(
-                  class = "goal-field-support",
-                  strong("Add another metric"),
-                  p("Add a metric if this service requires more than one measure to capture performance. Each measure can only be assigned to one service - if a measure is already in use for another service it will be greyed out and unavailable in your selection list."),
-                  tags$button(type = "button", class = "civic-button secondary small add-kpi-button", icon("plus"), "Add another metric")
-                ),
-                div(class = "kpi-preview-list", metric_previews),
-                div(
-                  class = "goal-field-support new-measure-support",
-                  strong("Don't see the right metric?"),
-                  p("If none of the available measures adequately captures this service's performance, you can build a new metric. You'll be taken to the measure builder to define it - once submitted, it will be added to your agency's measure library and available for selection here."),
-                  tags$button(type = "button", class = "civic-button secondary small", `data-page` = "metrics", `data-new-measure` = "true", icon("plus"), "Build a new metric")
-                )
-              )
+            uiOutput(
+              service_body_output_id(service_id),
+              container = div,
+              class = "goal-editor-body service-editor-body lazy-service-body",
+              `aria-hidden` = "true"
             )
           )
           })
@@ -2779,15 +4881,15 @@ page_services <- function(db, agency_id) {
     ),
     plan_id = plan$plan_id,
     section_key = "services",
-    locked = !plan_is_editable(plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
-page_risks <- function(db, agency_id) {
+page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
   builder_page(
-    "Plan Risks",
+    performance_plan_title(db, plan, "Risks"),
     "Capture delivery risks, mitigations, and unresolved dependencies.",
     surface(
       "Risk register",
@@ -2808,7 +4910,8 @@ page_risks <- function(db, agency_id) {
       actions = tags$button(type = "button", class = "civic-button primary", `data-new-risk` = "true", icon("plus"), "Add risk")
     ),
     plan_id = plan$plan_id,
-    section_key = "risks"
+    section_key = "risks",
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
@@ -2872,34 +4975,75 @@ risk_modal_ui <- function(db, agency_id, risk_id = NULL) {
   )
 }
 
-page_ui <- function(page, db, agency_id, measure_status_filter = "Validated", can_manage_team = FALSE) {
+page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list()) {
   if (identical(page, "services") && submitter_is_mayoral_service(db, agency_id)) {
     page <- "metrics"
   }
+  review_admin_mode <- uses_review_administration_mode(app_roles)
+  if (review_admin_mode && page %in% c("strategic_plan", "plan_history", "overview", "goals", "services", "metrics", "risks")) {
+    page <- "reviewer_dashboard"
+  }
+  if (identical(page, "publishing_queue") && !can_finalize_plans(app_roles)) {
+    page <- "reviewer_dashboard"
+  }
+  if (identical(page, "approval_queue") && !can_view_plan_approval_queue_context(db, app_roles, selected_user_id)) {
+    page <- "reviewer_dashboard"
+  }
+  if (identical(page, "measure_review") && !can_review_measures(app_roles)) {
+    page <- if (can_view_plan_approval_queue(app_roles)) "approval_queue" else "reviewer_dashboard"
+  }
+  can_edit_plan <- can_edit_plan_sections(app_roles)
+  team_scope_choices <- if (review_admin_mode) agency_choices_only(db) else NULL
   switch(
     page,
-    login = page_login(),
-    landing = page_landing(db, agency_id),
-    reviewer_dashboard = page_reviewer_dashboard(db),
+    login = page_login(db, app_roles, agency_roles, selected_user_id, agency_id),
+    landing = page_landing(db, agency_id, app_roles, agency_roles),
+    reviewer_dashboard = page_reviewer_dashboard(db, can_finalize_plans(app_roles), app_roles, selected_user_id),
+    plan_review_detail = {
+      selected_plan <- db$planning_agency_plan[db$planning_agency_plan$plan_id == suppressWarnings(as.integer(selected_review_plan_id)), , drop = FALSE]
+      page_plan_review_detail(
+        db,
+        selected_review_plan_id,
+        can_review_plans(app_roles),
+        can_finalize_plans(app_roles),
+        selected_review_include_review,
+        can_route_plan_reviews(app_roles),
+        can_approve_plan_gate_context(db, selected_plan, app_roles, selected_user_id),
+        can_manage_plan_stamp_context(db, selected_plan, "DeputyMayor", app_roles, selected_user_id),
+        can_manage_plan_stamp_context(db, selected_plan, "CAOffice", app_roles, selected_user_id)
+      )
+    },
+    approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
+    publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
+    bug_fix = if (can_view_application_admin(app_roles)) {
+      page_bug_fix(
+        db,
+        search = if (is.null(feedback_filters$search) || length(feedback_filters$search) == 0) "" else feedback_filters$search[[1]],
+        category_filter = if (is.null(feedback_filters$category) || length(feedback_filters$category) == 0) character(0) else feedback_filters$category,
+        priority_filter = if (is.null(feedback_filters$priority) || length(feedback_filters$priority) == 0) character(0) else feedback_filters$priority,
+        status_filter = if (is.null(feedback_filters$status) || length(feedback_filters$status) == 0) character(0) else feedback_filters$status
+      )
+    } else page_landing(db, agency_id, app_roles, agency_roles),
+    role_preview = if (can_view_application_admin(app_roles)) page_role_preview(db, app_roles, agency_roles, selected_user_id, agency_id) else page_landing(db, agency_id, app_roles, agency_roles),
     strategic_plan = page_strategic_plan(db, agency_id),
-    team = page_team(db, agency_id, can_manage_team),
-    plan_history = page_plan_history(db, agency_id),
+    team = page_team(db, agency_id, can_manage_team, team_scope_choices),
+    plan_history = page_plan_history(db, agency_id, can_submit_plan),
     metrics = page_metrics(db, agency_id, measure_status_filter),
-    overview = page_overview(db, agency_id),
-    goals = page_goals(db, agency_id),
-    services = page_services(db, agency_id),
-    risks = page_risks(db, agency_id),
-    page_landing(db, agency_id)
+    overview = page_overview(db, agency_id, can_edit_plan),
+    goals = page_goals(db, agency_id, can_edit_plan),
+    services = page_services(db, agency_id, can_edit_plan),
+    risks = page_risks(db, agency_id, can_edit_plan),
+    page_landing(db, agency_id, app_roles, agency_roles)
   )
 }
 
 ui <- tagList(
   tags$head(
-    tags$title("B.O.B. Baltimore Outcome Budgeting"),
+    tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260701-12"),
-    tags$script(src = "app.js?v=20260701-6", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260706-3"),
+    tags$script(src = "app.js?v=20260706-2", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -2912,11 +5056,10 @@ ui <- tagList(
         class = "brand-lockup",
           tags$img(class = "brand-mark", src = "baltimore-city-logo.png", alt = "City of Baltimore logo"),
           div(
-            div(class = "brand-product", "B.O.B."),
-            div(class = "brand-subtitle", "Baltimore Outcome Budgeting")
+            div(class = "brand-product", "Beacon"),
+            div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
           )
-        ),
-        uiOutput("agency_selector_header")
+        )
       )
     ),
     div(
@@ -2949,19 +5092,23 @@ ui <- tagList(
         ),
         tags$nav(
           class = "drawer-nav",
+          nav_item("login", "Sign in", icon("right-to-bracket")),
           nav_item("landing", "Cycle home", icon("house")),
-          nav_item("strategic_plan", "Action plan", icon("clipboard-list")),
+          nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
           nav_item("team", "Team and roles", icon("users")),
           div(class = "nav-group-label performance-reviewing-nav-item", "Performance Reviewing"),
-          nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item"),
-          nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item"),
-          div(class = "nav-group-label", "Performance Planning"),
-          nav_item("plan_history", "History & status", icon("clock-rotate-left"), "builder"),
-          nav_item("overview", "Overview & vision", icon("eye"), "builder"),
-          nav_item("goals", "Goals", icon("flag"), "builder"),
-          nav_item("services", "Services", icon("briefcase"), "builder", "nav-services-item"),
-          nav_item("metrics", "Measures", icon("chart-line"), "builder"),
-          nav_item("risks", "Risks", icon("triangle-exclamation"), "builder")
+          uiOutput("performance_reviewing_nav"),
+          div(class = "nav-group-label application-nav-item", "Application"),
+          nav_item("role_preview", "Role preview", icon("user-shield"), item_class = "application-nav-item"),
+          nav_item("bug_fix", "Bug/Fix", icon("bug"), item_class = "application-nav-item"),
+          div(class = "nav-group-label performance-planning-nav-item", "Performance Planning"),
+          uiOutput("drawer_context_selector"),
+          nav_item("plan_history", "View plan", icon("file-circle-check"), item_class = "performance-planning-nav-item nav-review-plan-highlight"),
+          nav_item("overview", "Overview & vision", icon("eye"), item_class = "performance-planning-nav-item"),
+          nav_item("goals", "Goals", icon("flag"), item_class = "performance-planning-nav-item"),
+          nav_item("services", "Services", icon("briefcase"), item_class = "nav-services-item performance-planning-nav-item"),
+          nav_item("metrics", "Measures", icon("chart-line"), item_class = "performance-planning-nav-item"),
+          nav_item("risks", "Risks", icon("triangle-exclamation"), item_class = "performance-planning-nav-item")
         )
       ),
       tags$main(
@@ -2977,19 +5124,23 @@ ui <- tagList(
     tags$nav(
       class = "mobile-nav",
       div(class = "mobile-nav-header", div(class = "drawer-title", "Navigation"), tags$button(id = "close_mobile_nav", type = "button", class = "icon-button", title = "Close navigation", `aria-label` = "Close navigation", icon("xmark"))),
+      nav_item("login", "Sign in", icon("right-to-bracket")),
       nav_item("landing", "Home", icon("house")),
-      nav_item("strategic_plan", "Action plan", icon("clipboard-list")),
+      nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
       nav_item("team", "Team and roles", icon("users")),
       div(class = "nav-group-label performance-reviewing-nav-item", "Performance Reviewing"),
-      nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item"),
-      nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item"),
-      div(class = "nav-group-label", "Performance Planning"),
-      nav_item("plan_history", "History & status", icon("clock-rotate-left")),
-      nav_item("overview", "Overview & vision", icon("eye")),
-      nav_item("goals", "Goals", icon("flag")),
-      nav_item("services", "Services", icon("briefcase"), item_class = "nav-services-item"),
-      nav_item("metrics", "Measures", icon("chart-line")),
-      nav_item("risks", "Risks", icon("triangle-exclamation"))
+      uiOutput("mobile_performance_reviewing_nav"),
+      div(class = "nav-group-label application-nav-item", "Application"),
+      nav_item("role_preview", "Role preview", icon("user-shield"), item_class = "application-nav-item"),
+      nav_item("bug_fix", "Bug/Fix", icon("bug"), item_class = "application-nav-item"),
+      div(class = "nav-group-label performance-planning-nav-item", "Performance Planning"),
+      uiOutput("mobile_context_selector"),
+      nav_item("plan_history", "View plan", icon("file-circle-check"), item_class = "performance-planning-nav-item nav-review-plan-highlight"),
+      nav_item("overview", "Overview & vision", icon("eye"), item_class = "performance-planning-nav-item"),
+      nav_item("goals", "Goals", icon("flag"), item_class = "performance-planning-nav-item"),
+      nav_item("services", "Services", icon("briefcase"), item_class = "nav-services-item performance-planning-nav-item"),
+      nav_item("metrics", "Measures", icon("chart-line"), item_class = "performance-planning-nav-item"),
+      nav_item("risks", "Risks", icon("triangle-exclamation"), item_class = "performance-planning-nav-item")
     ),
     div(
       class = "mobile-nav-toggle-bar",
@@ -3006,36 +5157,34 @@ ui <- tagList(
             div(
               class = "footer-brand-lockup",
               tags$img(class = "footer-brand-mark", src = "baltimore-city-logo.png", alt = "City of Baltimore logo"),
-              div(tags$strong("B.O.B."), span("Baltimore Outcome Budgeting"))
+              div(tags$strong("Beacon"), span("Baltimore City Performance & Budgeting"))
             ),
             tags$a(class = "footer-city-link", href = "https://baltimorecity.gov/", target = "_blank", rel = "noopener", "Baltimorecity.gov", icon("arrow-up-right-from-square"))
           ),
           div(
             class = "footer-column",
             tags$h2("Navigation"),
+            tags$button(type = "button", class = "footer-link", `data-page` = "landing", "Cycle Home"),
+            tags$button(type = "button", class = "footer-link", `data-page` = "plan_history", "View Plan"),
             tags$button(type = "button", class = "footer-link", `data-page` = "strategic_plan", "Action Plan"),
-            tags$button(type = "button", class = "footer-link", `data-page` = "overview", "Overview & Vision"),
-            tags$button(type = "button", class = "footer-link", `data-page` = "goals", "Goals"),
-            tags$button(type = "button", class = "footer-link", `data-page` = "services", "Services"),
             tags$button(type = "button", class = "footer-link", `data-page` = "metrics", "Measures")
           ),
           div(
             class = "footer-column",
-            tags$h2("City Hall"),
-            span("100 N Holliday Street"),
-            span("Baltimore, MD 21202"),
-            span("(410) 396-5000")
+            tags$h2("Resources"),
+            tags$a(class = "footer-link", href = "https://baltimorecity.gov/", target = "_blank", rel = "noopener", "Baltimorecity.gov", icon("arrow-up-right-from-square")),
+            tags$a(class = "footer-link", href = "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-05/2026%20Mayor%27s%20Action%20Plan_0.pdf", target = "_blank", rel = "noopener", "Mayor's Action Plan", icon("arrow-up-right-from-square"))
           ),
           div(
             class = "footer-column footer-cta",
-            tags$h2("Need Help?"),
-            p("Questions about outcome budgeting, performance planning, or this workspace?"),
-            tags$a(class = "footer-contact-button", href = "mailto:help@baltimorecity.gov", "Contact Support")
+            tags$h2("Support"),
+            p("Questions about performance planning, review routing, or Beacon?"),
+            tags$a(class = "footer-contact-button", href = "mailto:melanie.lada@baltimorecity.gov", "Contact Support")
           )
         ),
         div(
           class = "footer-bottom",
-          span("© 2026 Baltimore City Government. All rights reserved."),
+          span("Copyright 2026 Baltimore City Government. All rights reserved."),
           div(
             class = "footer-policy-links",
             tags$a(href = "https://baltimorecity.gov/privacy", target = "_blank", rel = "noopener", "Privacy Policy"),
@@ -3049,6 +5198,8 @@ ui <- tagList(
     uiOutput("measure_modal"),
     uiOutput("risk_modal"),
     uiOutput("team_role_modal"),
+    actionButton("open_feedback_modal", tagList(icon("comment-dots"), span("Feedback")), class = "floating-feedback-button"),
+    uiOutput("feedback_modal"),
     div(
       class = "download-sink",
       downloadButton("download_plan_pdf", "Download PDF"),
@@ -3059,24 +5210,76 @@ ui <- tagList(
 
 server <- function(input, output, session) {
   database <- connect_app_database()
+  ensure_review_schema(database)
   session$onSessionEnded(function() DBI::dbDisconnect(database))
   app_data <- reactiveVal(load_app_data(database))
-  current_page <- reactiveVal("login")
+  current_page <- reactiveVal("role_preview")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
+  current_history_include_review <- reactiveVal(TRUE)
+  current_review_return_page <- reactiveVal("reviewer_dashboard")
   current_export_plan_id <- reactiveVal(NULL)
-  current_workspace <- reactiveVal("agency")
-  current_user_type <- reactiveVal("agency")
+  current_export_include_review <- reactiveVal(TRUE)
+  current_workspace <- reactiveVal("admin")
+  current_user_type <- reactiveVal("admin")
   current_team_access_id <- reactiveVal(NULL)
+  current_role_preview_user_id <- reactiveVal(NULL)
+  current_role_preview_app_role <- reactiveVal("SystemAdmin")
+  current_role_preview_agency_role <- reactiveVal("Admin")
+  feedback_modal_open <- reactiveVal(FALSE)
+  service_open_flags <- new.env(parent = emptyenv())
+  section_draft_cache <- new.env(parent = emptyenv())
 
   refresh_app_data <- function() app_data(load_app_data(database))
+  update_cached_section_draft <- function(plan_id, section_key, payload_json, row) {
+    key <- paste(as.integer(plan_id), as.character(section_key), sep = "::")
+    section_draft_cache[[key]] <- data.frame(
+      draft_id = row$draft_id[[1]],
+      plan_id = as.integer(plan_id),
+      section_key = as.character(section_key),
+      payload = as.character(payload_json),
+      revision = row$revision[[1]],
+      updated_by = NA_integer_,
+      updated_at = row$updated_at[[1]],
+      stringsAsFactors = FALSE
+    )
+    invisible(TRUE)
+  }
+  data_with_cached_section_draft <- function(data, plan_id, section_key) {
+    key <- paste(as.integer(plan_id), as.character(section_key), sep = "::")
+    if (!exists(key, envir = section_draft_cache, inherits = FALSE)) return(data)
+    cached_row <- get(key, envir = section_draft_cache, inherits = FALSE)
+    if (!"planning_plan_section_draft" %in% names(data)) return(data)
+    drafts <- data$planning_plan_section_draft
+    if (!nrow(drafts)) {
+      data$planning_plan_section_draft <- cached_row
+    } else {
+      match_index <- which(drafts$plan_id == as.integer(plan_id) & drafts$section_key == as.character(section_key))
+      if (length(match_index)) {
+        common_names <- intersect(names(drafts), names(cached_row))
+        drafts[match_index[[1]], common_names] <- cached_row[1, common_names, drop = FALSE]
+      } else {
+        drafts <- rbind(drafts, cached_row[, names(drafts), drop = FALSE])
+      }
+      data$planning_plan_section_draft <- drafts
+    }
+    data
+  }
   current_submitter_value <- function() {
-    selected <- input$selected_agency
+    selected <- input$selected_agency_nav %||% input$selected_agency_mobile %||% input$selected_agency
     data <- app_data()
-    valid_values <- unlist(agency_selector_choices(data), use.names = FALSE)
-    if (is.null(selected) || !selected %in% valid_values) "agency:AGC2600" else selected
+    app_roles <- current_user_app_roles()
+    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
+    choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+      agency_selector_choices(data)
+    } else {
+      user_submitter_choices(data, user_id)
+    }
+    if (!length(choices)) choices <- agency_selector_choices(data)
+    valid_values <- unname(choices)
+    if (is.null(selected) || !selected %in% valid_values) valid_values[[1]] else selected
   }
   current_agency_id <- function() {
     data <- app_data()
@@ -3087,41 +5290,351 @@ server <- function(input, output, session) {
   current_user_is_system_admin <- function() {
     identical(current_workspace(), "admin")
   }
-  current_user_can_manage_team <- function() {
-    current_user_is_system_admin() || identical(current_user_type(), "agency_director")
+  current_user_app_roles <- function() {
+    selected_role <- current_role_preview_app_role() %||% input$role_preview_app_role
+    if (!is.null(selected_role) && selected_role %in% performance_role_choices) {
+      return(c(selected_role))
+    }
+    switch(
+      current_user_type(),
+      agency = c("AgencySubmitter"),
+      agency_director = c("AgencyWriter"),
+      admin = c("SystemAdmin"),
+      c("AgencyViewer")
+    )
+  }
+  current_user_agency_roles <- function() {
+    selected_role <- current_role_preview_agency_role() %||% input$role_preview_agency_role
+    if (!is.null(selected_role) && identical(selected_role, "None")) {
+      return(character(0))
+    }
+    if (!is.null(selected_role) && selected_role %in% agency_role_choices) {
+      return(c(selected_role))
+    }
+    switch(
+      current_user_type(),
+      agency = character(0),
+      agency_director = c("Agency Director"),
+      admin = c("Admin"),
+      character(0)
+    )
+  }
+  current_user_submitter_choices <- function(data = app_data()) {
+    app_roles <- current_user_app_roles()
+    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
+    if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+      agency_selector_choices(data)
+    } else {
+      choices <- user_submitter_choices(data, user_id)
+      if (length(choices)) choices else agency_selector_choices(data)
+    }
+  }
+  update_submitter_selectors <- function(data = app_data(), selected = NULL) {
+    choices <- current_user_submitter_choices(data)
+    if (!length(choices)) return(invisible(FALSE))
+    if (is.null(selected) || !selected %in% unname(choices)) selected <- unname(choices)[[1]]
+    updateSelectInput(session, "selected_agency", choices = choices, selected = selected)
+    updateSelectInput(session, "selected_agency_nav", choices = choices, selected = selected)
+    updateSelectInput(session, "selected_agency_mobile", choices = choices, selected = selected)
+    invisible(TRUE)
   }
 
-  output$agency_selector_header <- renderUI({
+  sync_role_preview_user <- function(user_id) {
+    user_id <- user_id %||% ""
+    if (!nzchar(user_id)) return(invisible(FALSE))
+    current_role_preview_user_id(user_id)
     data <- app_data()
+    defaults <- matched_user_role_defaults(data, user_id)
+    current_role_preview_app_role(defaults$app_role)
+    current_role_preview_agency_role(defaults$agency_role)
+    for (input_id in c("role_preview_user_id")) {
+      updateSelectInput(session, input_id, selected = user_id)
+    }
+    for (input_id in c("role_preview_app_role")) {
+      updateSelectInput(session, input_id, selected = defaults$app_role)
+    }
+    for (input_id in c("role_preview_agency_role")) {
+      updateSelectInput(session, input_id, selected = defaults$agency_role)
+    }
+    submitter_value <- matched_user_submitter_value(data, user_id)
+    if (!is.null(submitter_value)) {
+      update_submitter_selectors(data, submitter_value)
+    }
+    invisible(TRUE)
+  }
+
+  observeEvent(input$role_preview_user_id, {
+    sync_role_preview_user(input$role_preview_user_id)
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$role_preview_app_role, {
+    selected_role <- input$role_preview_app_role
+    if (!is.null(selected_role) && selected_role %in% performance_role_choices) {
+      current_role_preview_app_role(selected_role)
+    }
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$role_preview_agency_role, {
+    selected_role <- input$role_preview_agency_role
+    if (!is.null(selected_role) && (identical(selected_role, "None") || selected_role %in% agency_role_choices)) {
+      current_role_preview_agency_role(selected_role)
+    }
+  }, ignoreInit = FALSE)
+
+  current_user_can_manage_team <- function() {
+    can_edit_roles(current_user_app_roles(), current_user_agency_roles())
+  }
+  current_user_can_assign_submitter <- function() {
+    can_assign_submitter(current_user_app_roles(), current_user_agency_roles())
+  }
+  current_user_can_submit_plan <- function() {
+    can_submit_plans(current_user_app_roles())
+  }
+  current_user_can_edit_plan <- function() {
+    can_edit_plan_sections(current_user_app_roles())
+  }
+  current_user_can_review_measures <- function() {
+    can_review_measures(current_user_app_roles())
+  }
+  current_user_can_review_plans <- function() {
+    can_review_plans(current_user_app_roles())
+  }
+  current_user_can_route_plan_reviews <- function() {
+    can_route_plan_reviews(current_user_app_roles())
+  }
+  current_user_can_assign_plan_reviewer <- function() {
+    can_finalize_plans(current_user_app_roles())
+  }
+  current_user_can_view_application_admin <- function() {
+    can_view_application_admin(current_user_app_roles())
+  }
+  current_user_can_submit_measure <- function() {
+    can_submit_measures(current_user_app_roles(), current_user_agency_roles())
+  }
+  current_user_can_manage_measure_admin_fields <- function() {
+    can_review_measures(current_user_app_roles())
+  }
+  current_user_email <- function() {
+    data <- app_data()
+    user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+    if (!is.na(user_id) && "access_user" %in% names(data) && nrow(data$access_user)) {
+      user <- data$access_user[data$access_user$user_id == user_id, , drop = FALSE]
+      if (nrow(user) && !is.na(user$email[[1]])) return(user$email[[1]])
+    }
+    ""
+  }
+
+  reset_service_open_flags <- function() {
+    for (name in ls(service_open_flags, all.names = TRUE)) {
+      service_open_flags[[name]](FALSE)
+    }
+  }
+
+  observeEvent(input$service_lazy_open, {
+    service_id <- input$service_lazy_open$serviceId %||% ""
+    if (!nzchar(service_id)) return()
+    key <- as.character(service_id)
+    if (exists(key, envir = service_open_flags, inherits = FALSE)) {
+      service_open_flags[[key]](TRUE)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$current_page, {
+    if (!identical(input$current_page, "services")) {
+      reset_service_open_flags()
+    }
+  }, ignoreInit = TRUE)
+
+  sync_selected_agency_inputs <- function(selected) {
+    if (is.null(selected) || !nzchar(selected)) return(invisible(FALSE))
+    for (input_id in c("selected_agency", "selected_agency_nav", "selected_agency_mobile")) {
+      updateSelectInput(session, input_id, selected = selected)
+    }
+    invisible(TRUE)
+  }
+
+  observeEvent(input$selected_agency, {
+    reset_service_open_flags()
+    if (!is.null(input$selected_agency) && nzchar(input$selected_agency)) {
+      sync_selected_agency_inputs(input$selected_agency)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$selected_agency_nav, {
+    reset_service_open_flags()
+    if (!is.null(input$selected_agency_nav) && nzchar(input$selected_agency_nav)) {
+      sync_selected_agency_inputs(input$selected_agency_nav)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$selected_agency_mobile, {
+    reset_service_open_flags()
+    if (!is.null(input$selected_agency_mobile) && nzchar(input$selected_agency_mobile)) {
+      sync_selected_agency_inputs(input$selected_agency_mobile)
+    }
+  }, ignoreInit = TRUE)
+
+  initial_service_ids <- isolate(app_data())$reference_service$service_id
+  for (service_id in initial_service_ids) {
+    service_open_flags[[as.character(service_id)]] <- reactiveVal(FALSE)
+  }
+  lapply(initial_service_ids, function(service_id) {
+    local({
+      service_id_local <- service_id
+      service_open_flag <- service_open_flags[[as.character(service_id_local)]]
+      output[[service_body_output_id(service_id_local)]] <- renderUI({
+        if (!identical(current_page(), "services") || !isTRUE(service_open_flag())) {
+          return(div(class = "service-lazy-placeholder", "Loading..."))
+        }
+        data <- app_data()
+        plan <- current_plan(data, current_submitter_value())
+        data <- data_with_cached_section_draft(data, plan$plan_id[[1]], "services")
+        service_rows <- plan_service_rows(data, plan)
+        service_row <- service_rows[service_rows$service_id == service_id_local, , drop = FALSE]
+        if (!nrow(service_row)) return(NULL)
+        measures <- eligible_plan_measures(measure_library_rows(data, plan, include_ineligible = FALSE))
+        metric_choices <- setNames(measures$measure_id, measures$title)
+        service_editor_body_ui(
+          data,
+          plan,
+          service_row[1, , drop = FALSE],
+          measures = measures,
+          metric_choices = metric_choices,
+          locked = !plan_is_editable(plan) || !current_user_can_edit_plan()
+        )
+      })
+    })
+  })
+
+  observe({
+    data <- app_data()
+    submitter_value <- current_submitter_value()
+    hide_services <- submitter_is_mayoral_service(data, submitter_value)
+    review_admin_mode <- uses_review_administration_mode(current_user_app_roles())
+    can_view_approval_context <- can_view_plan_approval_queue_context(data, current_user_app_roles(), current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_)
+    can_view_reviewing_context <- can_view_performance_reviewing(current_user_app_roles()) || can_view_approval_context
+    session$sendCustomMessage("set-navigation-scope", list(
+      hideServices = hide_services,
+      showPerformanceReviewing = can_view_reviewing_context,
+      showMeasureReview = current_user_can_review_measures(),
+      showApprovalQueue = can_view_approval_context,
+      showPublishingQueue = can_finalize_plans(current_user_app_roles()),
+      hidePerformancePlanning = review_admin_mode,
+      showApplicationAdmin = current_user_can_view_application_admin()
+    ))
+    if (hide_services && identical(current_page(), "services")) {
+      current_page("metrics")
+      session$sendCustomMessage("set-page", "metrics")
+    }
+    if (review_admin_mode && current_page() %in% c("strategic_plan", "plan_history", "overview", "goals", "services", "metrics", "risks")) {
+      current_page("reviewer_dashboard")
+      session$sendCustomMessage("set-page", "reviewer_dashboard")
+    }
+    plan_detail_from_history <- identical(current_page(), "plan_review_detail") && identical(current_review_return_page(), "plan_history")
+    if (!can_view_reviewing_context && !plan_detail_from_history && current_page() %in% c("reviewer_dashboard", "plan_review_detail", "approval_queue", "publishing_queue", "measure_review")) {
+      current_page("landing")
+      session$sendCustomMessage("set-page", "landing")
+    }
+    if (!current_user_can_review_measures() && identical(current_page(), "measure_review")) {
+      next_page <- if (can_view_plan_approval_queue(current_user_app_roles())) "approval_queue" else "reviewer_dashboard"
+      current_page(next_page)
+      session$sendCustomMessage("set-page", next_page)
+    }
+    if (!can_view_approval_context && identical(current_page(), "approval_queue")) {
+      current_page("reviewer_dashboard")
+      session$sendCustomMessage("set-page", "reviewer_dashboard")
+    }
+    if (!can_finalize_plans(current_user_app_roles()) && identical(current_page(), "publishing_queue")) {
+      current_page("reviewer_dashboard")
+      session$sendCustomMessage("set-page", "reviewer_dashboard")
+    }
+    if (!current_user_can_view_application_admin() && identical(current_page(), "bug_fix")) {
+      current_page("landing")
+      session$sendCustomMessage("set-page", "landing")
+    }
+  })
+
+  output$drawer_context_selector <- renderUI({
+    app_roles <- current_user_app_roles()
+    nav_roles <- unique(c(app_roles, current_role_preview_app_role(), input$role_preview_app_role))
+    if (uses_review_administration_mode(app_roles) && !has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer"))) {
+      return(NULL)
+    }
+    data <- app_data()
+    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
+    choices <- if (has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+      agency_selector_choices(data)
+    } else {
+      user_submitter_choices(data, user_id)
+    }
+    if (length(choices) <= 1) {
+      return(NULL)
+    }
     div(
-      class = "header-agency-selector",
+      class = "drawer-context-selector",
+      div(class = "drawer-context-label", icon("building-columns"), span("Working plan")),
       selectInput(
-        "selected_agency",
+        "selected_agency_nav",
         label = NULL,
-        choices = agency_selector_choices(data),
+        choices = choices,
         selected = current_submitter_value(),
         selectize = TRUE,
         width = "100%"
       )
     )
   })
-  observe({
+
+  review_nav_ui <- function() {
     data <- app_data()
-    submitter_value <- current_submitter_value()
-    hide_services <- submitter_is_mayoral_service(data, submitter_value)
-    session$sendCustomMessage("set-navigation-scope", list(
-      hideServices = hide_services,
-      showPerformanceReviewing = current_user_is_system_admin()
-    ))
-    if (hide_services && identical(current_page(), "services")) {
-      current_page("metrics")
-      session$sendCustomMessage("set-page", "metrics")
-    }
-    if (!current_user_is_system_admin() && current_page() %in% c("reviewer_dashboard", "measure_review")) {
-      current_page("landing")
-      session$sendCustomMessage("set-page", "landing")
-    }
+    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
+    app_roles <- current_user_app_roles()
+    approval_first <- has_any_role(app_roles, c("DeputyMayor", "CAOffice")) || user_is_portfolio_approver(data, user_id)
+    performance_reviewing_nav_items(approval_first)
+  }
+
+  output$performance_reviewing_nav <- renderUI({
+    review_nav_ui()
   })
+
+  output$mobile_performance_reviewing_nav <- renderUI({
+    review_nav_ui()
+  })
+
+  output$mobile_context_selector <- renderUI({
+    app_roles <- current_user_app_roles()
+    nav_roles <- unique(c(app_roles, current_role_preview_app_role(), input$role_preview_app_role))
+    if (uses_review_administration_mode(app_roles) && !has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer"))) {
+      return(NULL)
+    }
+    data <- app_data()
+    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
+    choices <- if (has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+      agency_selector_choices(data)
+    } else {
+      user_submitter_choices(data, user_id)
+    }
+    if (length(choices) <= 1) {
+      return(NULL)
+    }
+    div(
+      class = "drawer-context-selector mobile-context-selector",
+      div(class = "drawer-context-label", icon("building-columns"), span("Working plan")),
+      selectInput(
+        "selected_agency_mobile",
+        label = NULL,
+        choices = choices,
+        selected = current_submitter_value(),
+        selectize = TRUE,
+        width = "100%"
+      )
+    )
+  })
+
+  observeEvent(input$team_scope_agency, {
+    selected <- input$team_scope_agency
+    if (is.null(selected) || !nzchar(selected)) return()
+    sync_selected_agency_inputs(selected)
+  }, ignoreInit = TRUE)
   nullable_number <- function(value, integer = FALSE) {
     if (is.null(value) || length(value) == 0 || is.na(value) || identical(value, "")) return(if (integer) NA_integer_ else NA_real_)
     if (integer) as.integer(value) else as.numeric(value)
@@ -3198,7 +5711,7 @@ server <- function(input, output, session) {
     missing <- unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
     target_row <- yearly_values[vapply(yearly_values, function(row) identical(as.integer(row$fiscal_year), as.integer(target_fy)), logical(1))]
     target_missing <- !length(target_row) || is.na(target_row[[1]]$target_value)
-    if (target_missing) missing <- c(missing, paste0("FY", target_fy, " Next Fiscal Year Target"))
+    if (target_missing) missing <- c(missing, paste(fy_label(target_fy), "Next Fiscal Year Target"))
     missing
   }
   collect_measure_form <- function() {
@@ -3257,6 +5770,14 @@ server <- function(input, output, session) {
     ))
   }
   persist_measure <- function(submit = FALSE) {
+    if (!submit && !current_user_can_submit_measure() && !current_user_can_review_measures()) {
+      showNotification("You do not have permission to edit measures.", type = "error", duration = 8)
+      return()
+    }
+    if (submit && !current_user_can_submit_measure()) {
+      showNotification("You do not have permission to submit measures for approval.", type = "error", duration = 8)
+      return()
+    }
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
     if (submit) {
@@ -3312,7 +5833,75 @@ server <- function(input, output, session) {
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
   }, ignoreInit = TRUE)
+  observeEvent(input$open_feedback_modal, {
+    feedback_modal_open(TRUE)
+  }, ignoreInit = TRUE)
+  observeEvent(input$open_feedback_modal_request, {
+    feedback_modal_open(TRUE)
+  }, ignoreInit = TRUE)
+  observeEvent(input$close_feedback_modal, {
+    feedback_modal_open(FALSE)
+  }, ignoreInit = TRUE)
+  observeEvent(input$submit_feedback_request, {
+    request <- input$submit_feedback_request
+    page_key <- as.character(request$page %||% current_page())
+    page_url <- as.character(request$pageUrl %||% "")
+    screenshot_data <- as.character(request$screenshotData %||% input$feedback_screenshot_data %||% "")
+    result <- tryCatch(
+      save_feedback_request(database, input$feedback_email, input$feedback_comment, screenshot_data, page_key, page_url),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    feedback_modal_open(FALSE)
+    showNotification("Feedback submitted. Thank you.", type = "message", duration = 6)
+  }, ignoreInit = TRUE)
+  observeEvent(input$feedback_admin_update, {
+    if (!current_user_can_view_application_admin()) {
+      showNotification("Only System Admins can update feedback requests.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$feedback_admin_update
+    result <- tryCatch(
+      update_feedback_request(
+        database,
+        request$feedbackId,
+        request$category,
+        request$priority,
+        request$status,
+        request$assignedAdminId,
+        current_user_email()
+      ),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    showNotification("Feedback request updated.", type = "message", duration = 5)
+  }, ignoreInit = TRUE)
+  observeEvent(input$feedback_admin_delete, {
+    if (!current_user_can_view_application_admin()) {
+      showNotification("Only System Admins can delete feedback requests.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(delete_feedback_request(database, input$feedback_admin_delete$feedbackId), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    showNotification("Feedback request deleted.", type = "message", duration = 5)
+  }, ignoreInit = TRUE)
   observeEvent(input$measure_review_decision, {
+    if (!current_user_can_review_measures()) {
+      showNotification("Only System Admins and OPI Reviewers can approve, validate, return, or provide feedback on measures.", type = "error", duration = 8)
+      return()
+    }
     decision <- input$measure_review_decision
     if (is.null(decision$measureId) || is.null(decision$action)) return()
     measure_id <- as.integer(decision$measureId)
@@ -3331,6 +5920,10 @@ server <- function(input, output, session) {
     }
     refresh_app_data()
     showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
+  }, ignoreInit = TRUE)
+  observeEvent(input$measure_cap_error, {
+    message <- input$measure_cap_error$message %||% "No more than 5 measures are allowed."
+    showNotification(message, type = "error", duration = 8)
   }, ignoreInit = TRUE)
   observeEvent(input$confirm_deactivate_measure, {
     measure_id <- current_measure_id()
@@ -3354,22 +5947,31 @@ server <- function(input, output, session) {
   observeEvent(input$close_risk_modal, current_risk_id(NULL), ignoreInit = TRUE)
   observeEvent(input$open_team_access_id, {
     request <- input$open_team_access_id
-    access_id <- suppressWarnings(as.integer(request$accessId))
-    if (is.na(access_id)) return()
+    access_id <- as.character(request$accessId)
+    if (!identical(access_id, "new") && is.na(suppressWarnings(as.integer(access_id)))) return()
     current_team_access_id(access_id)
   }, ignoreInit = TRUE)
   observeEvent(input$close_team_role_modal, current_team_access_id(NULL), ignoreInit = TRUE)
+  observeEvent(input$close_team_role_modal_footer, current_team_access_id(NULL), ignoreInit = TRUE)
   observeEvent(input$team_role_save_request, {
     if (!current_user_can_manage_team()) {
-      showNotification("Only Agency Directors and Admin users can change team roles.", type = "error", duration = 8)
+      showNotification("You do not have permission to change team roles.", type = "error", duration = 8)
+      return()
+    }
+    if (identical(input$team_performance_role, "AgencySubmitter") && !current_user_can_assign_submitter()) {
+      showNotification("Only an Agency Head, Agency Director, Chief of Staff, or admin role can assign AgencySubmitter access.", type = "error", duration = 8)
       return()
     }
     access_id <- current_team_access_id()
-    if (is.null(access_id) || is.na(access_id)) return()
+    if (is.null(access_id)) return()
+    data <- app_data()
+    plan <- current_plan(data, current_submitter_value())
+    accounting_agency_id <- plan_accounting_agency_id(data, plan)
     result <- tryCatch(
       save_team_role_assignment(
         database,
         access_id,
+        accounting_agency_id,
         input$team_full_name,
         input$team_email,
         input$team_agency_role,
@@ -3385,9 +5987,14 @@ server <- function(input, output, session) {
       return()
     }
     refresh_app_data()
+    current_team_access_id(NULL)
     showNotification("Team role updated.", type = "message")
   }, ignoreInit = TRUE)
   observeEvent(input$risk_save_request, {
+    if (!current_user_can_edit_plan()) {
+      showNotification("You do not have permission to edit this plan.", type = "error", duration = 8)
+      return()
+    }
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
     risk_id <- current_risk_id()
@@ -3406,6 +6013,10 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   observeEvent(input$duplicate_plan_from, {
+    if (!current_user_can_edit_plan()) {
+      showNotification("You do not have permission to update this plan draft.", type = "error", duration = 8)
+      return()
+    }
     request <- input$duplicate_plan_from
     source_plan_id <- suppressWarnings(as.integer(request$planId))
     data <- app_data()
@@ -3427,7 +6038,7 @@ server <- function(input, output, session) {
       return()
     }
     refresh_app_data()
-    showNotification(paste0("FY", source_plan$fiscal_year[[1]], " plan copied into the current shared draft."), type = "message", duration = 8)
+    showNotification(paste(fy_label(source_plan$fiscal_year[[1]]), "plan copied into the current shared draft."), type = "message", duration = 8)
   }, ignoreInit = TRUE)
 
   observeEvent(input$review_plan_request, {
@@ -3435,20 +6046,364 @@ server <- function(input, output, session) {
     plan_id <- suppressWarnings(as.integer(request$planId))
     if (is.na(plan_id)) return()
     current_history_plan_id(plan_id)
+    current_history_include_review(isTRUE(request$includeReview))
+    return_page <- as.character(request$returnPage %||% "reviewer_dashboard")
+    if (!return_page %in% c("reviewer_dashboard", "approval_queue", "publishing_queue", "plan_history")) {
+      return_page <- "reviewer_dashboard"
+    }
+    current_review_return_page(return_page)
+    current_page("plan_review_detail")
+    session$sendCustomMessage("set-page", "plan_review_detail")
   }, ignoreInit = TRUE)
 
-  observeEvent(input$close_history_plan_modal, current_history_plan_id(NULL), ignoreInit = TRUE)
+  observeEvent(input$close_history_plan_modal, {
+    current_history_plan_id(NULL)
+    current_history_include_review(TRUE)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$back_to_review_queue, {
+    current_history_plan_id(NULL)
+    current_history_include_review(TRUE)
+    return_page <- current_review_return_page() %||% "reviewer_dashboard"
+    current_page(return_page)
+    session$sendCustomMessage("set-page", return_page)
+  }, ignoreInit = TRUE)
+
+  collect_plan_review_scores <- function(plan_id) {
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    if (!nrow(plan)) return(list())
+    goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
+    goals <- goals[order(goals$sort_order), , drop = FALSE]
+    services <- plan_service_rows(data, plan)
+    services <- scorable_service_rows(services)
+    rows <- list()
+    append_rows <- function(criteria, target_type = "plan", target_id = NA_integer_) {
+      for (i in seq_len(nrow(criteria))) {
+        criterion <- criteria[i, , drop = FALSE]
+        score_id <- review_input_id("review_score", criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+        notes_id <- review_input_id("review_notes", criterion$section_code[[1]], criterion$criterion_code[[1]], target_type, target_id)
+        rows[[length(rows) + 1]] <<- list(
+          section_code = criterion$section_code[[1]],
+          criterion_code = criterion$criterion_code[[1]],
+          target_type = target_type,
+          target_id = if (is.na(target_id) || is.null(target_id)) NA_integer_ else as.integer(target_id),
+          score = input[[score_id]],
+          weight = criterion$weight[[1]],
+          justification = input[[notes_id]] %||% ""
+        )
+      }
+    }
+    append_rows(plan_review_criteria("plan_overview"))
+    append_rows(plan_review_criteria("plan_measures"))
+    append_rows(plan_review_criteria("plan_risks"))
+    append_rows(plan_review_criteria("plan_data"))
+    if (nrow(goals)) {
+      for (i in seq_len(nrow(goals))) {
+        append_rows(plan_review_criteria("goal"), "goal", goals$agency_goal_id[[i]])
+      }
+    }
+    if (nrow(services)) {
+      for (i in seq_len(nrow(services))) {
+        append_rows(plan_review_criteria("service"), "service", services$plan_service_id[[i]])
+      }
+    }
+    rows
+  }
+
+  observeEvent(input$plan_review_save_request, {
+    if (!current_user_can_review_plans()) {
+      showNotification("You do not have permission to score plans.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$plan_review_save_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    source <- as.character(request$source %||% "manual")
+    if (is.na(plan_id)) return()
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    selected_reviewer_id <- suppressWarnings(as.integer(input$plan_review_reviewer_id %||% NA_integer_))
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+    reviewer_rows <- data$access_user_role[data$access_user_role$app_role %in% access_policy$plan_review_app_roles, , drop = FALSE]
+    reviewer_id <- if (!is.na(selected_reviewer_id)) {
+      selected_reviewer_id
+    } else if (!is.na(current_preview_user_id) && current_preview_user_id %in% reviewer_rows$user_id) {
+      current_preview_user_id
+    } else if (nrow(reviewer_rows)) {
+      reviewer_rows$user_id[[1]]
+    } else {
+      NA_integer_
+    }
+    result <- tryCatch(
+      save_plan_review_scores(database, plan_id, reviewer_id, collect_plan_review_scores(plan_id), input$plan_review_internal_notes %||% ""),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    session$sendCustomMessage("plan-review-save-result", list(
+      ok = TRUE,
+      source = source,
+      score = round(result),
+      savedAt = format(Sys.time(), "%H:%M:%S")
+    ))
+    if (!identical(source, "auto")) {
+      showNotification(paste0("Plan review scores saved. Current score: ", round(result), "/100."), type = "message", duration = 8)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$plan_reviewer_save_request, {
+    if (!current_user_can_assign_plan_reviewer()) {
+      showNotification("Only System Admins can assign plan reviewers.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$plan_reviewer_save_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    reviewer_id <- suppressWarnings(as.integer(input$plan_review_reviewer_id))
+    modified_by <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
+    if (is.na(plan_id) || is.na(reviewer_id)) {
+      showNotification("Choose a reviewer before saving.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(
+      assign_plan_reviewer(database, plan_id, reviewer_id, modified_by),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    showNotification("Plan reviewer assignment saved.", type = "message", duration = 6)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$plan_review_approve_request, {
+    if (!current_user_can_review_plans()) {
+      showNotification("You do not have permission to approve plan reviews.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$plan_review_approve_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    if (is.na(plan_id)) return()
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    if (!nrow(plan)) {
+      showNotification("Plan not found.", type = "error", duration = 8)
+      return()
+    }
+    selected_reviewer_id <- suppressWarnings(as.integer(input$plan_review_reviewer_id %||% NA_integer_))
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+    reviewer_rows <- data$access_user_role[data$access_user_role$app_role %in% c("SystemAdmin", "OPIReviewer"), , drop = FALSE]
+    actor_id <- if (!is.na(current_preview_user_id)) {
+      current_preview_user_id
+    } else if (nrow(reviewer_rows)) {
+      reviewer_rows$user_id[[1]]
+    } else {
+      NA_integer_
+    }
+    reviewer_id <- if (!is.na(plan$assigned_reviewer[[1]])) {
+      plan$assigned_reviewer[[1]]
+    } else if (!is.na(selected_reviewer_id)) {
+      selected_reviewer_id
+    } else if (!is.na(current_preview_user_id) && current_preview_user_id %in% reviewer_rows$user_id) {
+      current_preview_user_id
+    } else if (nrow(reviewer_rows)) {
+      reviewer_rows$user_id[[1]]
+    } else {
+      NA_integer_
+    }
+    route_choices <- plan_review_route_choices(data, plan)
+    next_status <- as.character(request$nextStatus %||% input$plan_review_next_status %||% "DeputyMayorReview")
+    if (!current_user_can_route_plan_reviews()) {
+      next_status <- "DeputyMayorReview"
+    }
+    if (!next_status %in% unname(route_choices)) {
+      showNotification("Choose a valid routing destination before approving.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(approve_plan_review(database, plan_id, reviewer_id, next_status, routed_by = actor_id), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_history_plan_id(plan_id)
+    current_history_include_review(TRUE)
+    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
+    review_action_label <- if (identical(next_status, "Returned")) "Plan returned" else "Reviewer approval saved"
+    showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$plan_gate_approve_request, {
+    request <- input$plan_gate_approve_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    if (is.na(plan_id)) return()
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+    if (!can_approve_plan_gate_context(data, plan, current_user_app_roles(), current_preview_user_id)) {
+      showNotification("You do not have permission to approve this plan step.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(
+      approve_plan_gate(database, plan_id, current_preview_user_id),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_history_plan_id(plan_id)
+    current_history_include_review(TRUE)
+    next_status <- plan_gate_next_status(plan$plan_status[[1]])
+    showNotification(paste("Approval stamp added. Plan routed to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$plan_gate_return_request, {
+    request <- input$plan_gate_return_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    next_status <- as.character(request$nextStatus %||% "")
+    return_note <- trimws(as.character(request$note %||% ""))
+    if (is.na(plan_id)) return()
+    if (!next_status %in% c("Returned", "UnderReview", "DeputyMayorReview")) {
+      showNotification("Choose a valid return destination.", type = "error", duration = 8)
+      return()
+    }
+    if (!nzchar(return_note)) {
+      showNotification("Add a return reason before returning this plan.", type = "error", duration = 8)
+      return()
+    }
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+    status <- if (nrow(plan)) as.character(plan$plan_status[[1]]) else ""
+    can_return <- has_any_role(current_user_app_roles(), "SystemAdmin") ||
+      (identical(status, "DeputyMayorReview") && can_manage_plan_stamp_context(data, plan, "DeputyMayor", current_user_app_roles(), current_preview_user_id) && !identical(next_status, "DeputyMayorReview")) ||
+      (identical(status, "CAReview") && can_manage_plan_stamp_context(data, plan, "CAOffice", current_user_app_roles(), current_preview_user_id))
+    if (!can_return) {
+      showNotification("You do not have permission to return this plan from the current approval step.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(
+      return_plan_from_approval_gate(database, plan_id, current_preview_user_id, next_status, return_note),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_history_plan_id(plan_id)
+    current_history_include_review(TRUE)
+    showNotification(paste("Plan returned to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$publishing_route_request, {
+    if (!can_finalize_plans(current_user_app_roles())) {
+      showNotification("Only System Admins can route plans from the publishing queue.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$publishing_route_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    next_status <- as.character(request$nextStatus %||% "")
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    route_choices <- publishing_route_choices(data, plan)
+    if (is.na(plan_id) || !next_status %in% unname(route_choices)) {
+      showNotification("Choose a valid route for this plan.", type = "error", duration = 8)
+      return()
+    }
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
+    result <- tryCatch(
+      route_plan_from_publishing_queue(database, plan_id, current_preview_user_id, next_status),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the selected queue"
+    showNotification(paste("Plan routed back to", route_label, "."), type = "message", duration = 8)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$publish_plan_request, {
+    if (!can_finalize_plans(current_user_app_roles())) {
+      showNotification("Only System Admins can publish plans.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$publish_plan_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    if (is.na(plan_id)) return()
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
+    result <- tryCatch(
+      publish_agency_plan(database, plan_id, current_preview_user_id),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_history_plan_id(plan_id)
+    current_history_include_review(TRUE)
+    showNotification("Plan published. Approved payload has been promoted to database records.", type = "message", duration = 8)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$plan_approval_stamp_request, {
+    request <- input$plan_approval_stamp_request
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    stage <- as.character(request$stage %||% "")
+    action <- as.character(request$action %||% "add")
+    if (is.na(plan_id) || !stage %in% c("Reviewer", "DeputyMayor", "CAOffice")) {
+      showNotification("Choose a valid approval stamp.", type = "error", duration = 8)
+      return()
+    }
+    if (!action %in% c("add", "remove")) action <- "add"
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
+    if (!can_manage_plan_stamp_context(data, plan, stage, current_user_app_roles(), current_preview_user_id)) {
+      showNotification("You do not have permission to update this approval stamp.", type = "error", duration = 8)
+      return()
+    }
+    result <- tryCatch(
+      if (identical(action, "remove")) {
+        remove_plan_approval_stamp(database, plan_id, stage, removed_by = current_preview_user_id, notes = paste(approval_stage_label(stage), "approval stamp removed."))
+      } else {
+        add_plan_approval_stamp(database, plan_id, stage, added_by = current_preview_user_id, approved_by = current_preview_user_id, notes = "Approval stamp added.")
+      },
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_history_plan_id(plan_id)
+    current_history_include_review(TRUE)
+    showNotification(paste(approval_stage_label(stage), "approval stamp", if (identical(action, "remove")) "removed." else "added."), type = "message", duration = 6)
+  }, ignoreInit = TRUE)
 
   observeEvent(input$export_plan_request, {
     request <- input$export_plan_request
     plan_id <- suppressWarnings(as.integer(request$planId))
     export_type <- tolower(as.character(request$exportType))
+    include_review <- isTRUE(request$includeReview)
     if (is.na(plan_id) || !export_type %in% c("pdf", "pptx")) return()
     current_export_plan_id(plan_id)
+    current_export_include_review(include_review)
     session$sendCustomMessage("trigger-plan-download", list(type = export_type))
   }, ignoreInit = TRUE)
 
   observeEvent(input$submit_plan_request, {
+    if (!current_user_can_submit_plan()) {
+      showNotification("Only AgencySubmitter and SystemAdmin users can submit the plan.", type = "error", duration = 8)
+      return()
+    }
     request <- input$submit_plan_request
     plan_id <- suppressWarnings(as.integer(request$planId))
     if (is.na(plan_id)) return()
@@ -3465,12 +6420,12 @@ server <- function(input, output, session) {
     filename = function() {
       data <- app_data()
       plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == current_export_plan_id(), , drop = FALSE]
-      paste0("FY", if (nrow(plan)) plan$fiscal_year[[1]] else "plan", "-performance-plan.pdf")
+      plan_export_filename(data, plan, "pdf", current_export_include_review())
     },
     content = function(file) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
-      build_plan_export_file(app_data(), plan_id, file, "pdf")
+      build_plan_export_file(app_data(), plan_id, file, "pdf", current_export_include_review())
       showNotification("PDF downloaded successfully.", type = "message")
     }
   )
@@ -3479,12 +6434,12 @@ server <- function(input, output, session) {
     filename = function() {
       data <- app_data()
       plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == current_export_plan_id(), , drop = FALSE]
-      paste0("FY", if (nrow(plan)) plan$fiscal_year[[1]] else "plan", "-performance-plan.pptx")
+      plan_export_filename(data, plan, "pptx", current_export_include_review())
     },
     content = function(file) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
-      build_plan_export_file(app_data(), plan_id, file, "pptx")
+      build_plan_export_file(app_data(), plan_id, file, "pptx", current_export_include_review())
       showNotification("PowerPoint downloaded successfully.", type = "message")
     }
   )
@@ -3512,48 +6467,154 @@ server <- function(input, output, session) {
     section_key <- as.character(request$sectionKey)
     revision <- suppressWarnings(as.integer(request$revision))
     payload_json <- as.character(request$payloadJson)
-    if (is.na(plan_id) || is.na(revision) || !grepl("^[a-z][a-z0-9_-]{0,59}$", section_key)) return()
-
-    result <- tryCatch(
-      save_section_draft(database, plan_id, section_key, payload_json, revision),
-      error = function(error) list(ok = FALSE, error = conditionMessage(error))
-    )
-    if (isTRUE(result$ok)) {
-      refresh_app_data()
+    send_draft_error <- function(message, conflict = FALSE, extra = list()) {
       session$sendCustomMessage("shared-draft-result", list(
+        ok = FALSE,
+        conflict = conflict,
+        planId = plan_id,
+        sectionKey = section_key,
+        message = message
+      ) |> modifyList(extra))
+    }
+    if (is.na(plan_id) || is.na(revision) || !grepl("^[a-z][a-z0-9_-]{0,59}$", section_key)) {
+      send_draft_error("The draft save request was incomplete. Your browser recovery copy is still available.")
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        send_draft_error("You do not have permission to edit this plan.")
+        return()
+      }
+      limit_error <- validate_measure_selection_limit(payload_json, section_key, 5L)
+      if (!is.null(limit_error)) {
+        send_draft_error(limit_error)
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        send_draft_error("This plan is locked and cannot be edited.")
+        return()
+      }
+
+      result <- save_section_draft(database, plan_id, section_key, payload_json, revision)
+      if (isTRUE(result$ok)) {
+        update_cached_section_draft(plan_id, section_key, payload_json, result$row)
+        session$sendCustomMessage("shared-draft-result", list(
+          ok = TRUE,
+          planId = plan_id,
+          sectionKey = section_key,
+          revision = result$row$revision[[1]],
+          updatedAt = format(result$row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+        ))
+      } else if (!is.null(result$conflict)) {
+        send_draft_error(
+          "A newer shared draft was saved by someone else. Your browser recovery copy is still available; reload before saving again.",
+          conflict = TRUE,
+          extra = list(
+            revision = result$conflict$revision[[1]],
+            updatedAt = format(result$conflict$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+          )
+        )
+      } else {
+        send_draft_error("The shared draft could not be saved. Your browser recovery copy is still available.")
+      }
+    }, error = function(error) {
+      send_draft_error(conditionMessage(error))
+    })
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$service_description_draft_save, {
+    request <- input$service_description_draft_save
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    section_key <- as.character(request$sectionKey %||% "services")
+    service_id <- as.character(request$serviceId %||% "")
+    field_id <- as.character(request$fieldId %||% "")
+    value <- as.character(request$value %||% "")
+    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id) || !grepl("^service_description_", field_id)) {
+      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "The service description save request was incomplete."))
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "You do not have permission to edit this plan."))
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "This plan is locked and cannot be edited."))
+        return()
+      }
+      existing <- get_section_draft(database, plan_id, "services")
+      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+      if (is.null(payload) || !is.list(payload)) payload <- list()
+      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
+      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
+      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
+      payload$values[[field_id]] <- value
+      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      row <- saved[1, , drop = FALSE]
+      update_cached_section_draft(plan_id, "services", payload_json, row)
+      session$sendCustomMessage("service-description-draft-result", list(
         ok = TRUE,
         planId = plan_id,
-        sectionKey = section_key,
-        revision = result$row$revision[[1]],
-        updatedAt = format(result$row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+        sectionKey = "services",
+        fieldId = field_id,
+        revision = row$revision[[1]],
+        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
       ))
-    } else if (!is.null(result$conflict)) {
-      session$sendCustomMessage("shared-draft-result", list(
-        ok = FALSE,
-        conflict = TRUE,
-        planId = plan_id,
-        sectionKey = section_key,
-        revision = result$conflict$revision[[1]],
-        updatedAt = format(result$conflict$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
-      ))
-    } else {
-      session$sendCustomMessage("shared-draft-result", list(
-        ok = FALSE,
-        conflict = FALSE,
-        planId = plan_id,
-        sectionKey = section_key,
-        message = result$error
-      ))
-    }
+    }, error = function(error) {
+      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = conditionMessage(error)))
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$current_page, {
+    if (identical(current_page(), "plan_review_detail") && !identical(input$current_page, "plan_review_detail")) {
+      current_history_plan_id(NULL)
+      current_history_include_review(TRUE)
+    }
     current_page(input$current_page)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$login_email_continue, {
+    email <- tolower(trimws(input$login_email %||% ""))
+    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
+      showNotification("Enter a valid email address to continue.", type = "error", duration = 8)
+      return()
+    }
+    data <- app_data()
+    user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
+    if (!nrow(user_rows)) {
+      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
+      return()
+    }
+    user_id <- as.character(user_rows$user_id[[1]])
+    current_role_preview_user_id(user_id)
+    defaults <- matched_user_role_defaults(data, user_id)
+    current_role_preview_app_role(defaults$app_role)
+    current_role_preview_agency_role(defaults$agency_role)
+    updateSelectInput(session, "role_preview_user_id", selected = user_id)
+    updateSelectInput(session, "role_preview_app_role", selected = defaults$app_role)
+    updateSelectInput(session, "role_preview_agency_role", selected = defaults$agency_role)
+    submitter_value <- matched_user_submitter_value(data, user_id)
+    if (!is.null(submitter_value)) {
+      update_submitter_selectors(data, submitter_value)
+    }
+    admin_mode <- can_view_performance_reviewing(c(defaults$app_role))
+    current_workspace(if (admin_mode) "admin" else "agency")
+    current_user_type(if (admin_mode) "admin" else if (identical(defaults$agency_role, "Agency Director")) "agency_director" else "agency")
+    next_page <- if (admin_mode) "reviewer_dashboard" else "landing"
+    current_page(next_page)
+    session$sendCustomMessage("set-page", next_page)
   }, ignoreInit = TRUE)
 
   observeEvent(input$login_agency, {
     current_workspace("agency")
     current_user_type("agency")
+    current_role_preview_app_role("AgencySubmitter")
+    current_role_preview_agency_role("None")
     current_page("landing")
     session$sendCustomMessage("set-page", "landing")
   })
@@ -3561,6 +6622,8 @@ server <- function(input, output, session) {
   observeEvent(input$login_agency_director, {
     current_workspace("agency")
     current_user_type("agency_director")
+    current_role_preview_app_role("AgencyWriter")
+    current_role_preview_agency_role("Agency Director")
     current_page("landing")
     session$sendCustomMessage("set-page", "landing")
   })
@@ -3568,6 +6631,8 @@ server <- function(input, output, session) {
   observeEvent(input$login_reviewer, {
     current_workspace("admin")
     current_user_type("admin")
+    current_role_preview_app_role("OPIReviewer")
+    current_role_preview_agency_role("Admin")
     current_page("reviewer_dashboard")
     session$sendCustomMessage("set-page", "reviewer_dashboard")
   })
@@ -3575,6 +6640,8 @@ server <- function(input, output, session) {
   observeEvent(input$login_staff, {
     current_workspace("agency")
     current_user_type("agency")
+    current_role_preview_app_role("AgencyWriter")
+    current_role_preview_agency_role("Agency Staff")
     current_page("landing")
     session$sendCustomMessage("set-page", "landing")
   })
@@ -3582,6 +6649,8 @@ server <- function(input, output, session) {
   observeEvent(input$login_admin, {
     current_workspace("admin")
     current_user_type("admin")
+    current_role_preview_app_role("SystemAdmin")
+    current_role_preview_agency_role("Admin")
     current_page("reviewer_dashboard")
     session$sendCustomMessage("set-page", "reviewer_dashboard")
   })
@@ -3601,7 +6670,28 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   output$page <- renderUI({
-    page_ui(current_page(), app_data(), current_submitter_value(), input$measure_status_filter %||% "Validated", current_user_can_manage_team())
+    feedback_filter_values <- function(value) {
+      if (is.null(value) || length(value) == 0) character(0) else as.character(value)
+    }
+    page_ui(
+      current_page(),
+      app_data(),
+      current_submitter_value(),
+      input$measure_status_filter %||% "All except deprecated",
+      current_user_can_manage_team(),
+      current_user_can_submit_plan(),
+      current_user_app_roles(),
+      current_user_agency_roles(),
+      current_role_preview_user_id() %||% input$role_preview_user_id %||% "",
+      current_history_plan_id() %||% NA_integer_,
+      current_history_include_review(),
+      feedback_filters = list(
+        search = if (is.null(input$feedback_search) || length(input$feedback_search) == 0) "" else input$feedback_search[[1]],
+        category = feedback_filter_values(input$feedback_category_filter),
+        priority = feedback_filter_values(input$feedback_priority_filter),
+        status = feedback_filter_values(input$feedback_status_filter)
+      )
+    )
   })
 
   output$pillar_modal <- renderUI({
@@ -3618,13 +6708,27 @@ server <- function(input, output, session) {
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
     target_fy <- if (is.null(plan) || !nrow(plan)) 2027 else plan$fiscal_year[[1]]
-    measure_modal_ui(data, current_agency_id(), if (identical(measure_id, "new")) NULL else as.integer(measure_id), current_user_is_system_admin(), target_fy)
+    measure_modal_ui(data, current_agency_id(), if (identical(measure_id, "new")) NULL else as.integer(measure_id), current_user_can_manage_measure_admin_fields(), target_fy, current_user_can_submit_measure() || current_user_can_review_measures())
   })
 
   output$history_plan_modal <- renderUI({
+    if (identical(current_page(), "plan_review_detail")) return(NULL)
+    if (!identical(current_page(), "plan_history")) return(NULL)
     plan_id <- current_history_plan_id()
     if (is.null(plan_id)) return(NULL)
-    history_plan_modal(app_data(), as.integer(plan_id))
+    data <- app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == as.integer(plan_id), , drop = FALSE]
+    history_plan_modal(
+      data,
+      as.integer(plan_id),
+      can_review_plans(current_user_app_roles()),
+      current_user_can_assign_plan_reviewer(),
+      current_history_include_review(),
+      can_route_review = current_user_can_route_plan_reviews(),
+      can_approve_gate = can_approve_plan_gate_context(data, plan, current_user_app_roles(), current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_),
+      can_manage_deputy_stamp = can_manage_plan_stamp_context(data, plan, "DeputyMayor", current_user_app_roles(), current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_),
+      can_manage_ca_stamp = can_manage_plan_stamp_context(data, plan, "CAOffice", current_user_app_roles(), current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_)
+    )
   })
 
   output$risk_modal <- renderUI({
@@ -3635,7 +6739,11 @@ server <- function(input, output, session) {
   output$team_role_modal <- renderUI({
     access_id <- current_team_access_id()
     if (is.null(access_id)) return(NULL)
-    team_role_modal_ui(app_data(), current_submitter_value(), as.integer(access_id), current_user_can_manage_team())
+    team_role_modal_ui(app_data(), current_submitter_value(), access_id, current_user_can_manage_team())
+  })
+  output$feedback_modal <- renderUI({
+    if (!isTRUE(feedback_modal_open())) return(NULL)
+    feedback_modal_ui(current_user_email(), pages[[current_page()]] %||% current_page())
   })
 }
 

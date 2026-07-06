@@ -34,6 +34,81 @@ connect_app_database <- function() {
   )
 }
 
+ensure_review_schema <- function(connection) {
+  DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_type varchar(20) NOT NULL DEFAULT 'plan'")
+  DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_id integer")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_section_score_target ON review.section_score(review_id, target_type, target_id)")
+  DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS workflow")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS workflow.plan_approval_stamp (",
+      "stamp_id serial PRIMARY KEY,",
+      "plan_id integer NOT NULL REFERENCES planning.agency_plan(plan_id) ON DELETE CASCADE,",
+      "approval_stage varchar(40) NOT NULL,",
+      "approved_by integer REFERENCES access.\"user\"(user_id),",
+      "added_by integer REFERENCES access.\"user\"(user_id),",
+      "approved_at timestamptz NOT NULL DEFAULT now(),",
+      "notes text,",
+      "created_at timestamptz NOT NULL DEFAULT now()",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_plan_stage ON workflow.plan_approval_stamp(plan_id, approval_stage, approved_at DESC)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS workflow.entity_role_assignment (",
+      "assignment_id serial PRIMARY KEY,",
+      "entity_type varchar(80),",
+      "agency_id varchar(20) REFERENCES reference.agency(agency_id),",
+      "agency text,",
+      "entity_id integer REFERENCES reference.plan_entity(entity_id),",
+      "public_name text NOT NULL,",
+      "submitter_user_id integer REFERENCES access.\"user\"(user_id),",
+      "submitter_name text,",
+      "reviewer_user_id integer REFERENCES access.\"user\"(user_id),",
+      "reviewer_name text,",
+      "deputy_mayor_user_id integer REFERENCES access.\"user\"(user_id),",
+      "deputy_mayor_name text,",
+      "ca_office_user_id integer REFERENCES access.\"user\"(user_id),",
+      "ca_office_name text,",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer REFERENCES access.\"user\"(user_id),",
+      "UNIQUE (public_name)",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id)")
+  DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS application.feedback_request (",
+      "feedback_id serial PRIMARY KEY,",
+      "user_email text,",
+      "comment text NOT NULL,",
+      "screenshot_data text,",
+      "page_key varchar(80),",
+      "page_url text,",
+      "category varchar(30) NOT NULL DEFAULT 'Uncategorized',",
+      "priority varchar(30) NOT NULL DEFAULT 'Unassigned',",
+      "status varchar(30) NOT NULL DEFAULT 'Open',",
+      "assigned_admin_id integer REFERENCES access.\"user\"(user_id),",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by text",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ADD COLUMN IF NOT EXISTS assigned_admin_id integer REFERENCES access.\"user\"(user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category)")
+  invisible(TRUE)
+}
+
 load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
@@ -53,8 +128,9 @@ load_app_data <- function(connection) {
     planning_agency_plan = query(
       paste(
         "SELECT ap.plan_id, ap.agency_id, ap.entity_id, ap.cycle_id, pc.fiscal_year, ap.plan_status, ap.budget_status, ap.version,",
-        "ap.submitted_at, ap.updated_at",
+        "ap.assigned_reviewer, reviewer.full_name AS assigned_reviewer_name, ap.submitted_at, ap.updated_at",
         "FROM planning.agency_plan ap JOIN planning.plan_cycle pc ON pc.cycle_id = ap.cycle_id",
+        "LEFT JOIN access.\"user\" reviewer ON reviewer.user_id = ap.assigned_reviewer",
         "ORDER BY pc.fiscal_year DESC, ap.plan_id"
       )
     ),
@@ -162,7 +238,7 @@ load_app_data <- function(connection) {
       )
     ),
     review_section_score = query(
-      "SELECT score_id, review_id, section_code, criterion_code, score, weight, weighted_score, justification FROM review.section_score ORDER BY review_id, section_code, criterion_code"
+      "SELECT score_id, review_id, section_code, criterion_code, COALESCE(target_type, 'plan') AS target_type, target_id, score, weight, weighted_score, justification FROM review.section_score ORDER BY review_id, section_code, target_type, target_id, criterion_code"
     ),
     review_section_feedback = query(
       "SELECT feedback_id, review_id, section_code, feedback_text, return_required, resolved_at FROM review.section_feedback ORDER BY review_id, section_code, feedback_id"
@@ -180,8 +256,30 @@ load_app_data <- function(connection) {
       paste(
         "SELECT psh.history_id, psh.plan_id, psh.changed_by, u.full_name AS changed_by_name,",
         "psh.from_status, psh.to_status, psh.plan_phase, psh.changed_at, psh.notes",
-        "FROM workflow.plan_status_history psh JOIN access.\"user\" u ON u.user_id = psh.changed_by",
+        "FROM workflow.plan_status_history psh LEFT JOIN access.\"user\" u ON u.user_id = psh.changed_by",
         "ORDER BY psh.plan_id, psh.changed_at"
+      )
+    ),
+    workflow_plan_approval_stamp = query(
+      paste(
+        "SELECT pas.stamp_id, pas.plan_id, pas.approval_stage, pas.approved_by, approver.full_name AS approved_by_name,",
+        "pas.added_by, added.full_name AS added_by_name, pas.approved_at AT TIME ZONE 'America/New_York' AS approved_at,",
+        "pas.notes, pas.created_at AT TIME ZONE 'America/New_York' AS created_at",
+        "FROM workflow.plan_approval_stamp pas",
+        "LEFT JOIN access.\"user\" approver ON approver.user_id = pas.approved_by",
+        "LEFT JOIN access.\"user\" added ON added.user_id = pas.added_by",
+        "ORDER BY pas.plan_id, pas.approved_at DESC, pas.stamp_id DESC"
+      )
+    ),
+    workflow_entity_role_assignment = query(
+      paste(
+        "SELECT assignment_id, entity_type, agency_id, agency, entity_id, public_name,",
+        "submitter_user_id, submitter_name, reviewer_user_id, reviewer_name,",
+        "deputy_mayor_user_id, deputy_mayor_name, ca_office_user_id, ca_office_name,",
+        "created_at AT TIME ZONE 'America/New_York' AS created_at,",
+        "updated_at AT TIME ZONE 'America/New_York' AS updated_at, modified_by",
+        "FROM workflow.entity_role_assignment",
+        "ORDER BY public_name"
       )
     ),
     planning_plan_section_draft = query(
@@ -202,6 +300,20 @@ load_app_data <- function(connection) {
         "FROM access.user_role ur JOIN access.\"user\" u ON u.user_id = ur.user_id",
         "WHERE u.active ORDER BY ur.agency_id, ur.app_role, u.full_name"
       )
+    ),
+    access_user = query(
+      "SELECT user_id, full_name, email FROM access.\"user\" WHERE active ORDER BY full_name, email"
+    ),
+    application_feedback_request = query(
+      paste(
+        "SELECT fr.feedback_id, fr.user_email, fr.comment, fr.screenshot_data, fr.page_key, fr.page_url, fr.category, fr.priority, fr.status,",
+        "fr.assigned_admin_id, assigned_admin.full_name AS assigned_admin_name, assigned_admin.email AS assigned_admin_email,",
+        "fr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
+        "fr.updated_at AT TIME ZONE 'America/New_York' AS updated_at, fr.modified_by",
+        "FROM application.feedback_request fr",
+        "LEFT JOIN access.\"user\" assigned_admin ON assigned_admin.user_id = fr.assigned_admin_id",
+        "ORDER BY fr.created_at DESC, fr.feedback_id DESC"
+      )
     )
   )
 
@@ -214,6 +326,27 @@ load_app_data <- function(connection) {
       "FROM reference.action_plan_measure ORDER BY pillar_id, sort_order"
     )
   )
+  normalize_measure_name <- function(value) {
+    trimws(tolower(gsub("[^a-z0-9]+", " ", as.character(value))))
+  }
+  match_action_plan_measure <- function(measure_name) {
+    if (!nrow(data$performance_performance_measure)) return(list(measure_id = NA_integer_, match_type = NA_character_, match_distance = NA_real_))
+    action_key <- normalize_measure_name(measure_name)
+    measure_keys <- normalize_measure_name(data$performance_performance_measure$title)
+    exact_matches <- which(measure_keys == action_key)
+    if (length(exact_matches)) {
+      row <- data$performance_performance_measure[exact_matches[[1]], , drop = FALSE]
+      return(list(measure_id = row$measure_id[[1]], match_type = "Exact title match", match_distance = 0))
+    }
+    distances <- as.numeric(utils::adist(action_key, measure_keys, ignore.case = TRUE))
+    normalized <- distances / pmax(nchar(action_key), nchar(measure_keys))
+    best <- which.min(normalized)
+    if (length(best) && !is.na(normalized[[best]]) && normalized[[best]] <= 0.25) {
+      row <- data$performance_performance_measure[best, , drop = FALSE]
+      return(list(measure_id = row$measure_id[[1]], match_type = "Close title match", match_distance = normalized[[best]]))
+    }
+    list(measure_id = NA_integer_, match_type = NA_character_, match_distance = NA_real_)
+  }
   data$strategic_plan <- lapply(seq_len(nrow(data$reference_pillar)), function(index) {
     pillar <- data$reference_pillar[index, , drop = FALSE]
     pillar_goals <- data$reference_pillar_goal[data$reference_pillar_goal$pillar_id == pillar$pillar_id, , drop = FALSE]
@@ -225,13 +358,17 @@ load_app_data <- function(connection) {
     pillar_measures <- action_plan_measures[action_plan_measures$pillar_id == pillar$pillar_id, , drop = FALSE]
     metrics <- lapply(seq_len(nrow(pillar_measures)), function(measure_index) {
       measure <- pillar_measures[measure_index, , drop = FALSE]
+      matched_measure <- match_action_plan_measure(measure$measure_name[[1]])
       list(
         name = measure$measure_name[[1]],
         baseline = as.numeric(measure$baseline_value[[1]]),
         current = as.numeric(measure$current_value[[1]]),
         target = as.numeric(measure$target_value[[1]]),
         direction = measure$desired_direction[[1]],
-        unit = if (is.na(measure$display_unit[[1]])) NULL else measure$display_unit[[1]]
+        unit = if (is.na(measure$display_unit[[1]])) NULL else measure$display_unit[[1]],
+        matched_measure_id = matched_measure$measure_id,
+        match_type = matched_measure$match_type,
+        match_distance = matched_measure$match_distance
       )
     })
     list(
@@ -246,6 +383,70 @@ load_app_data <- function(connection) {
     )
   })
   data
+}
+
+save_feedback_request <- function(connection, user_email, comment, screenshot_data = "", page_key = "", page_url = "") {
+  user_email <- trimws(as.character(user_email %||% ""))
+  comment <- trimws(as.character(comment %||% ""))
+  screenshot_data <- as.character(screenshot_data %||% "")
+  page_key <- as.character(page_key %||% "")
+  page_url <- as.character(page_url %||% "")
+  if (!nzchar(comment)) stop("Add a comment before submitting feedback.")
+  DBI::dbGetQuery(
+    connection,
+    paste(
+      "INSERT INTO application.feedback_request (user_email, comment, screenshot_data, page_key, page_url)",
+      "VALUES ($1::text, $2::text, NULLIF($3::text, ''), NULLIF($4::text, ''), NULLIF($5::text, ''))",
+      "RETURNING feedback_id"
+    ),
+    params = list(user_email, comment, screenshot_data, page_key, page_url)
+  )$feedback_id[[1]]
+}
+
+update_feedback_request <- function(connection, feedback_id, category, priority, status, assigned_admin_id = NULL, modified_by = NULL) {
+  feedback_id <- as.integer(feedback_id)
+  if (is.na(feedback_id)) stop("Choose a valid feedback request.")
+  valid_category <- c("Uncategorized", "Bug", "Feature")
+  valid_priority <- c("Unassigned", "Low", "Medium", "High", "Urgent")
+  valid_status <- c("Open", "In Review", "Complete", "Archived")
+  category <- as.character(category %||% "Uncategorized")
+  priority <- as.character(priority %||% "Unassigned")
+  status <- as.character(status %||% "Open")
+  assigned_admin_id <- suppressWarnings(as.integer(assigned_admin_id %||% NA_integer_))
+  if (!category %in% valid_category) category <- "Uncategorized"
+  if (!priority %in% valid_priority) priority <- "Unassigned"
+  if (!status %in% valid_status) status <- "Open"
+  if (!is.na(assigned_admin_id)) {
+    admin_rows <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT ur.user_id",
+        "FROM access.user_role ur JOIN access.\"user\" u ON u.user_id = ur.user_id",
+        "WHERE ur.user_id = $1 AND ur.app_role = 'SystemAdmin' AND u.active",
+        "LIMIT 1"
+      ),
+      params = list(assigned_admin_id)
+    )
+    if (!nrow(admin_rows)) stop("Choose an active System Admin assignee.")
+  }
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE application.feedback_request",
+      "SET category = $2::varchar, priority = $3::varchar, status = $4::varchar,",
+      "assigned_admin_id = $5::integer, updated_at = now(), modified_by = NULLIF($6::text, '')",
+      "WHERE feedback_id = $1"
+    ),
+    params = list(feedback_id, category, priority, status, if (is.na(assigned_admin_id)) NA_integer_ else assigned_admin_id, as.character(modified_by %||% ""))
+  )
+  invisible(feedback_id)
+}
+
+delete_feedback_request <- function(connection, feedback_id) {
+  feedback_id <- as.integer(feedback_id)
+  if (is.na(feedback_id)) stop("Choose a valid feedback request.")
+  DBI::dbExecute(connection, "DELETE FROM application.feedback_request WHERE feedback_id = $1", params = list(feedback_id))
+  invisible(feedback_id)
 }
 
 save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE) {
@@ -354,6 +555,455 @@ review_measure_record <- function(connection, measure_id, decision, feedback = "
   invisible(TRUE)
 }
 
+save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, internal_notes = "") {
+  plan_id <- as.integer(plan_id)
+  reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)
+  if (is.null(scores) || !length(scores)) stop("No review scores were submitted.")
+  if (is.null(internal_notes) || length(internal_notes) == 0 || is.na(internal_notes)) internal_notes <- ""
+
+  fallback_value <- function(value, fallback) {
+    if (is.null(value) || length(value) == 0 || is.na(value)) fallback else value
+  }
+  review_rows <- lapply(scores, function(row) {
+    score <- suppressWarnings(as.integer(row$score))
+    if (length(score) == 0) score <- NA_integer_
+    if (!is.na(score) && (score < 1 || score > 4)) score <- NA_integer_
+    weight <- suppressWarnings(as.numeric(row$weight))
+    if (length(weight) == 0) weight <- 0
+    if (is.na(weight)) weight <- 0
+    list(
+      section_code = as.character(row$section_code),
+      criterion_code = as.character(row$criterion_code),
+      target_type = as.character(fallback_value(row$target_type, "plan")),
+      target_id = if (is.null(row$target_id) || is.na(row$target_id) || !nzchar(as.character(row$target_id))) NA_integer_ else as.integer(row$target_id),
+      score = score,
+      weight = weight,
+      weighted_score = if (is.na(score)) 0 else weight * score / 4,
+      justification = as.character(fallback_value(row$justification, ""))
+    )
+  })
+  review_rows <- Filter(Negate(is.null), review_rows)
+  score_rows <- Filter(function(row) !is.na(row$score), review_rows)
+  score_rows <- Filter(Negate(is.null), score_rows)
+  if (!length(score_rows)) stop("Enter at least one valid score before saving.")
+
+  scale_score <- function(value, raw_max, target_max) {
+    if (is.na(value) || is.na(raw_max) || raw_max <= 0) return(0)
+    min(target_max, value / raw_max * target_max)
+  }
+
+  section_totals <- vapply(c("S1", "S2", "S3", "S5", "S6"), function(section_code) {
+    rows <- Filter(function(row) identical(row$section_code, section_code), review_rows)
+    if (!length(rows)) return(0)
+    if (identical(section_code, "S2")) {
+      target_keys <- unique(vapply(rows, function(row) paste(row$target_type, row$target_id, sep = ":"), character(1)))
+      has_pillar_alignment <- any(vapply(rows, function(row) identical(row$criterion_code, "PILLAR") && !is.na(row$score), logical(1)))
+      target_scores <- vapply(target_keys, function(key) {
+        target_rows <- rows[vapply(rows, function(row) identical(paste(row$target_type, row$target_id, sep = ":"), key), logical(1))]
+        if (!any(vapply(target_rows, function(row) identical(row$criterion_code, "PILLAR") && !is.na(row$score), logical(1)))) {
+          target_rows <- Filter(function(row) !identical(row$criterion_code, "PILLAR"), target_rows)
+        }
+        raw_score <- sum(vapply(target_rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
+        raw_max <- sum(vapply(target_rows, function(row) row$weight, numeric(1)), na.rm = TRUE)
+        scale_score(raw_score, raw_max, 55)
+      }, numeric(1))
+      goal_score <- mean(target_scores, na.rm = TRUE)
+      if (!has_pillar_alignment) goal_score <- max(0, goal_score - 7)
+      return(goal_score)
+    }
+    if (identical(section_code, "S3")) {
+      plan_rows <- Filter(function(row) identical(row$target_type, "plan"), rows)
+      plan_score <- sum(vapply(plan_rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
+      plan_max <- sum(vapply(plan_rows, function(row) row$weight, numeric(1)), na.rm = TRUE)
+      plan_score <- scale_score(plan_score, plan_max, 5)
+      service_rows <- Filter(function(row) identical(row$target_type, "service"), rows)
+      if (!length(service_rows)) return(plan_score)
+      target_keys <- unique(vapply(service_rows, function(row) paste(row$target_type, row$target_id, sep = ":"), character(1)))
+      service_scores <- vapply(target_keys, function(key) {
+        target_rows <- service_rows[vapply(service_rows, function(row) identical(paste(row$target_type, row$target_id, sep = ":"), key), logical(1))]
+        raw_score <- sum(vapply(target_rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
+        raw_max <- sum(vapply(target_rows, function(row) row$weight, numeric(1)), na.rm = TRUE)
+        scale_score(raw_score, raw_max, 15)
+      }, numeric(1))
+      return(plan_score + mean(service_scores, na.rm = TRUE))
+    }
+    raw_score <- sum(vapply(rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
+    raw_max <- sum(vapply(rows, function(row) row$weight, numeric(1)), na.rm = TRUE)
+    target_max <- switch(section_code, S1 = 10, S5 = 5, S6 = 10, raw_max)
+    scale_score(raw_score, raw_max, target_max)
+  }, numeric(1))
+  overall_score <- min(100, sum(section_totals, na.rm = TRUE))
+
+  DBI::dbWithTransaction(connection, {
+    existing <- DBI::dbGetQuery(
+      connection,
+      "SELECT review_id FROM review.plan_review WHERE plan_id=$1 ORDER BY review_started_at DESC NULLS LAST, review_id DESC LIMIT 1",
+      params = list(plan_id)
+    )
+    if (nrow(existing)) {
+      review_id <- existing$review_id[[1]]
+      DBI::dbExecute(
+        connection,
+        "UPDATE review.plan_review SET reviewer_id=$2, review_started_at=COALESCE(review_started_at, now()), overall_score=$3, internal_notes=$4, review_complete=false WHERE review_id=$1",
+        params = list(review_id, reviewer_id, overall_score, internal_notes)
+      )
+    } else {
+      inserted <- DBI::dbGetQuery(
+        connection,
+        "INSERT INTO review.plan_review (plan_id, reviewer_id, review_started_at, overall_score, internal_notes, review_complete) VALUES ($1,$2,now(),$3,$4,false) RETURNING review_id",
+        params = list(plan_id, reviewer_id, overall_score, internal_notes)
+      )
+      review_id <- inserted$review_id[[1]]
+    }
+    for (row in score_rows) {
+      existing_score <- DBI::dbGetQuery(
+        connection,
+        paste(
+          "SELECT score_id FROM review.section_score",
+          "WHERE review_id=$1 AND section_code=$2 AND criterion_code=$3 AND target_type=$4",
+          "AND ((target_id IS NULL AND $5::integer IS NULL) OR target_id=$5::integer)",
+          "LIMIT 1"
+        ),
+        params = list(review_id, row$section_code, row$criterion_code, row$target_type, row$target_id)
+      )
+      if (nrow(existing_score)) {
+        DBI::dbExecute(
+          connection,
+          paste(
+            "UPDATE review.section_score",
+            "SET score=$2, weight=$3, weighted_score=$4, justification=$5",
+            "WHERE score_id=$1"
+          ),
+          params = list(existing_score$score_id[[1]], row$score, row$weight, row$weighted_score, row$justification)
+        )
+      } else {
+        DBI::dbExecute(
+          connection,
+          paste(
+            "INSERT INTO review.section_score",
+            "(review_id, section_code, criterion_code, target_type, target_id, score, weight, weighted_score, justification)",
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+          ),
+          params = list(review_id, row$section_code, row$criterion_code, row$target_type, row$target_id, row$score, row$weight, row$weighted_score, row$justification)
+        )
+      }
+    }
+  })
+  invisible(overall_score)
+}
+
+approve_plan_review <- function(connection, plan_id, reviewer_id = NULL, next_status = "DeputyMayorReview", routed_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)
+  routed_by <- if (is.null(routed_by) || is.na(routed_by)) NA_integer_ else as.integer(routed_by)
+  next_status <- as.character(next_status %||% "DeputyMayorReview")
+  if (is.na(plan_id)) stop("Plan is required.")
+  valid_next_statuses <- c("Returned", "DeputyMayorReview", "CAReview", "Approved")
+  if (!next_status %in% valid_next_statuses) {
+    stop("Choose a valid routing destination.")
+  }
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    approvable_statuses <- c("Submitted", "UnderReview", "FeedbackReturned", "Returned", "AgencyRevised")
+    if (!plan$plan_status[[1]] %in% approvable_statuses) {
+      stop("Only submitted, returned, revised, or active reviewer-review plans can be approved by the reviewer.")
+    }
+    if (is.na(reviewer_id)) {
+      assigned <- DBI::dbGetQuery(
+        connection,
+        "SELECT assigned_reviewer FROM planning.agency_plan WHERE plan_id = $1",
+        params = list(plan_id)
+      )
+      reviewer_id <- assigned$assigned_reviewer[[1]]
+    }
+    if (is.na(routed_by)) {
+      routed_by <- reviewer_id
+    }
+    if (is.na(reviewer_id)) {
+      users <- DBI::dbGetQuery(
+        connection,
+        paste(
+          "SELECT ur.user_id",
+          "FROM access.user_role ur JOIN access.\"user\" u ON u.user_id = ur.user_id",
+          "WHERE ur.app_role IN ('SystemAdmin', 'OPIReviewer') AND u.active",
+          "ORDER BY ur.user_id LIMIT 1"
+        )
+      )
+      if (!nrow(users)) stop("No active reviewer is available to approve this plan.")
+      reviewer_id <- users$user_id[[1]]
+    }
+    if (is.na(routed_by)) {
+      routed_by <- reviewer_id
+    }
+    existing_review <- DBI::dbGetQuery(
+      connection,
+      "SELECT review_id FROM review.plan_review WHERE plan_id = $1 ORDER BY review_started_at DESC NULLS LAST, review_id DESC LIMIT 1",
+      params = list(plan_id)
+    )
+    if (nrow(existing_review)) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE review.plan_review SET reviewer_id = $2, review_complete = true, feedback_released_at = COALESCE(feedback_released_at, now()) WHERE review_id = $1",
+        params = list(existing_review$review_id[[1]], reviewer_id)
+      )
+    } else {
+      DBI::dbExecute(
+        connection,
+        "INSERT INTO review.plan_review (plan_id, reviewer_id, review_started_at, feedback_released_at, review_complete) VALUES ($1, $2, now(), now(), true)",
+        params = list(plan_id, reviewer_id)
+      )
+    }
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = $2, assigned_reviewer = COALESCE(assigned_reviewer, $3), updated_at = now() WHERE plan_id = $1",
+      params = list(plan_id, next_status, reviewer_id)
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, routed_by, plan$plan_status[[1]], next_status, if (identical(next_status, "Returned")) "Reviewer returned plan to submitter." else paste("Reviewer approved plan and routed to", next_status))
+    )
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage = 'Reviewer'",
+      params = list(plan_id)
+    )
+    if (!identical(next_status, "Returned")) {
+      DBI::dbExecute(
+        connection,
+        paste(
+          "INSERT INTO workflow.plan_approval_stamp (plan_id, approval_stage, approved_by, added_by, approved_at, notes)",
+          "VALUES ($1, 'Reviewer', $2, $3, now(), $4)"
+        ),
+        params = list(plan_id, routed_by, routed_by, paste("Reviewer approval routed to", next_status))
+      )
+    }
+  })
+  invisible(plan_id)
+}
+
+approve_plan_gate <- function(connection, plan_id, approved_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  approved_by <- if (is.null(approved_by) || is.na(approved_by)) NA_integer_ else as.integer(approved_by)
+  if (is.na(plan_id)) stop("Plan is required.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    stage <- switch(
+      as.character(plan$plan_status[[1]]),
+      DeputyMayorReview = "DeputyMayor",
+      CAReview = "CAOffice",
+      NA_character_
+    )
+    next_status <- switch(
+      as.character(plan$plan_status[[1]]),
+      DeputyMayorReview = "CAReview",
+      CAReview = "Approved",
+      NA_character_
+    )
+    if (is.na(stage) || is.na(next_status)) {
+      stop("This plan is not waiting for Deputy Mayor or CA Office approval.")
+    }
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = $2, updated_at = now() WHERE plan_id = $1",
+      params = list(plan_id, next_status)
+    )
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage = $2",
+      params = list(plan_id, stage)
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_approval_stamp (plan_id, approval_stage, approved_by, added_by, approved_at, notes)",
+        "VALUES ($1, $2, $3, $3, now(), $4)"
+      ),
+      params = list(plan_id, stage, approved_by, paste(stage, "approved plan and routed to", next_status))
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, approved_by, plan$plan_status[[1]], next_status, paste(stage, "approval routed plan to", next_status))
+    )
+  })
+  invisible(plan_id)
+}
+
+add_plan_approval_stamp <- function(connection, plan_id, approval_stage, added_by = NULL, approved_by = NULL, notes = NULL) {
+  plan_id <- as.integer(plan_id)
+  added_by <- if (is.null(added_by) || is.na(added_by)) NA_integer_ else as.integer(added_by)
+  approved_by <- if (is.null(approved_by) || is.na(approved_by)) added_by else as.integer(approved_by)
+  approval_stage <- as.character(approval_stage %||% "")
+  valid_stages <- c("Reviewer", "DeputyMayor", "CAOffice")
+  if (is.na(plan_id)) stop("Plan is required.")
+  if (!approval_stage %in% valid_stages) stop("Choose a valid approval stage.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+    if (!nrow(plan)) stop("Plan not found.")
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage = $2",
+      params = list(plan_id, approval_stage)
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_approval_stamp (plan_id, approval_stage, approved_by, added_by, approved_at, notes)",
+        "VALUES ($1, $2, $3, $4, now(), $5)"
+      ),
+      params = list(plan_id, approval_stage, approved_by, added_by, as.character(notes %||% ""))
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "SELECT plan_id, $2, plan_status, plan_status, 'PerformancePlan', now(), $3",
+        "FROM planning.agency_plan WHERE plan_id = $1"
+      ),
+      params = list(plan_id, added_by, paste(approval_stage, "approval stamp added."))
+    )
+  })
+  invisible(plan_id)
+}
+
+remove_plan_approval_stamp <- function(connection, plan_id, approval_stage, removed_by = NULL, notes = NULL) {
+  plan_id <- as.integer(plan_id)
+  removed_by <- if (is.null(removed_by) || is.na(removed_by)) NA_integer_ else as.integer(removed_by)
+  approval_stage <- as.character(approval_stage %||% "")
+  valid_stages <- c("Reviewer", "DeputyMayor", "CAOffice")
+  if (is.na(plan_id)) stop("Plan is required.")
+  if (!approval_stage %in% valid_stages) stop("Choose a valid approval stage.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    stamp_count <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT COUNT(*) AS stamp_count FROM workflow.plan_approval_stamp",
+        "WHERE plan_id = $1 AND approval_stage = $2"
+      ),
+      params = list(plan_id, approval_stage)
+    )
+    if (!nrow(stamp_count) || stamp_count$stamp_count[[1]] < 1) stop("No approval stamp exists for this stage.")
+    stages_to_remove <- switch(
+      approval_stage,
+      Reviewer = c("Reviewer", "DeputyMayor", "CAOffice"),
+      DeputyMayor = c("DeputyMayor", "CAOffice"),
+      CAOffice = c("CAOffice")
+    )
+    stage_placeholders <- paste0("$", seq_along(stages_to_remove) + 1L, collapse = ", ")
+    DBI::dbExecute(
+      connection,
+      paste0("DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage IN (", stage_placeholders, ")"),
+      params = c(list(plan_id), as.list(stages_to_remove))
+    )
+    target_status <- switch(
+      approval_stage,
+      Reviewer = if (plan$plan_status[[1]] %in% c("DeputyMayorReview", "CAReview", "Approved")) "UnderReview" else plan$plan_status[[1]],
+      DeputyMayor = if (plan$plan_status[[1]] %in% c("CAReview", "Approved")) "DeputyMayorReview" else plan$plan_status[[1]],
+      CAOffice = if (identical(plan$plan_status[[1]], "Approved")) "CAReview" else plan$plan_status[[1]]
+    )
+    if (!identical(target_status, plan$plan_status[[1]])) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE planning.agency_plan SET plan_status = $2, updated_at = now() WHERE plan_id = $1",
+        params = list(plan_id, target_status)
+      )
+    }
+    history_note <- as.character(notes %||% paste(approval_stage, "approval stamp removed."))
+    if (length(stages_to_remove) > 1) {
+      history_note <- paste0(history_note, " Downstream approval stamps were also removed.")
+    }
+    if (!identical(target_status, plan$plan_status[[1]])) {
+      history_note <- paste0(history_note, " Plan returned to ", target_status, ".")
+    }
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, removed_by, plan$plan_status[[1]], target_status, history_note)
+    )
+  })
+  invisible(plan_id)
+}
+
+route_plan_from_publishing_queue <- function(connection, plan_id, routed_by = NULL, next_status = "UnderReview") {
+  plan_id <- as.integer(plan_id)
+  routed_by <- if (is.null(routed_by) || is.na(routed_by)) NA_integer_ else as.integer(routed_by)
+  next_status <- as.character(next_status %||% "UnderReview")
+  valid_next_statuses <- c("Returned", "UnderReview", "DeputyMayorReview", "CAReview")
+  if (is.na(plan_id)) stop("Plan is required.")
+  if (!next_status %in% valid_next_statuses) stop("Choose a valid route for this plan.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    if (!identical(plan$plan_status[[1]], "Approved")) {
+      stop("Only plans in the ready-to-publish queue can be routed back.")
+    }
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = $2, updated_at = now() WHERE plan_id = $1",
+      params = list(plan_id, next_status)
+    )
+    stages_to_clear <- switch(
+      next_status,
+      Returned = c("Reviewer", "DeputyMayor", "CAOffice"),
+      UnderReview = c("Reviewer", "DeputyMayor", "CAOffice"),
+      DeputyMayorReview = c("DeputyMayor", "CAOffice"),
+      CAReview = c("CAOffice"),
+      character(0)
+    )
+    if (length(stages_to_clear)) {
+      stage_placeholders <- paste0("$", seq_along(stages_to_clear) + 1L, collapse = ", ")
+      DBI::dbExecute(
+        connection,
+        paste0("DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage IN (", stage_placeholders, ")"),
+        params = c(list(plan_id), as.list(stages_to_clear))
+      )
+    }
+    history_note <- paste("System Admin routed ready-to-publish plan back to", next_status)
+    if (length(stages_to_clear)) {
+      history_note <- paste0(history_note, ". Cleared approval stamps: ", paste(stages_to_clear, collapse = ", "), ".")
+    }
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, routed_by, plan$plan_status[[1]], next_status, history_note)
+    )
+  })
+  invisible(plan_id)
+}
+
 set_measure_active <- function(connection, measure_id, agency_id, active) {
   status_sql <- if (isTRUE(active)) {
     ", approval_status = CASE WHEN approval_status = 'Validated' THEN 'PendingApproval' ELSE approval_status END, validated = false, submitted_for_approval_at = CASE WHEN approval_status = 'Validated' THEN now() ELSE submitted_for_approval_at END"
@@ -368,22 +1018,54 @@ set_measure_active <- function(connection, measure_id, agency_id, active) {
   if (changed != 1) stop("Measure not found for this agency")
 }
 
-save_team_role_assignment <- function(connection, access_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access) {
+save_team_role_assignment <- function(connection, access_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
   performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
-  access_id <- as.integer(access_id)
+  is_new <- identical(as.character(access_id), "new")
+  access_id <- if (is_new) NA_integer_ else as.integer(access_id)
+  agency_id <- trimws(as.character(agency_id %||% ""))
   full_name <- trimws(as.character(full_name %||% ""))
-  email <- trimws(as.character(email %||% ""))
+  email <- tolower(trimws(as.character(email %||% "")))
   agency_role <- trimws(as.character(agency_role %||% ""))
   performance_role <- trimws(as.character(performance_role %||% ""))
+  if (!nzchar(agency_id)) stop("Agency assignment is required.")
   if (!nzchar(full_name)) stop("Person name is required.")
   if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) stop("A valid email is required.")
   if (!agency_role %in% agency_role_values) stop("Choose a valid agency role.")
   if (!performance_role %in% performance_role_values) stop("Choose a valid performance role.")
 
   DBI::dbWithTransaction(connection, {
-    access <- DBI::dbGetQuery(connection, "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE access_id = $1", params = list(access_id))
-    if (!nrow(access)) stop("Team access row not found.")
+    if (is_new) {
+      user <- DBI::dbGetQuery(
+        connection,
+        paste(
+          'INSERT INTO access."user" (email, full_name, auth_type, active)',
+          "VALUES ($1, $2, 'MicrosoftAD', true)",
+          'ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name, active = true',
+          "RETURNING user_id"
+        ),
+        params = list(email, full_name)
+      )
+      user_id <- user$user_id[[1]]
+      access <- DBI::dbGetQuery(
+        connection,
+        "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE user_id = $1 AND agency_id = $2 AND service_id IS NULL ORDER BY access_id LIMIT 1",
+        params = list(user_id, agency_id)
+      )
+      if (nrow(access)) {
+        access_id <- access$access_id[[1]]
+      } else {
+        access <- DBI::dbGetQuery(
+          connection,
+          "INSERT INTO access.user_agency_access (user_id, agency_id, service_id, agency_role, access_level, budget_access, performance_plan_access) VALUES ($1, $2, NULL, $3::varchar(30), CASE WHEN $3::text = 'Agency Staff' THEN 'ReadOnly' WHEN $3::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, false, true) RETURNING access_id, user_id, agency_id, service_id",
+          params = list(user_id, agency_id, agency_role)
+        )
+        access_id <- access$access_id[[1]]
+      }
+    } else {
+      access <- DBI::dbGetQuery(connection, "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE access_id = $1", params = list(access_id))
+      if (!nrow(access)) stop("Team access row not found.")
+    }
     user_id <- access$user_id[[1]]
     agency_id <- access$agency_id[[1]]
     DBI::dbExecute(
@@ -705,6 +1387,89 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
   invisible(plan_id)
 }
 
+assign_plan_reviewer <- function(connection, plan_id, reviewer_id, modified_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  reviewer_id <- as.integer(reviewer_id)
+  modified_by <- if (is.null(modified_by) || is.na(modified_by)) reviewer_id else as.integer(modified_by)
+  if (is.na(plan_id) || is.na(reviewer_id)) stop("Choose a valid reviewer before saving.")
+
+  DBI::dbWithTransaction(connection, {
+    plan_rows <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+    if (!nrow(plan_rows)) stop("Plan not found.")
+    user_rows <- DBI::dbGetQuery(connection, "SELECT user_id FROM access.\"user\" WHERE user_id = $1 AND active", params = list(reviewer_id))
+    if (!nrow(user_rows)) stop("Reviewer is not an active user.")
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET assigned_reviewer = $2, updated_at = now(), modified_by = $3 WHERE plan_id = $1",
+      params = list(plan_id, reviewer_id, modified_by)
+    )
+    existing_review <- DBI::dbGetQuery(
+      connection,
+      "SELECT review_id FROM review.plan_review WHERE plan_id = $1 ORDER BY review_started_at DESC NULLS LAST, review_id DESC LIMIT 1",
+      params = list(plan_id)
+    )
+    if (nrow(existing_review)) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE review.plan_review SET reviewer_id = $2, updated_at = now(), modified_by = $3 WHERE review_id = $1",
+        params = list(existing_review$review_id[[1]], reviewer_id, modified_by)
+      )
+    }
+  })
+  invisible(plan_id)
+}
+
+return_plan_from_approval_gate <- function(connection, plan_id, returned_by = NULL, next_status = "UnderReview", return_note = NULL) {
+  plan_id <- as.integer(plan_id)
+  returned_by <- if (is.null(returned_by) || is.na(returned_by)) NA_integer_ else as.integer(returned_by)
+  next_status <- as.character(next_status %||% "UnderReview")
+  return_note <- trimws(as.character(return_note %||% ""))
+  valid_next_statuses <- c("Returned", "UnderReview", "DeputyMayorReview")
+  if (is.na(plan_id)) stop("Plan is required.")
+  if (!next_status %in% valid_next_statuses) stop("Choose a valid return destination.")
+  if (!nzchar(return_note)) stop("Add a return reason before returning this plan.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    if (!plan$plan_status[[1]] %in% c("DeputyMayorReview", "CAReview", "Approved")) {
+      stop("Only plans in Deputy Mayor, CA Office, or ready-to-publish review can be returned from this workflow.")
+    }
+    if (identical(plan$plan_status[[1]], "DeputyMayorReview") && identical(next_status, "DeputyMayorReview")) {
+      stop("Deputy Mayor review cannot return a plan to Deputy Mayor review.")
+    }
+    stages_to_remove <- switch(
+      next_status,
+      Returned = c("Reviewer", "DeputyMayor", "CAOffice"),
+      UnderReview = c("Reviewer", "DeputyMayor", "CAOffice"),
+      DeputyMayorReview = c("DeputyMayor", "CAOffice")
+    )
+    stage_placeholders <- paste0("$", seq_along(stages_to_remove) + 1L, collapse = ", ")
+    DBI::dbExecute(
+      connection,
+      paste0("DELETE FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage IN (", stage_placeholders, ")"),
+      params = c(list(plan_id), as.list(stages_to_remove))
+    )
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = $2, updated_at = now() WHERE plan_id = $1",
+      params = list(plan_id, next_status)
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, returned_by, plan$plan_status[[1]], next_status, paste("Returned from approval workflow:", return_note))
+    )
+  })
+  invisible(plan_id)
+}
+
 approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
   plan_id <- as.integer(plan_id)
   approved_by <- if (is.null(approved_by) || is.na(approved_by)) NA_integer_ else as.integer(approved_by)
@@ -735,6 +1500,43 @@ approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
         "VALUES ($1, $2, $3, 'Approved', 'PerformancePlan', now(), 'Draft payload promoted to plan records and cleared.')"
       ),
       params = list(plan_id, approved_by, changed$from_status[[1]])
+    )
+    DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1", params = list(plan_id))
+  })
+  invisible(plan_id)
+}
+
+publish_agency_plan <- function(connection, plan_id, published_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  published_by <- if (is.null(published_by) || is.na(published_by)) NA_integer_ else as.integer(published_by)
+  if (is.na(published_by)) {
+    users <- DBI::dbGetQuery(connection, "SELECT user_id FROM access.\"user\" ORDER BY user_id LIMIT 1")
+    if (!nrow(users)) stop("No user is available to publish this plan.")
+    published_by <- users$user_id[[1]]
+  }
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    if (!identical(plan$plan_status[[1]], "Approved")) {
+      stop("Only plans in the ready-to-publish queue can be published.")
+    }
+    apply_plan_drafts_to_records(connection, plan_id)
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = 'Published', approved_at = COALESCE(approved_at, now()), updated_at = now() WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, 'Published', 'PerformancePlan', now(), 'Approved payload promoted to plan records and published.')"
+      ),
+      params = list(plan_id, published_by, plan$plan_status[[1]])
     )
     DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1", params = list(plan_id))
   })

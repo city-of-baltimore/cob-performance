@@ -497,7 +497,7 @@ FROM (VALUES
     (42, 'ashleys@mdschblind.org', 'AgencyWriter', 'AGC4321', '2026-07-01T10:28:39.535288', false, false, true),
     (43, 'atalabi@bcers.org', 'AgencyWriter', 'AGC2100', '2026-07-01T10:28:39.535288', false, true, false),
     (44, 'ava.richardson@baltimorecity.gov', 'AgencyViewer', 'AGC5700', '2026-07-01T10:28:39.535288', false, false, false),
-    (45, 'babila.lima@baltimorecity.gov', 'AgencyViewer', 'AGC2600', '2026-07-01T10:28:39.535288', false, false, false),
+    (45, 'babila.lima@baltimorecity.gov', 'AgencyWriter', 'AGC2600', '2026-07-01T10:28:39.535288', false, false, false),
     (46, 'ben.guthorn@baltimorecity.gov', 'AgencySubmitter', 'AGC3700', '2026-07-01T10:28:39.535288', false, true, false),
     (47, 'berke.attila@baltimorecity.gov', 'AgencySubmitter', 'AGC2600', '2026-07-01T10:28:39.535288', false, true, false),
     (48, 'beth.hart@baltimorepolice.org', 'AgencyWriter', 'AGC5900', '2026-07-01T10:28:39.535288', false, false, false),

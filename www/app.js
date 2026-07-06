@@ -1,5 +1,13 @@
 (function () {
   var pendingGoalDeletion = null;
+  var MAX_MEASURES_PER_BLOCK = 5;
+  var reviewerFilterResetKey = "";
+  var autosaveTimer = null;
+  var serviceDescriptionAutosaveTimer = null;
+  var reviewAutosaveTimer = null;
+  var pendingServiceDescriptionSave = null;
+  var pendingNavigationPage = null;
+  var pendingNavigationTimer = null;
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -8,8 +16,9 @@
   }
 
   function setActivePage(page) {
+    var navPage = page === "plan_review_detail" ? "reviewer_dashboard" : page;
     document.querySelectorAll("[data-page]").forEach(function (button) {
-      button.classList.toggle("active", button.getAttribute("data-page") === page);
+      button.classList.toggle("active", button.getAttribute("data-page") === navPage);
     });
   }
 
@@ -19,8 +28,7 @@
     if (toggle) toggle.setAttribute("aria-expanded", "false");
   }
 
-  function sendPage(page) {
-    dismissGoalDeleteDialog();
+  function navigateToPage(page) {
     setActivePage(page);
     closeMobileNav();
     if (window.Shiny) {
@@ -28,27 +36,449 @@
     }
   }
 
+  function clearPendingNavigation() {
+    pendingNavigationPage = null;
+    if (pendingNavigationTimer) {
+      window.clearTimeout(pendingNavigationTimer);
+      pendingNavigationTimer = null;
+    }
+  }
+
+  function setReviewSaveStatus(message) {
+    var status = document.querySelector(".review-save-status");
+    if (status) status.textContent = message;
+  }
+
+  function requestPlanReviewSave(button, source) {
+    if (!button || !window.Shiny) return;
+    setReviewSaveStatus(source === "auto" ? "Autosaving review..." : "Saving review...");
+    window.Shiny.setInputValue("plan_review_save_request", {
+      planId: Number(button.getAttribute("data-plan-review-id")),
+      source: source || "manual",
+      nonce: Date.now()
+    }, { priority: "event" });
+  }
+
+  function schedulePlanReviewAutosave(container) {
+    var button = container ? container.querySelector("#save_plan_review_scores") : document.getElementById("save_plan_review_scores");
+    if (!button) return;
+    setReviewSaveStatus("Unsaved review changes. Autosaving...");
+    if (reviewAutosaveTimer) window.clearTimeout(reviewAutosaveTimer);
+    reviewAutosaveTimer = window.setTimeout(function () {
+      requestPlanReviewSave(button, "auto");
+    }, 1200);
+  }
+
+  function sendPage(page) {
+    dismissGoalDeleteDialog();
+    var builderPage = currentBuilderPage();
+    if (builderPage && builderPage.querySelector(".services-page")) {
+      flushServiceDescriptionAutosave();
+      if (builderPage.dataset.autosaveDirty === "true") {
+        saveBuilderDraft(builderPage, "auto", { onlyIfDirty: true });
+      }
+      clearPendingNavigation();
+      navigateToPage(page);
+      return;
+    }
+    if (builderPage && builderPage.dataset.autosaveDirty === "true") {
+      saveBuilderDraft(builderPage, "navigation", { onlyIfDirty: true });
+      clearPendingNavigation();
+    }
+    navigateToPage(page);
+  }
+
+  function applyReviewerPlanFilters() {
+    var search = (document.getElementById("reviewer_plan_search") || {}).value || "";
+    var status = (document.getElementById("reviewer_status_filter") || {}).value || "";
+    var assignee = (document.getElementById("reviewer_assignee_filter") || {}).value || "";
+    search = search.trim().toLowerCase();
+
+    document.querySelectorAll(".reviewer-plan-row").forEach(function (row) {
+      var matchesSearch = !search || (row.getAttribute("data-reviewer-search") || "").indexOf(search) !== -1;
+      var matchesStatus = !status || row.getAttribute("data-reviewer-status") === status;
+      var matchesAssignee = !assignee || row.getAttribute("data-reviewer-assignee") === assignee;
+      row.style.display = matchesSearch && matchesStatus && matchesAssignee ? "" : "none";
+    });
+  }
+
+  function clearReviewerPlanFilters() {
+    var search = document.getElementById("reviewer_plan_search");
+    var status = document.getElementById("reviewer_status_filter");
+    var assignee = document.getElementById("reviewer_assignee_filter");
+    if (search) search.value = "";
+    if (status) status.value = "";
+    if (assignee) assignee.value = "";
+    applyReviewerPlanFilters();
+  }
+
+  function reviewerQueueRenderKey() {
+    var rows = Array.prototype.slice.call(document.querySelectorAll(".reviewer-plan-row"));
+    if (!rows.length) return "";
+    return rows.map(function (row, index) {
+      return [
+        index,
+        row.getAttribute("data-reviewer-status") || "",
+        row.getAttribute("data-reviewer-assignee") || ""
+      ].join(":");
+    }).join("|");
+  }
+
+  function clearReviewerPlanFiltersOnQueueRender(force) {
+    if (!document.getElementById("reviewer_assignee_filter")) return;
+    var key = reviewerQueueRenderKey();
+    if (!key) return;
+    if (force || key !== reviewerFilterResetKey) {
+      reviewerFilterResetKey = key;
+      clearReviewerPlanFilters();
+    } else {
+      applyReviewerPlanFilters();
+    }
+  }
+
+  function applyMeasureLibrarySearch() {
+    var search = (document.getElementById("measure_library_search") || {}).value || "";
+    var count = 0;
+    search = search.trim().toLowerCase();
+    document.querySelectorAll(".measure-library-row").forEach(function (row) {
+      var matches = !search || (row.getAttribute("data-measure-search") || "").indexOf(search) !== -1;
+      row.style.display = matches ? "" : "none";
+      if (matches) count += 1;
+    });
+    var countLabel = document.querySelector(".measure-library-count");
+    if (countLabel) countLabel.textContent = count + " " + (count === 1 ? "measure" : "measures");
+  }
+
   function setNavigationScope(message) {
     var hideServices = Boolean(message && message.hideServices);
     var showPerformanceReviewing = Boolean(message && message.showPerformanceReviewing);
+    var showMeasureReview = Boolean(message && message.showMeasureReview);
+    var showApprovalQueue = Boolean(message && message.showApprovalQueue);
+    var showPublishingQueue = Boolean(message && message.showPublishingQueue);
+    var hidePerformancePlanning = Boolean(message && message.hidePerformancePlanning);
+    var showApplicationAdmin = Boolean(message && message.showApplicationAdmin);
     document.body.classList.toggle("hide-services-page", hideServices);
     document.body.classList.toggle("hide-performance-reviewing", !showPerformanceReviewing);
+    document.body.classList.toggle("hide-measure-review", !showMeasureReview);
+    document.body.classList.toggle("hide-approval-queue", !showApprovalQueue);
+    document.body.classList.toggle("hide-publishing-queue", !showPublishingQueue);
+    document.body.classList.toggle("hide-performance-planning", hidePerformancePlanning);
+    document.body.classList.toggle("hide-application-admin", !showApplicationAdmin);
     if (hideServices) {
       document.querySelectorAll('[data-page="services"].active').forEach(function () {
         setActivePage("metrics");
       });
     }
     if (!showPerformanceReviewing) {
-      document.querySelectorAll('[data-page="reviewer_dashboard"].active, [data-page="measure_review"].active').forEach(function () {
+      document.querySelectorAll('[data-page="reviewer_dashboard"].active, [data-page="plan_review_detail"].active, [data-page="approval_queue"].active, [data-page="publishing_queue"].active, [data-page="measure_review"].active').forEach(function () {
+        setActivePage("landing");
+      });
+    }
+    if (!showMeasureReview) {
+      document.querySelectorAll('[data-page="measure_review"].active').forEach(function () {
+        setActivePage(showApprovalQueue ? "approval_queue" : "reviewer_dashboard");
+      });
+    }
+    if (!showApprovalQueue) {
+      document.querySelectorAll('[data-page="approval_queue"].active').forEach(function () {
+        setActivePage("reviewer_dashboard");
+      });
+    }
+    if (!showPublishingQueue) {
+      document.querySelectorAll('[data-page="publishing_queue"].active').forEach(function () {
+        setActivePage("reviewer_dashboard");
+      });
+    }
+    if (hidePerformancePlanning) {
+      document.querySelectorAll('[data-page="strategic_plan"].active, [data-page="plan_history"].active, [data-page="overview"].active, [data-page="goals"].active, [data-page="services"].active, [data-page="metrics"].active, [data-page="risks"].active').forEach(function () {
+        setActivePage("reviewer_dashboard");
+      });
+    }
+    if (!showApplicationAdmin) {
+      document.querySelectorAll('[data-page="bug_fix"].active').forEach(function () {
         setActivePage("landing");
       });
     }
   }
 
+  function selectedMetricsFromEditor(editor) {
+    var selected = editor ? (editor.getAttribute("data-selected-metrics") || "") : "";
+    return selected.split(",").map(function (value) {
+      return value.trim();
+    }).filter(function (value) {
+      return value !== "";
+    });
+  }
+
+  function updateServiceEditorMetricMetadata(editor) {
+    if (!editor) return;
+    var selectors = editor.querySelector(".service-metric-selectors");
+    if (!selectors) return;
+    var values = Array.from(selectors.querySelectorAll("select")).map(function (select) {
+      return select.value;
+    }).filter(function (value) {
+      return value !== "";
+    });
+    editor.setAttribute("data-selected-metrics", values.join(","));
+    var chip = editor.querySelector(".service-metric-count");
+    if (chip) chip.textContent = values.length + " " + (values.length === 1 ? "Metric" : "Metrics");
+  }
+
+  function disableLockedBuilderControls(page) {
+    if (!page || page.getAttribute("data-plan-locked") !== "true") return;
+    page.querySelectorAll("input, textarea, select, button").forEach(function (control) {
+      if (control.closest(".rubric-section")) return;
+      control.disabled = true;
+      control.setAttribute("aria-disabled", "true");
+    });
+  }
+
+  function requestServiceBody(editor) {
+    if (!editor || !editor.open || editor.dataset.serviceBodyRequested === "true") return;
+    var serviceId = editor.getAttribute("data-service-id") || "";
+    if (!serviceId || !window.Shiny) return;
+    editor.dataset.serviceBodyRequested = "true";
+    window.Shiny.setInputValue("service_lazy_open", {
+      serviceId: serviceId,
+      nonce: Date.now()
+    }, { priority: "event" });
+  }
+
+  function applyFeedbackFilters() {
+    function filterValue(id) {
+      var element = document.getElementById(id);
+      if (!element) return "";
+      if (element.selectize && typeof element.selectize.getValue === "function") return element.selectize.getValue() || "";
+      if (element.multiple) {
+        return Array.prototype.map.call(element.selectedOptions || [], function (option) { return option.value; }).filter(Boolean);
+      }
+      return element.value || "";
+    }
+    function filterMatches(selected, value) {
+      if (Array.isArray(selected)) return !selected.length || selected.indexOf(value) !== -1;
+      return !selected || selected === value;
+    }
+    var search = (filterValue("feedback_search") || "").trim().toLowerCase();
+    var category = filterValue("feedback_category_filter");
+    var priority = filterValue("feedback_priority_filter");
+    var status = filterValue("feedback_status_filter");
+    document.querySelectorAll("[data-feedback-row]").forEach(function (row) {
+      var matchesSearch = !search || (row.getAttribute("data-feedback-search") || "").indexOf(search) !== -1;
+      var matchesCategory = filterMatches(category, row.getAttribute("data-feedback-category") || "");
+      var matchesPriority = filterMatches(priority, row.getAttribute("data-feedback-priority") || "");
+      var matchesStatus = filterMatches(status, row.getAttribute("data-feedback-status") || "");
+      row.style.display = matchesSearch && matchesCategory && matchesPriority && matchesStatus ? "" : "none";
+    });
+  }
+
+  function scheduleFeedbackFilterApply() {
+    window.setTimeout(applyFeedbackFilters, 0);
+    window.setTimeout(applyFeedbackFilters, 150);
+  }
+
+  function bindFeedbackFilterControls() {
+    ["feedback_category_filter", "feedback_priority_filter", "feedback_status_filter"].forEach(function (id) {
+      var element = document.getElementById(id);
+      if (!element || element.dataset.feedbackFilterBound === "true") return;
+      element.dataset.feedbackFilterBound = "true";
+      element.addEventListener("change", applyFeedbackFilters);
+      if (window.jQuery && window.jQuery.fn) {
+        window.jQuery(element).off("change.feedbackFilter").on("change.feedbackFilter", applyFeedbackFilters);
+      }
+    });
+  }
+
+  function setFeedbackScreenshotData(dataUrl) {
+    var hidden = document.getElementById("feedback_screenshot_data");
+    var preview = document.getElementById("feedback_screenshot_preview");
+    if (hidden) hidden.value = dataUrl || "";
+    if (!preview) return;
+    if (!dataUrl) {
+      preview.textContent = "No screenshot attached";
+      preview.classList.remove("has-image");
+      return;
+    }
+    preview.classList.add("has-image");
+    preview.innerHTML = "";
+    var image = document.createElement("img");
+    image.src = dataUrl;
+    image.alt = "Screenshot preview";
+    preview.appendChild(image);
+  }
+
+  function readFeedbackImageFile(file) {
+    if (!file || !file.type || file.type.indexOf("image/") !== 0) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      setFeedbackScreenshotData(String(reader.result || ""));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function sendFeedbackAdminUpdate(feedbackId, statusOverride) {
+    var category = (document.getElementById("feedback_category_" + feedbackId) || {}).value || "Uncategorized";
+    var priority = (document.getElementById("feedback_priority_" + feedbackId) || {}).value || "Unassigned";
+    var status = statusOverride || (document.getElementById("feedback_status_" + feedbackId) || {}).value || "Open";
+    var assignedAdminId = (document.getElementById("feedback_assigned_admin_" + feedbackId) || {}).value || "";
+    if (!window.Shiny) return;
+    window.Shiny.setInputValue("feedback_admin_update", {
+      feedbackId: feedbackId,
+      category: category,
+      priority: priority,
+      status: status,
+      assignedAdminId: assignedAdminId,
+      nonce: Date.now()
+    }, { priority: "event" });
+  }
+
+  function closeFeedbackImageViewer() {
+    var viewer = document.getElementById("feedback_image_viewer");
+    if (viewer) viewer.remove();
+  }
+
+  function openFeedbackImageViewer(src) {
+    closeFeedbackImageViewer();
+    if (!src) return;
+    var viewer = document.createElement("div");
+    viewer.id = "feedback_image_viewer";
+    viewer.className = "feedback-image-viewer";
+    viewer.setAttribute("role", "dialog");
+    viewer.setAttribute("aria-modal", "true");
+    viewer.innerHTML = [
+      '<div class="feedback-image-viewer-panel">',
+      '<button type="button" class="icon-button feedback-image-viewer-close" aria-label="Close screenshot">×</button>',
+      '<img alt="Feedback screenshot" src="' + src.replace(/"/g, "&quot;") + '">',
+      '</div>'
+    ].join("");
+    document.body.appendChild(viewer);
+  }
+
   document.addEventListener("click", function (event) {
+    if (event.target.closest("#clear_reviewer_filters")) {
+      clearReviewerPlanFilters();
+      return;
+    }
+    if (event.target.closest("#open_feedback_modal")) {
+      if (window.Shiny) window.Shiny.setInputValue("open_feedback_modal_request", Date.now(), { priority: "event" });
+      return;
+    }
+    if (event.target.closest("#close_feedback_modal")) {
+      if (window.Shiny) window.Shiny.setInputValue("close_feedback_modal", Date.now(), { priority: "event" });
+      return;
+    }
+    if (event.target.closest("#submit_feedback")) {
+      if (window.Shiny) {
+        window.Shiny.setInputValue("submit_feedback_request", {
+          page: document.querySelector("[data-page].active") ? document.querySelector("[data-page].active").getAttribute("data-page") : "",
+          pageUrl: window.location.href,
+          screenshotData: (document.getElementById("feedback_screenshot_data") || {}).value || "",
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return;
+    }
+    if (event.target.closest(".feedback-image-viewer-close") || event.target.id === "feedback_image_viewer") {
+      closeFeedbackImageViewer();
+      return;
+    }
+    var screenshotLink = event.target.closest(".feedback-screenshot-link");
+    if (screenshotLink) {
+      event.preventDefault();
+      openFeedbackImageViewer(screenshotLink.getAttribute("href"));
+      return;
+    }
+    var saveFeedback = event.target.closest("[data-feedback-save]");
+    if (saveFeedback) {
+      sendFeedbackAdminUpdate(saveFeedback.getAttribute("data-feedback-save"));
+      return;
+    }
+    var completeFeedback = event.target.closest("[data-feedback-complete]");
+    if (completeFeedback) {
+      sendFeedbackAdminUpdate(completeFeedback.getAttribute("data-feedback-complete"), "Complete");
+      return;
+    }
+    var archiveFeedback = event.target.closest("[data-feedback-archive]");
+    if (archiveFeedback) {
+      sendFeedbackAdminUpdate(archiveFeedback.getAttribute("data-feedback-archive"), "Archived");
+      return;
+    }
+    var deleteFeedback = event.target.closest("[data-feedback-delete]");
+    if (deleteFeedback) {
+      if (window.Shiny && window.confirm("Are you sure you want to delete this feedback request?")) {
+        window.Shiny.setInputValue("feedback_admin_delete", {
+          feedbackId: deleteFeedback.getAttribute("data-feedback-delete"),
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return;
+    }
     var button = event.target.closest("[data-page]");
     if (!button) return;
-    sendPage(button.getAttribute("data-page"));
+    if (button.hasAttribute("data-new-measure")) return;
+    var targetPage = button.getAttribute("data-page");
+    if (targetPage === "reviewer_dashboard") {
+      reviewerFilterResetKey = "";
+      window.setTimeout(function () { clearReviewerPlanFiltersOnQueueRender(true); }, 150);
+      window.setTimeout(function () { clearReviewerPlanFiltersOnQueueRender(true); }, 500);
+    }
+    sendPage(targetPage);
+  });
+
+  document.addEventListener("input", function (event) {
+    if (event.target && event.target.id === "reviewer_plan_search") {
+      applyReviewerPlanFilters();
+    }
+    if (event.target && event.target.id === "measure_library_search") {
+      applyMeasureLibrarySearch();
+    }
+    if (event.target && event.target.id === "feedback_search") {
+      applyFeedbackFilters();
+    }
+  });
+
+  document.addEventListener("change", function (event) {
+    if (!event.target) return;
+    if (["reviewer_status_filter", "reviewer_assignee_filter"].includes(event.target.id)) {
+      applyReviewerPlanFilters();
+    }
+    if (["feedback_category_filter", "feedback_priority_filter", "feedback_status_filter"].includes(event.target.id)) {
+      applyFeedbackFilters();
+    }
+    if (event.target.id === "feedback_screenshot_file") {
+      readFeedbackImageFile(event.target.files && event.target.files[0]);
+    }
+  });
+
+  document.addEventListener("shiny:value", function () {
+    if (document.querySelector(".feedback-admin-list")) {
+      bindFeedbackFilterControls();
+      scheduleFeedbackFilterApply();
+    }
+  });
+
+  document.addEventListener("shiny:bound", function (event) {
+    if (event.target && ["feedback_category_filter", "feedback_priority_filter", "feedback_status_filter"].includes(event.target.id)) {
+      bindFeedbackFilterControls();
+      scheduleFeedbackFilterApply();
+    }
+  });
+
+  window.setTimeout(bindFeedbackFilterControls, 500);
+
+  document.addEventListener("paste", function (event) {
+    if (!document.querySelector(".feedback-modal-panel")) return;
+    var items = event.clipboardData && event.clipboardData.items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i += 1) {
+      if (items[i].type.indexOf("image/") === 0) {
+        readFeedbackImageFile(items[i].getAsFile());
+        break;
+      }
+    }
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeFeedbackImageViewer();
   });
 
   document.addEventListener("click", function (event) {
@@ -56,6 +486,9 @@
     var row = event.target.closest("[data-measure-id]");
     var addButton = event.target.closest("[data-new-measure]");
     if ((!row && !addButton) || !window.Shiny) return;
+    if (addButton) {
+      sendPage(addButton.getAttribute("data-page") || "metrics");
+    }
     window.Shiny.setInputValue("open_measure_id", addButton ? "new" : row.getAttribute("data-measure-id"), { priority: "event" });
   });
 
@@ -80,7 +513,18 @@
     if (!button || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("open_team_access_id", {
-      accessId: Number(button.getAttribute("data-team-access-id")),
+      accessId: button.getAttribute("data-team-access-id"),
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    var row = event.target.closest("[data-team-access-id]");
+    if (!row || !window.Shiny) return;
+    event.preventDefault();
+    window.Shiny.setInputValue("open_team_access_id", {
+      accessId: row.getAttribute("data-team-access-id"),
       nonce: Date.now()
     }, { priority: "event" });
   });
@@ -104,8 +548,11 @@
       }, { priority: "event" });
     }
     if (reviewButton) {
+      var activePage = document.querySelector("[data-page].active");
       window.Shiny.setInputValue("review_plan_request", {
         planId: Number(reviewButton.getAttribute("data-review-plan")),
+        includeReview: reviewButton.getAttribute("data-include-review") !== "false",
+        returnPage: activePage ? activePage.getAttribute("data-page") : "reviewer_dashboard",
         nonce: Date.now()
       }, { priority: "event" });
     }
@@ -113,6 +560,7 @@
       window.Shiny.setInputValue("export_plan_request", {
         planId: Number(exportButton.getAttribute("data-export-plan")),
         exportType: exportButton.getAttribute("data-export-type"),
+        includeReview: exportButton.getAttribute("data-include-review") !== "false",
         nonce: Date.now()
       }, { priority: "event" });
     }
@@ -137,6 +585,162 @@
     if (!event.target.closest("#save_team_role") || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#save_plan_review_scores");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    requestPlanReviewSave(button, "manual");
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#save_plan_reviewer");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    window.Shiny.setInputValue("plan_reviewer_save_request", {
+      planId: Number(button.getAttribute("data-plan-review-id")),
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#approve_plan_review");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    if (button.getAttribute("data-approval-action") === "rescind") {
+      if (!window.confirm("Rescind the reviewer approval stamp? This will record your user account.")) return;
+      window.Shiny.setInputValue("plan_approval_stamp_request", {
+        planId: Number(button.getAttribute("data-plan-review-id")),
+        stage: "Reviewer",
+        action: "remove",
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var selector = document.getElementById("plan_review_next_status");
+    var routeTo = selector ? selector.value : "";
+    if (!routeTo) return;
+    var routeLabel = selector && selector.options[selector.selectedIndex] ? selector.options[selector.selectedIndex].text : "the selected destination";
+    var confirmMessage = routeTo === "CAReview"
+      ? "Are you sure you want to route this plan to CA Office?"
+      : "Route this plan to " + routeLabel + "?";
+    if (!window.confirm(confirmMessage)) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.dataset.originalLabel = button.innerHTML;
+    button.innerHTML = "Routing...";
+    window.Shiny.setInputValue("plan_review_approve_request", {
+      planId: Number(button.getAttribute("data-plan-review-id")),
+      nextStatus: routeTo,
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#approve_plan_gate");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    var stage = button.getAttribute("data-approval-stage") || "approval";
+    if (button.getAttribute("data-approval-action") === "rescind") {
+      if (!window.confirm("Rescind this " + stage + " approval stamp? This will record your user account.")) return;
+      window.Shiny.setInputValue("plan_approval_stamp_request", {
+        planId: Number(button.getAttribute("data-plan-id")),
+        stage: stage,
+        action: "remove",
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    if (!window.confirm("Approve this " + stage + " step and route the plan forward?")) return;
+    window.Shiny.setInputValue("plan_gate_approve_request", {
+      planId: Number(button.getAttribute("data-plan-id")),
+      stage: stage,
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#return_plan_gate");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    var selector = document.getElementById("plan_gate_return_status");
+    var noteField = document.getElementById("plan_gate_return_note");
+    var routeTo = selector ? selector.value : "";
+    var note = noteField ? noteField.value.trim() : "";
+    if (!routeTo) return;
+    if (!note) {
+      window.alert("Add a return reason before returning this plan.");
+      if (noteField) noteField.focus();
+      return;
+    }
+    if (!window.confirm("Return this plan to the selected queue?")) return;
+    window.Shiny.setInputValue("plan_gate_return_request", {
+      planId: Number(button.getAttribute("data-plan-id")),
+      stage: button.getAttribute("data-approval-stage") || "",
+      nextStatus: routeTo,
+      note: note,
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-publishing-route-plan]");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    var planId = Number(button.getAttribute("data-publishing-route-plan"));
+    var selector = document.getElementById("publishing_route_status_" + planId);
+    var routeTo = selector ? selector.value : "";
+    if (!routeTo) return;
+    if (!window.confirm("Route this ready-to-publish plan back to the selected queue?")) return;
+    window.Shiny.setInputValue("publishing_route_request", {
+      planId: planId,
+      nextStatus: routeTo,
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#return_publishing_plan");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    var planId = Number(button.getAttribute("data-plan-id"));
+    var selector = document.getElementById("publishing_detail_route_status");
+    var routeTo = selector ? selector.value : "";
+    if (!routeTo) return;
+    if (!window.confirm("Return this ready-to-publish plan to the selected queue?")) return;
+    window.Shiny.setInputValue("publishing_route_request", {
+      planId: planId,
+      nextStatus: routeTo,
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#publish_plan");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    if (!window.confirm("Publish this plan and promote the approved payload into the database?")) return;
+    window.Shiny.setInputValue("publish_plan_request", {
+      planId: Number(button.getAttribute("data-plan-id")),
+      nonce: Date.now()
+    }, { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-plan-stamp-stage]");
+    if (!button || !window.Shiny) return;
+    event.preventDefault();
+    var stage = button.getAttribute("data-plan-stamp-stage");
+    var action = button.getAttribute("data-plan-stamp-action") || "add";
+    var label = button.textContent.trim();
+    if (!window.confirm(label + "? This will record your user account.")) return;
+    window.Shiny.setInputValue("plan_approval_stamp_request", {
+      planId: Number(button.getAttribute("data-plan-id")),
+      stage: stage,
+      action: action,
+      nonce: Date.now()
+    }, { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {
@@ -207,10 +811,20 @@
       var formatSelect = document.getElementById("measure_format");
       normalizeMeasureNumberInput(event.target, formatSelect ? formatSelect.value : "Count");
     }
+    if (event.target && event.target.id && event.target.id.indexOf("review_score__") === 0) {
+      var reviewContainer = event.target.closest(".history-modal-panel");
+      updateReviewProgress(reviewContainer);
+      schedulePlanReviewAutosave(reviewContainer);
+    }
   });
 
   document.addEventListener("input", function (event) {
-    if (!event.target || !event.target.matches(".measure-value-input")) return;
+    if (!event.target) return;
+    if (event.target.matches("textarea[id^='review_notes__'], #plan_review_internal_notes")) {
+      schedulePlanReviewAutosave(event.target.closest(".history-modal-panel"));
+      return;
+    }
+    if (!event.target.matches(".measure-value-input")) return;
     var formatSelect = document.getElementById("measure_format");
     normalizeMeasureNumberInput(event.target, formatSelect ? formatSelect.value : "Count");
   });
@@ -226,6 +840,39 @@
     picker.querySelectorAll(".kpi-measure-preview").forEach(function (preview) {
       preview.classList.toggle("active", selectedValues.indexOf(preview.getAttribute("data-measure-id")) !== -1);
     });
+  }
+
+  function updateReviewProgress(modal) {
+    if (!modal) return;
+    var expectedSource = modal.querySelector("[data-expected-review-items]");
+    var expected = expectedSource ? Number(expectedSource.getAttribute("data-expected-review-items")) : 0;
+    var scored = Array.from(modal.querySelectorAll("select[id^='review_score__']")).filter(function (select) {
+      return select.value !== "";
+    }).length;
+    modal.querySelectorAll(".review-progress-value").forEach(function (target) {
+      target.textContent = scored + " of " + expected + (target.closest(".review-save-bar") ? " scored" : "");
+    });
+  }
+
+  function addMeasureBlockedMessage(reason, isService) {
+    if (reason === "cap") return isService ? "Maximum 5 metrics per service." : "Maximum 5 KPIs per goal.";
+    if (reason === "empty") return isService ? "Select the current metric before adding another." : "Select the current KPI before adding another.";
+    if (reason === "unavailable") return "No additional unique measures are available.";
+    return "";
+  }
+
+  function setAddMeasureMessage(button, reason, isService) {
+    if (!button) return;
+    var container = button.parentElement;
+    if (!container) return;
+    var message = container.querySelector(".kpi-add-message");
+    if (!message) {
+      message = document.createElement("span");
+      message.className = "kpi-add-message";
+      container.appendChild(message);
+    }
+    message.textContent = addMeasureBlockedMessage(reason, isService);
+    message.hidden = !reason;
   }
 
   function updateAllKpiAvailability(page) {
@@ -247,11 +894,30 @@
       var measureCount = selectors[0].options.length - 1;
       var availableCount = measureCount - outsideValues.size;
       var addButton = picker.querySelector(".add-kpi-button");
-      if (addButton) addButton.disabled = selectors.length >= availableCount || selectors.some(function (select) { return select.value === ""; });
+      if (addButton) {
+        var disabledReason = "";
+        var selectedCount = selectors.filter(function (select) { return select.value !== ""; }).length;
+        var isService = Boolean(picker.querySelector(".kpi-selectors[data-service-id]"));
+        if (selectedCount >= MAX_MEASURES_PER_BLOCK) {
+          disabledReason = "cap";
+        } else if (selectors.some(function (select) { return select.value === ""; })) {
+          disabledReason = "empty";
+        } else if (selectedCount >= availableCount) {
+          disabledReason = "unavailable";
+        }
+        addButton.disabled = false;
+        addButton.dataset.disabledReason = disabledReason;
+        addButton.setAttribute("aria-disabled", disabledReason ? "true" : "false");
+        addButton.classList.toggle("is-disabled", Boolean(disabledReason));
+        setAddMeasureMessage(addButton, disabledReason, isService);
+      }
     });
     if (page.matches(".services-page")) {
       page.querySelectorAll(".service-editor").forEach(function (editor) {
-        var count = Array.from(editor.querySelectorAll(".kpi-select-row select")).filter(function (select) { return select.value !== ""; }).length;
+        var selects = Array.from(editor.querySelectorAll(".kpi-select-row select"));
+        var count = selects.length
+          ? selects.filter(function (select) { return select.value !== ""; }).length
+          : selectedMetricsFromEditor(editor).length;
         var chip = editor.querySelector(".service-metric-count");
         if (chip) chip.textContent = count + " " + (count === 1 ? "Metric" : "Metrics");
       });
@@ -261,6 +927,7 @@
   document.addEventListener("change", function (event) {
     if (!event.target.matches(".kpi-select-row select")) return;
     updateKpiPreview(event.target);
+    updateServiceEditorMetricMetadata(event.target.closest(".service-editor"));
     updateAllKpiAvailability(event.target.closest(".goals-page, .services-page"));
   });
 
@@ -268,6 +935,16 @@
     var container = picker.querySelector(".kpi-selectors");
     var sourceRow = container && container.querySelector(".kpi-select-row");
     if (!container || !sourceRow) return null;
+    var selectedCount = Array.from(container.querySelectorAll(".kpi-select-row select")).filter(function (select) { return select.value !== ""; }).length;
+    if (selectedCount >= MAX_MEASURES_PER_BLOCK) {
+      if (window.Shiny) {
+        window.Shiny.setInputValue("measure_cap_error", {
+          message: container.getAttribute("data-service-id") ? "A service can have no more than 5 metrics." : "A goal can have no more than 5 KPIs.",
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return null;
+    }
     var row = sourceRow.cloneNode(true);
     var select = row.querySelector("select");
     var existingIndexes = Array.from(container.querySelectorAll(".kpi-select-row select")).map(function (existingSelect) {
@@ -301,9 +978,25 @@
     var addButton = event.target.closest(".add-kpi-button");
     if (!addButton) return;
     var page = addButton.closest(".goals-page, .services-page");
-    addKpiSelector(addButton.closest(".kpi-picker"), "");
+    var picker = addButton.closest(".kpi-picker");
+    var container = picker && picker.querySelector(".kpi-selectors");
+    var isService = container && container.getAttribute("data-service-id");
+    var reason = addButton.dataset.disabledReason || "";
+    if (reason) {
+      var message = reason === "cap"
+        ? (isService ? "A service can have no more than 5 metrics." : "A goal can have no more than 5 KPIs.")
+        : reason === "empty"
+          ? (isService ? "Select the current metric before adding another metric." : "Select the current KPI before adding another KPI.")
+          : "No additional unique measures are available for this selection.";
+      if (window.Shiny) {
+        window.Shiny.setInputValue("measure_cap_error", { message: message, nonce: Date.now() }, { priority: "event" });
+      }
+      return;
+    }
+    addKpiSelector(picker, "");
+    updateServiceEditorMetricMetadata(addButton.closest(".service-editor"));
     if (page && page.matches(".goals-page")) updateGoalRequirements(page);
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {
@@ -315,9 +1008,10 @@
     row.remove();
     var remaining = picker.querySelector(".kpi-select-row select");
     var page = picker.closest(".goals-page, .services-page");
+    updateServiceEditorMetricMetadata(removeButton.closest(".service-editor"));
     if (remaining) updateAllKpiAvailability(page);
     if (page && page.matches(".goals-page")) updateGoalRequirements(page);
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
   });
 
   function addInitiativeInput(picker, value) {
@@ -358,7 +1052,7 @@
     var page = addButton.closest(".goals-page");
     addInitiativeInput(addButton.closest(".initiative-picker"), "");
     updateGoalRequirements(page);
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {
@@ -368,7 +1062,7 @@
     if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(row);
     row.remove();
     updateGoalRequirements(removeButton.closest(".goals-page"));
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(removeButton.closest(".builder-page-content"), 500);
   });
 
   function updateScrollProxy(proxy) {
@@ -406,6 +1100,97 @@
     if (status) status.textContent = message;
   }
 
+  function currentBuilderPage() {
+    return document.querySelector(".builder-page-content[data-plan-locked='false']");
+  }
+
+  function saveBuilderDraft(page, reason, options) {
+    options = options || {};
+    var builderPage = page || currentBuilderPage();
+    var goalsPage = builderPage && builderPage.querySelector(".goals-page");
+    if (!builderPage || !builderPage.isConnected || builderPage.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return false;
+    if (options.onlyIfDirty && builderPage.dataset.autosaveDirty !== "true") return false;
+    if (autosaveTimer) {
+      window.clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+    var draft = goalsPage ? collectGoalsDraft(goalsPage) : collectBuilderDraft(builderPage);
+    window.localStorage.setItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(builderPage), JSON.stringify(draft));
+    if (goalsPage) {
+      updateGoalSummaries(goalsPage);
+      updateGoalRequirements(goalsPage);
+    }
+    builderPage.dataset.autosaveDirty = "false";
+    setGoalsSaveStatus(reason === "manual" ? "Saving shared draft..." : "Autosaving...");
+    if (window.Shiny && window.Shiny.setInputValue) {
+      var savePayload = {
+        planId: Number(builderPage.getAttribute("data-plan-id")),
+        sectionKey: builderPage.getAttribute("data-section-key"),
+        revision: Number(builderPage.dataset.draftRevision || 0),
+        payloadJson: JSON.stringify(draft),
+        nonce: Date.now()
+      };
+      builderPage.dataset.pendingAutosaveNonce = String(savePayload.nonce);
+      window.setTimeout(function () {
+        if (builderPage.isConnected && builderPage.dataset.pendingAutosaveNonce === String(savePayload.nonce)) {
+          setGoalsSaveStatus("Still saving. Your browser recovery copy is available if this takes too long.");
+        }
+      }, 8000);
+      window.Shiny.setInputValue("shared_draft_save", savePayload, { priority: "event" });
+      return true;
+    } else {
+      setGoalsSaveStatus("The server is unavailable. Your browser recovery copy is still available.");
+      return false;
+    }
+  }
+
+  function scheduleBuilderAutosave(page, delay) {
+    var builderPage = page || currentBuilderPage();
+    var goalsPage = builderPage && builderPage.querySelector(".goals-page");
+    if (!builderPage || !builderPage.isConnected || builderPage.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
+    builderPage.dataset.autosaveDirty = "true";
+    setGoalsSaveStatus("Unsaved changes. Autosaving...");
+    var draft = goalsPage ? collectGoalsDraft(goalsPage) : collectBuilderDraft(builderPage);
+    window.localStorage.setItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(builderPage), JSON.stringify(draft));
+    if (autosaveTimer) window.clearTimeout(autosaveTimer);
+    autosaveTimer = window.setTimeout(function () {
+      saveBuilderDraft(builderPage, "auto", { onlyIfDirty: true });
+    }, delay || 1800);
+  }
+
+  function scheduleServiceDescriptionAutosave(page, input, delay) {
+    if (!page || !input || !input.id) return;
+    var match = input.id.match(/^service_description_(.+)$/);
+    if (!match) return;
+    setGoalsSaveStatus("Unsaved changes. Autosaving...");
+    var draft = collectBuilderDraft(page);
+    window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
+    pendingServiceDescriptionSave = {
+      planId: Number(page.getAttribute("data-plan-id")),
+      sectionKey: page.getAttribute("data-section-key"),
+      serviceId: match[1],
+      fieldId: input.id,
+      value: input.value
+    };
+    if (serviceDescriptionAutosaveTimer) window.clearTimeout(serviceDescriptionAutosaveTimer);
+    serviceDescriptionAutosaveTimer = window.setTimeout(function () {
+      flushServiceDescriptionAutosave();
+    }, delay || 500);
+  }
+
+  function flushServiceDescriptionAutosave() {
+    if (serviceDescriptionAutosaveTimer) {
+      window.clearTimeout(serviceDescriptionAutosaveTimer);
+      serviceDescriptionAutosaveTimer = null;
+    }
+    if (!pendingServiceDescriptionSave || !window.Shiny || !window.Shiny.setInputValue) return false;
+    var payload = Object.assign({}, pendingServiceDescriptionSave, { nonce: Date.now() });
+    pendingServiceDescriptionSave = null;
+    setGoalsSaveStatus("Autosaving...");
+    window.Shiny.setInputValue("service_description_draft_save", payload, { priority: "event" });
+    return true;
+  }
+
   function builderDraftKey(page) {
     var title = page.getAttribute("data-builder-title") || "builder";
     var agency = document.querySelector(".header-agency-name");
@@ -419,12 +1204,19 @@
       if (input.type === "checkbox") return;
       values[input.id] = input.value;
     });
-    page.querySelectorAll(".service-metric-selectors").forEach(function (container) {
-      serviceMetrics[container.getAttribute("data-service-id")] = Array.from(container.querySelectorAll("select")).map(function (select) {
-        return select.value;
-      }).filter(function (value) {
-        return value !== "";
-      });
+    page.querySelectorAll(".service-editor[data-service-id]").forEach(function (editor) {
+      var serviceId = editor.getAttribute("data-service-id");
+      var container = editor.querySelector(".service-metric-selectors");
+      if (container) {
+        serviceMetrics[serviceId] = Array.from(container.querySelectorAll("select")).map(function (select) {
+          return select.value;
+        }).filter(function (value) {
+          return value !== "";
+        });
+        editor.setAttribute("data-selected-metrics", serviceMetrics[serviceId].join(","));
+      } else {
+        serviceMetrics[serviceId] = selectedMetricsFromEditor(editor);
+      }
     });
     return { savedAt: new Date().toISOString(), values: values, serviceMetrics: serviceMetrics };
   }
@@ -441,6 +1233,7 @@
       }
     }
     if (!draft || !draft.values) return;
+    page.dataset.restoringDraft = "true";
     if (draft.serviceMetrics) {
       Object.keys(draft.serviceMetrics).forEach(function (serviceId) {
         var container = page.querySelector(".service-metric-selectors[data-service-id='" + serviceId + "']");
@@ -468,6 +1261,8 @@
       control.dispatchEvent(new Event("input", { bubbles: true }));
       control.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    delete page.dataset.restoringDraft;
+    page.dataset.autosaveDirty = "false";
     setGoalsSaveStatus((sourceLabel || "Recovery draft") + " restored from " + new Date(draft.savedAt).toLocaleString() + ".");
   }
 
@@ -715,6 +1510,7 @@
       control.dispatchEvent(new Event("change", { bubbles: true }));
     });
     delete page.dataset.restoringDraft;
+    page.dataset.autosaveDirty = "false";
     updateGoalSummaries(page);
     updateGoalRequirements(page);
     setGoalsSaveStatus((sourceLabel || "Recovery draft") + " restored from " + new Date(draft.savedAt).toLocaleString() + ".");
@@ -738,7 +1534,7 @@
       restoreLocalRecovery(page);
       var status = document.getElementById("plan_save_status");
       if (status && status.textContent === "Loading the shared draft...") {
-        setGoalsSaveStatus("No shared draft yet. Seeded plan data is shown.");
+        setGoalsSaveStatus("Autosave ready. Seeded plan data is shown.");
       }
       return;
     }
@@ -758,17 +1554,48 @@
     var page = document.querySelector(".builder-page-content");
     if (!draftMatchesPage(message, page)) return;
     if (message.ok) {
+      delete page.dataset.pendingAutosaveNonce;
       page.dataset.draftRevision = String(message.revision);
+      page.dataset.autosaveDirty = "false";
       var goalsPage = page.querySelector(".goals-page");
       window.localStorage.removeItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(page));
-      setGoalsSaveStatus("Shared draft saved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      if (pendingNavigationPage) {
+        var nextPage = pendingNavigationPage;
+        clearPendingNavigation();
+        navigateToPage(nextPage);
+      }
       return;
     }
     if (message.conflict) {
-      setGoalsSaveStatus("A newer shared draft was saved by someone else. Your browser recovery copy is still available; reload before saving again.");
+      delete page.dataset.pendingAutosaveNonce;
+      page.dataset.autosaveDirty = "true";
+      clearPendingNavigation();
+      setGoalsSaveStatus(message.message || "A newer shared draft was saved by someone else. Your browser recovery copy is still available; reload before saving again.");
       return;
     }
-    setGoalsSaveStatus("The shared draft could not be saved. Your browser recovery copy is still available.");
+    delete page.dataset.pendingAutosaveNonce;
+    page.dataset.autosaveDirty = "true";
+    clearPendingNavigation();
+    setGoalsSaveStatus(message.message || "The shared draft could not be saved. Your browser recovery copy is still available.");
+  }
+
+  function handleServiceDescriptionDraftResult(message) {
+    var page = document.querySelector(".builder-page-content[data-section-key='services']");
+    if (!page) return;
+    if (message && message.ok) {
+      page.dataset.autosaveDirty = "false";
+      if (message.revision != null) page.dataset.draftRevision = String(message.revision);
+      window.localStorage.removeItem(builderDraftKey(page));
+      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      return;
+    }
+    setGoalsSaveStatus((message && message.message) || "The service description could not be saved. Your browser recovery copy is still available.");
+  }
+
+  function handlePlanReviewSaveResult(message) {
+    if (!message || !message.ok) return;
+    setReviewSaveStatus("Review autosaved at " + message.savedAt + ". Current score: " + message.score + "/100.");
   }
 
   function requestSharedDraft(page) {
@@ -821,12 +1648,13 @@
     var page = document.querySelector(".builder-page-content");
     if (!page || page.dataset.builderInitialized === "true") return;
     page.dataset.builderInitialized = "true";
+    page.dataset.autosaveDirty = "false";
+    if (autosaveTimer) {
+      window.clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
     if (page.getAttribute("data-plan-locked") === "true") {
-      page.querySelectorAll("input, textarea, select, button").forEach(function (control) {
-        if (control.closest(".rubric-section")) return;
-        control.disabled = true;
-        control.setAttribute("aria-disabled", "true");
-      });
+      disableLockedBuilderControls(page);
       return;
     }
     requestSharedDraft(page);
@@ -839,8 +1667,21 @@
     page.querySelectorAll(".service-editor").forEach(function (editor) {
       var body = editor.querySelector(".service-editor-body");
       if (body) body.setAttribute("aria-hidden", editor.open ? "false" : "true");
+      if (editor.open) requestServiceBody(editor);
     });
     updateAllKpiAvailability(page);
+  }
+
+  function initializeReadOnlyModals() {
+    document.querySelectorAll('[data-can-edit="false"]').forEach(function (modal) {
+      if (modal.dataset.readOnlyInitialized === "true") return;
+      modal.dataset.readOnlyInitialized = "true";
+      modal.querySelectorAll("input, textarea, select, button").forEach(function (control) {
+        if (control.id === "close_measure_modal" || control.id === "close_risk_modal" || control.id === "close_team_role_modal") return;
+        control.disabled = true;
+        control.setAttribute("aria-disabled", "true");
+      });
+    });
   }
 
   document.addEventListener("toggle", function (event) {
@@ -852,6 +1693,12 @@
     if (event.target.matches(".service-editor")) {
       var serviceBody = event.target.querySelector(".service-editor-body");
       if (serviceBody) serviceBody.setAttribute("aria-hidden", event.target.open ? "false" : "true");
+      var servicePage = event.target.closest(".services-page");
+      var builderPage = event.target.closest(".builder-page-content");
+      if (servicePage && builderPage && builderPage.dataset.autosaveDirty === "true") {
+        saveBuilderDraft(builderPage, "auto", { onlyIfDirty: true });
+      }
+      if (event.target.open) requestServiceBody(event.target);
     }
     if (event.target.matches(".rubric-section")) {
       var table = event.target.querySelector(".rubric-section-table-wrap");
@@ -859,36 +1706,65 @@
     }
   }, true);
 
+  document.addEventListener("shiny:value", function (event) {
+    var target = event.target;
+    if (!target || !target.id || target.id.indexOf("service_body_") !== 0) return;
+    window.setTimeout(function () {
+      var page = target.closest(".services-page");
+      var editor = target.closest(".service-editor");
+      updateServiceEditorMetricMetadata(editor);
+      if (page) updateAllKpiAvailability(page);
+      disableLockedBuilderControls(target.closest(".builder-page-content"));
+    }, 0);
+  });
+
   document.addEventListener("input", function (event) {
     var page = event.target.closest(".builder-page-content");
     var goalsPage = event.target.closest(".goals-page");
-    if (!page || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
+    if (!page || page.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
     if (goalsPage && event.target.matches("textarea[id^='goal_statement_'], .initiative-inputs textarea")) updateGoalRequirements(goalsPage);
-    setGoalsSaveStatus("Unsaved changes");
+    if (event.target.closest(".services-page") && event.target.matches("textarea[id^='service_description_']")) {
+      page.dataset.autosaveDirty = "false";
+      scheduleServiceDescriptionAutosave(page, event.target, 500);
+      return;
+    }
+    scheduleBuilderAutosave(page, event.target.closest(".services-page") ? 250 : 900);
   });
 
   document.addEventListener("change", function (event) {
     var page = event.target.closest(".builder-page-content");
     var goalsPage = event.target.closest(".goals-page");
-    if (!page || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
+    if (!page || page.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
     if (goalsPage && event.target.matches("select[id^='goal_alignment_']")) {
       updateGoalAlignmentSummary(event.target.closest(".goal-editor"));
       updateGoalRequirements(goalsPage);
     }
     if (goalsPage && event.target.matches(".kpi-select-row select")) updateGoalRequirements(goalsPage);
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(page);
   });
 
   document.addEventListener("click", function (event) {
     var addButton = event.target.closest("#add_goal");
     if (!addButton) return;
     event.preventDefault();
-    var page = addButton.closest(".goals-page");
-    if (!page || page.querySelectorAll(".goal-editor").length >= 5) return;
+    var page = addButton.closest(".goals-page") || document.querySelector(".goals-page");
+    if (!page) return;
+    var maximumGoals = parseInt(page.getAttribute("data-max-goals") || "5", 10);
+    if (!Number.isFinite(maximumGoals) || maximumGoals < 1) maximumGoals = 5;
+    if (page.querySelectorAll(".goal-editor").length >= maximumGoals) {
+      if (window.Shiny) {
+        window.Shiny.setInputValue("measure_cap_error", {
+          message: "This plan can have no more than " + maximumGoals + " goals.",
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      updateGoalControls(page);
+      return;
+    }
     addGoalEditor(page);
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    setGoalsSaveStatus("Unsaved changes");
+    scheduleBuilderAutosave(page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {
@@ -918,7 +1794,7 @@
     editor.remove();
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    setGoalsSaveStatus("Goal deleted. Unsaved changes");
+    scheduleBuilderAutosave(page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {
@@ -939,33 +1815,14 @@
   document.addEventListener("click", function (event) {
     var saveButton = event.target.closest("#save_plan_draft");
     if (!saveButton) return;
-    var builderPage = document.querySelector(".builder-page-content");
-    var goalsPage = builderPage && builderPage.querySelector(".goals-page");
-    if (!builderPage) return;
-    var draft = goalsPage ? collectGoalsDraft(goalsPage) : collectBuilderDraft(builderPage);
-    window.localStorage.setItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(builderPage), JSON.stringify(draft));
-    if (goalsPage) {
-      updateGoalSummaries(goalsPage);
-      updateGoalRequirements(goalsPage);
-    }
-    setGoalsSaveStatus("Saving shared draft...");
-    if (window.Shiny && window.Shiny.setInputValue) {
-      window.Shiny.setInputValue("shared_draft_save", {
-        planId: Number(builderPage.getAttribute("data-plan-id")),
-        sectionKey: builderPage.getAttribute("data-section-key"),
-        revision: Number(builderPage.dataset.draftRevision || 0),
-        payloadJson: JSON.stringify(draft),
-        nonce: Date.now()
-      }, { priority: "event" });
-    } else {
-      setGoalsSaveStatus("The server is unavailable. Your browser recovery copy is still available.");
-    }
+    saveBuilderDraft(document.querySelector(".builder-page-content"), "manual");
   });
 
   document.addEventListener("click", function (event) {
     var submitButton = event.target.closest("[data-submit-plan]");
     if (!submitButton) return;
     if (!window.confirm("Are you sure you want to submit this plan? Fields will lock while it is in review.")) return;
+    saveBuilderDraft(currentBuilderPage(), "auto", { onlyIfDirty: true });
     if (window.Shiny && window.Shiny.setInputValue) {
       window.Shiny.setInputValue("submit_plan_request", {
         planId: Number(submitButton.getAttribute("data-submit-plan")),
@@ -1025,7 +1882,10 @@
       initializeGoalsPage();
       initializeBuilderPage();
       initializeServicesPage();
+      initializeReadOnlyModals();
+      updateReviewProgress(document.querySelector(".history-modal-panel"));
       updateMeasureNumberFormat();
+      clearReviewerPlanFiltersOnQueueRender(false);
     }, 0);
   }
 
@@ -1049,16 +1909,32 @@
   });
 
   if (window.Shiny) {
-    window.Shiny.addCustomMessageHandler("set-page", setActivePage);
+    window.Shiny.addCustomMessageHandler("set-page", function (page) {
+      setActivePage(page);
+      if (page === "reviewer_dashboard") {
+        reviewerFilterResetKey = "";
+      }
+      schedulePageInitialization();
+    });
     window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
     window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
+    window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
+    window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
     window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
     window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
   } else {
     document.addEventListener("shiny:connected", function () {
-      window.Shiny.addCustomMessageHandler("set-page", setActivePage);
+      window.Shiny.addCustomMessageHandler("set-page", function (page) {
+        setActivePage(page);
+        if (page === "reviewer_dashboard") {
+          reviewerFilterResetKey = "";
+        }
+        schedulePageInitialization();
+      });
       window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
       window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
+      window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
+      window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
       window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
       window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
     });
