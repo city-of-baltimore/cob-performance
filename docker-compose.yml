@@ -26,7 +26,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/cob_performance
       # Local demo only: shows password set/reset links on screen instead of
       # emailing them. Never enable in a shared or public environment.
-      AUTH_DEV_LINKS: "true"
+      AUTH_DEV_LINKS: "false"
       # Email delivery — populated from .env in the repo root (gitignored).
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
