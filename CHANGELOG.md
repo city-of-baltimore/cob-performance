@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — merge of codex/username-password-login (branch `fix/containerize`)
+
+- Merged the workflow build-out branch (plan review workflow, measure review,
+  role preview/workspace model, entity links, richer seeds). Password
+  authentication now fronts their email role-lookup sign-in; the demo
+  role-bypass observers were removed, pages are gated server-side, and boot
+  lands on the login page.
+- `database/schema/target_schema.sql` was overwritten with a notes file on
+  their branch (preserved as `NOTES.md`); kept our working schema and folded in
+  the schema drift their code assumed but only created via one-off scripts or
+  at runtime: `review.measure_review`, `performance.measure_entity_link`,
+  `reference.agency.submit_plan`, `performance.service_risk.risk_type`,
+  `access.user_agency_access.access_level/budget_access/performance_plan_access`,
+  and the widened `approval_status` check.
+- Verified from a completely fresh database: schema + seed init clean (62 plans,
+  439 users), password sign-in routes through their role model to the Plan
+  Review workspace, failed sign-in shows the notice, first-time/reset views
+  intact, no console errors.
+
 ## Unreleased — password authentication & Fly.io (branch `fix/containerize`)
 
 ### Added
