@@ -4938,3 +4938,43 @@ body.desktop-nav-collapsed .app-footer {
     grid-template-columns: 1fr;
   }
 }
+
+.login-panel .form-group,
+.login-panel .shiny-input-container {
+  width: 100% !important;
+  margin-bottom: 1rem;
+}
+
+.login-panel input[type="text"],
+.login-panel input[type="password"] {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(15, 40, 68, 0.25);
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.login-notice {
+  margin-bottom: 1rem;
+}
+
+.login-notice .status-chip {
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+}
+
+.login-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.login-dev-link {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px dashed rgba(15, 40, 68, 0.35);
+  border-radius: 8px;
+  word-break: break-all;
+}

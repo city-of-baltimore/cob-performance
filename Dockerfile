@@ -5,12 +5,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     pkg-config \
     zlib1g-dev \
+    libsodium-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
     python3 \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# R package dependencies
-RUN install2.r --error --skipinstalled shiny DBI RPostgres jsonlite
+# R package dependencies (sodium: password hashing; curl: SMTP for reset links)
+RUN install2.r --error --skipinstalled shiny DBI RPostgres jsonlite sodium curl
 
 # Python environment for PDF/PowerPoint plan exports
 COPY scripts/requirements.txt /opt/plan-export/requirements.txt

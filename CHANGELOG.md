@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — password authentication & Fly.io (branch `fix/containerize`)
+
+### Added
+
+- **Password sign-in against the `access` schema** (`R/auth.R`, `app.R`). The
+  prototype login buttons are replaced with a real email + password form. Passwords
+  are hashed with libsodium (`sodium::password_store`, scrypt) into the existing
+  `access."user".password_hash` column. Sign-in routes by role: reviewer-type app
+  roles (`OPIReviewer`, `BBMRReviewer`, `SystemAdmin`, `DeputyMayor`, `CAOffice`)
+  land on the reviewer workspace; agency roles land on their agency's cycle home
+  (pinned to the user's agency when it has a seeded FY2027 plan). Since users are
+  provisioned by admins, password login is allowed for both `Email` and
+  `MicrosoftAD` auth types until Entra sign-in exists.
+- **First-time password setup and password reset** — both use the same one-time
+  link flow ("First time here? Set your password" / "Forgot your password?").
+  Tokens are 32 random bytes, stored only as a hash in the new
+  `access.password_reset_token` table, expire after 60 minutes, and are single-use
+  (all outstanding tokens for a user burn on success). The request form always
+  responds identically whether or not the email exists.
+- **Email delivery via SMTP** (`curl::send_mail`) configured with `SMTP_HOST`,
+  `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and `APP_BASE_URL` for
+  link building. With no SMTP configured, links can be shown on screen for local
+  demos only by setting `AUTH_DEV_LINKS=true` (enabled in `docker-compose.yml`,
+  never on a shared host).
+- **Server-side access gate** — every page render and navigation event checks the
+  session's authenticated user; unauthenticated sessions always see the login page
+  regardless of nav clicks.
+- **Failed-attempt throttling** — 5 failures per email locks sign-in for
+  15 minutes (in-process).
+- **Fly.io deployment support** — `fly.toml` (port 3838, force-HTTPS, single-machine
+  guidance, health check, 2 GB VM) and `DEPLOY.md` with the full walkthrough:
+  `fly launch`, Fly Postgres create/attach, schema + seed loading over `fly proxy`,
+  and required secrets.
+- **`.claude/launch.json`** — dev-server config for launching the compose stack.
+
+### Verified
+
+End to end in the container stack: navigation gating while signed out, failed
+sign-in notice, first-time setup link → password save → agency user landing on
+their FY2027 plan, reviewer sign-in landing on the reviewer workspace, token
+single-use and expiry checks, and case-insensitive email lookup.
+
 ## Unreleased — containerization (branch `fix/containerize`)
 
 ### Fixed
