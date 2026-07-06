@@ -5,6 +5,8 @@
   var autosaveTimer = null;
   var serviceDescriptionAutosaveTimer = null;
   var reviewAutosaveTimer = null;
+  var reviewAutosaveInFlight = false;
+  var reviewAutosavePending = false;
   var pendingServiceDescriptionSave = null;
   var pendingNavigationPage = null;
   var pendingNavigationTimer = null;
@@ -51,6 +53,12 @@
 
   function requestPlanReviewSave(button, source) {
     if (!button || !window.Shiny) return;
+    if (reviewAutosaveInFlight) {
+      reviewAutosavePending = true;
+      setReviewSaveStatus("Review save queued...");
+      return;
+    }
+    reviewAutosaveInFlight = true;
     setReviewSaveStatus(source === "auto" ? "Autosaving review..." : "Saving review...");
     window.Shiny.setInputValue("plan_review_save_request", {
       planId: Number(button.getAttribute("data-plan-review-id")),
@@ -1594,8 +1602,22 @@
   }
 
   function handlePlanReviewSaveResult(message) {
-    if (!message || !message.ok) return;
+    if (!message) return;
+    reviewAutosaveInFlight = false;
+    if (!message.ok) {
+      setReviewSaveStatus((message && message.message) || "Review autosave failed.");
+      return;
+    }
     setReviewSaveStatus("Review autosaved at " + message.savedAt + ". Current score: " + message.score + "/100.");
+    if (reviewAutosavePending) {
+      reviewAutosavePending = false;
+      var button = document.getElementById("save_plan_review_scores");
+      if (button) {
+        window.setTimeout(function () {
+          requestPlanReviewSave(button, "auto");
+        }, 200);
+      }
+    }
   }
 
   function requestSharedDraft(page) {
