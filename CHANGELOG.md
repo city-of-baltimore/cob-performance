@@ -18,6 +18,12 @@
   439 users), password sign-in routes through their role model to the Plan
   Review workspace, failed sign-in shows the notice, first-time/reset views
   intact, no console errors.
+- **Deployed to Fly.io**: app `cob-performance` (https://cob-performance.fly.dev,
+  single machine, iad) with attached Fly Postgres `cob-performance-db` loaded
+  with the full schema + seed stack over `fly proxy`. Secrets set: DATABASE_URL
+  (via attach), APP_BASE_URL, SENDGRID_API_KEY, DEFAULT_FROM_EMAIL. Verified
+  from the deployed machine: session-start data load succeeds against the
+  attached database.
 
 ## Unreleased — password authentication & Fly.io (branch `fix/containerize`)
 
