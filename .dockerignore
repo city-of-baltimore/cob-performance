@@ -1,0 +1,11 @@
+.git
+.env
+terraform/
+database/
+docker/
+docker-compose.yml
+scripts/__pycache__/
+scripts/generate_*.py
+scripts/create_schema_pdf.py
+LICENSE
+*.md
