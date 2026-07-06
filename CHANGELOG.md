@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — workspace assignment fixes (branch `fix/containerize`)
+
+- **Fixed users landing under the wrong agency (alphabetical BCIT fallback).**
+  Entity/reviewer role assignments load from CSVs that were neither seeded into
+  the database nor shipped in the Docker image, so every user's assignment
+  lookup came up empty and the UI fell back to the first agency in the selector
+  (BCIT). The image now ships `entity_role_assignments.csv` and
+  `reviewer_assignments.csv`; `user_submitter_choices` also matches by
+  `submitter_user_id` in addition to name; and users with no valid workspace now
+  get an empty selector instead of silently inheriting an unrelated agency.
+- Fixed a name variant in `entity_role_assignments.csv` ("Dartanion
+  Smith-Williams" → "Swift-Williams") that broke that submitter's name-based
+  entity assignment match.
+- Verified: entity submitters (e.g. the Overdose Response office) land on their
+  own entity workspace after sign-in; assignment lookup returns 68 rows in the
+  container.
+
 ## Unreleased — merge of codex/username-password-login (branch `fix/containerize`)
 
 - Merged the workflow build-out branch (plan review workflow, measure review,
