@@ -3272,18 +3272,24 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
 plan_export_python <- function() {
   configured <- Sys.getenv("PLAN_EXPORT_PYTHON")
   if (nzchar(configured) && file.exists(configured)) return(configured)
-  bundled <- "C:/Users/melanie.lada/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe"
-  if (file.exists(bundled)) return(bundled)
-  python <- Sys.which("python")
-  if (nzchar(python)) return(python)
-  stop("No Python executable is available for plan exports.")
+  for (candidate in c("python3", "python")) {
+    python <- Sys.which(candidate)
+    if (nzchar(python)) return(python)
+  }
+  stop("No Python executable is available for plan exports. Set PLAN_EXPORT_PYTHON or install python3.")
+}
+
+plan_export_pptx_template <- function() {
+  configured <- Sys.getenv("PLAN_EXPORT_PPTX_TEMPLATE")
+  if (nzchar(configured)) return(configured)
+  file.path("templates", "agency-performance-plan-template.pptx")
 }
 
 build_plan_export_file <- function(db, plan_id, output_file, export_type, include_review = TRUE) {
   payload_file <- tempfile(fileext = ".json")
   jsonlite::write_json(plan_export_payload(db, plan_id, include_review), payload_file, auto_unbox = TRUE, null = "null", pretty = TRUE)
   script_path <- normalizePath(file.path("scripts", "build_plan_export.py"), winslash = "/", mustWork = TRUE)
-  template_path <- "C:/Users/melanie.lada/AppData/Local/Temp/Agency Performance Plan Template.pptx"
+  template_path <- plan_export_pptx_template()
   args <- c("--input", payload_file, "--output", output_file, "--type", export_type)
   if (identical(export_type, "pptx") && file.exists(template_path)) {
     args <- c(args, "--template", template_path)

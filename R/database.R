@@ -24,13 +24,16 @@ connect_app_database <- function() {
   )
   parts <- regmatches(database_url, match)[[1]]
   if (length(parts) != 6) stop("DATABASE_URL has an unsupported format")
+  sslmode_match <- regmatches(database_url, regexec("[?&]sslmode=([^&]+)", database_url))[[1]]
+  sslmode <- if (length(sslmode_match) == 2) sslmode_match[[2]] else "prefer"
   DBI::dbConnect(
     RPostgres::Postgres(),
     user = utils::URLdecode(parts[[2]]),
     password = utils::URLdecode(parts[[3]]),
     host = parts[[4]],
     port = as.integer(if (nzchar(parts[[5]])) parts[[5]] else "5432"),
-    dbname = utils::URLdecode(parts[[6]])
+    dbname = utils::URLdecode(parts[[6]]),
+    sslmode = sslmode
   )
 }
 
