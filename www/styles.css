@@ -4088,52 +4088,13 @@ body:has(.sticky-save-bar) .floating-feedback-button {
 
 .login-email-panel {
   display: grid;
-  grid-template-columns: minmax(16rem, 1.2fr) minmax(12rem, 0.8fr) auto;
+  grid-template-columns: minmax(16rem, 1fr) auto;
   gap: 0.75rem;
   align-items: end;
   margin-top: 1.5rem;
 }
 
 .login-email-panel .shiny-input-container {
-  margin-bottom: 0;
-}
-
-.login-activation-panel {
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--lp-border-soft);
-}
-
-.login-activation-panel p {
-  max-width: 46rem;
-  color: var(--lp-text-secondary);
-}
-
-.login-activation-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(12rem, 1fr));
-  gap: 0.75rem;
-  align-items: end;
-  margin-top: 1rem;
-}
-
-.login-activation-grid .shiny-input-container {
-  margin-bottom: 0;
-}
-
-.login-password-grid {
-  grid-template-columns: minmax(12rem, 1fr) auto;
-}
-
-.login-new-account-grid {
-  display: grid;
-  grid-template-columns: minmax(16rem, 1.4fr) repeat(2, minmax(12rem, 1fr));
-  gap: 0.75rem;
-  align-items: end;
-  margin-top: 1rem;
-}
-
-.login-new-account-grid .shiny-input-container {
   margin-bottom: 0;
 }
 
@@ -4575,8 +4536,6 @@ body.desktop-nav-collapsed .app-footer {
   .form-grid,
   .login-workspace-grid,
   .login-email-panel,
-  .login-activation-grid,
-  .login-new-account-grid,
   .reviewer-dashboard-grid,
   .reviewer-filter-bar,
   .history-review-strip,
