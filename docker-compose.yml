@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: cob_performance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Init scripts run alphabetically; the seed/ subdirectory is not executed
+      # directly, it is included by 02_load_seed.sql via \ir.
+      - ./database/schema/target_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./docker/initdb/02_load_seed.sql:/docker-entrypoint-initdb.d/02_load_seed.sql:ro
+      - ./database/seed:/docker-entrypoint-initdb.d/seed:ro
+    ports:
+      # Host port 5433 to avoid clashing with a locally installed Postgres
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cob_performance"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/cob_performance
+      # Local demo only: shows password set/reset links on screen instead of
+      # emailing them. Never enable in a shared or public environment.
+      AUTH_DEV_LINKS: "true"
+      # Email delivery — populated from .env in the repo root (gitignored).
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+    ports:
+      - "3838:3838"
+    depends_on:
+      db:
+        condition: service_healthy

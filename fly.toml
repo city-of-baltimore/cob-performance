@@ -1,0 +1,34 @@
+# Fly.io configuration for the Beacon performance planning app.
+# See DEPLOY.md for the full setup walkthrough.
+#
+# Shiny is a stateful single-process runtime: keep exactly one machine
+# (fly scale count 1) so page loads and websocket sessions hit the same
+# R process.
+
+app = "cob-performance"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "3838"
+
+[http_service]
+  internal_port = 3838
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+[checks]
+  [checks.http]
+    type = "http"
+    port = 3838
+    path = "/"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"

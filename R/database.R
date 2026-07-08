@@ -24,18 +24,20 @@ connect_app_database <- function() {
   )
   parts <- regmatches(database_url, match)[[1]]
   if (length(parts) != 6) stop("DATABASE_URL has an unsupported format")
+  sslmode_match <- regmatches(database_url, regexec("[?&]sslmode=([^&]+)", database_url))[[1]]
+  sslmode <- if (length(sslmode_match) == 2) sslmode_match[[2]] else "prefer"
   DBI::dbConnect(
     RPostgres::Postgres(),
     user = utils::URLdecode(parts[[2]]),
     password = utils::URLdecode(parts[[3]]),
     host = parts[[4]],
     port = as.integer(if (nzchar(parts[[5]])) parts[[5]] else "5432"),
-    dbname = utils::URLdecode(parts[[6]])
+    dbname = utils::URLdecode(parts[[6]]),
+    sslmode = sslmode
   )
 }
 
 ensure_review_schema <- function(connection) {
-  ensure_auth_schema(connection)
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_type varchar(20) NOT NULL DEFAULT 'plan'")
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_id integer")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_section_score_target ON review.section_score(review_id, target_type, target_id)")
@@ -107,179 +109,7 @@ ensure_review_schema <- function(connection) {
   )
   DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ADD COLUMN IF NOT EXISTS assigned_admin_id integer REFERENCES access.\"user\"(user_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category)")
-  reset_review_sequences(connection)
   invisible(TRUE)
-}
-
-reset_table_sequence <- function(connection, table_name, column_name) {
-  sql <- sprintf(
-    "SELECT setval(pg_get_serial_sequence('%s', '%s'), COALESCE((SELECT MAX(%s) FROM %s), 1), (SELECT COUNT(*) > 0 FROM %s))",
-    table_name,
-    column_name,
-    column_name,
-    table_name,
-    table_name
-  )
-  DBI::dbExecute(connection, sql)
-}
-
-reset_review_sequences <- function(connection) {
-  reset_table_sequence(connection, "review.plan_review", "review_id")
-  reset_table_sequence(connection, "review.section_score", "score_id")
-  invisible(TRUE)
-}
-
-ensure_auth_schema <- function(connection) {
-  DBI::dbExecute(connection, 'ALTER TABLE access."user" ADD COLUMN IF NOT EXISTS password_hash varchar(255)')
-  DBI::dbExecute(connection, "ALTER TABLE access.\"user\" ADD COLUMN IF NOT EXISTS auth_type varchar(30) DEFAULT 'Email'")
-  invisible(TRUE)
-}
-
-normalize_login_email <- function(email) {
-  tolower(trimws(as.character(email %||% "")))
-}
-
-password_meets_minimum <- function(password) {
-  nzchar(password %||% "") && nchar(password) >= 8
-}
-
-generate_password_salt <- function(length = 24) {
-  paste(sample(c(letters, LETTERS, 0:9), length, replace = TRUE), collapse = "")
-}
-
-hash_local_password <- function(password, salt = generate_password_salt()) {
-  hash <- digest::digest(paste0(salt, ":", password), algo = "sha256", serialize = FALSE)
-  paste("sha256", salt, hash, sep = "$")
-}
-
-verify_local_password <- function(password, stored_hash) {
-  stored_hash <- as.character(stored_hash %||% "")
-  parts <- strsplit(stored_hash, "\\$", fixed = FALSE)[[1]]
-  if (length(parts) != 3 || !identical(parts[[1]], "sha256")) return(FALSE)
-  identical(hash_local_password(password, parts[[2]]), stored_hash)
-}
-
-find_active_user_by_email <- function(connection, email) {
-  email <- normalize_login_email(email)
-  if (!nzchar(email)) {
-    return(data.frame())
-  }
-  DBI::dbGetQuery(
-    connection,
-    paste(
-      'SELECT user_id, email, full_name, auth_type, password_hash, active',
-      'FROM access."user"',
-      'WHERE lower(email) = $1 AND active',
-      'ORDER BY user_id LIMIT 1'
-    ),
-    params = list(email)
-  )
-}
-
-activate_local_user_account <- function(connection, email, password) {
-  user <- find_active_user_by_email(connection, email)
-  if (!nrow(user)) stop("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.")
-  existing_hash <- trimws(as.character(user$password_hash[[1]] %||% ""))
-  if (nzchar(existing_hash)) stop("This account is already activated. Sign in with your password.")
-  if (!password_meets_minimum(password)) stop("Password must be at least 8 characters.")
-  password_hash <- hash_local_password(password)
-  DBI::dbExecute(
-    connection,
-    "UPDATE access.\"user\" SET password_hash = $2, auth_type = 'Email', updated_at = now() WHERE user_id = $1",
-    params = list(user$user_id[[1]], password_hash)
-  )
-  user$user_id[[1]]
-}
-
-authenticate_local_user <- function(connection, email, password) {
-  user <- find_active_user_by_email(connection, email)
-  if (!nrow(user)) stop("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.")
-  stored_hash <- trimws(as.character(user$password_hash[[1]] %||% ""))
-  if (!nzchar(stored_hash)) stop("This account has not been activated yet. Create a password below to continue.")
-  if (!verify_local_password(password, stored_hash)) stop("Email address or password is incorrect.")
-  user$user_id[[1]]
-}
-
-default_full_name_from_email <- function(email) {
-  local_part <- sub("@.*$", "", normalize_login_email(email))
-  local_part <- gsub("[._-]+", " ", local_part)
-  local_part <- trimws(local_part)
-  if (!nzchar(local_part)) return("New user")
-  tools::toTitleCase(local_part)
-}
-
-selected_entity_context <- function(connection, selected_entity) {
-  selected_entity <- as.character(selected_entity %||% "")
-  if (startsWith(selected_entity, "agency:")) {
-    agency_id <- sub("^agency:", "", selected_entity)
-    row <- DBI::dbGetQuery(
-      connection,
-      "SELECT agency_id, COALESCE(public_name, agency_name) AS public_name FROM reference.agency WHERE agency_id = $1 AND active LIMIT 1",
-      params = list(agency_id)
-    )
-    if (!nrow(row)) stop("Choose a valid agency or entity.")
-    return(list(agency_id = row$agency_id[[1]], service_id = NA_integer_, label = row$public_name[[1]]))
-  }
-  if (startsWith(selected_entity, "entity:")) {
-    entity_id <- suppressWarnings(as.integer(sub("^entity:", "", selected_entity)))
-    if (is.na(entity_id)) stop("Choose a valid agency or entity.")
-    row <- DBI::dbGetQuery(
-      connection,
-      paste(
-        "SELECT pe.entity_id, pe.parent_agency_id AS agency_id, pe.public_name, pes.service_id",
-        "FROM reference.plan_entity pe",
-        "LEFT JOIN reference.plan_entity_service pes ON pes.entity_id = pe.entity_id AND pes.is_primary",
-        "WHERE pe.entity_id = $1 AND pe.active LIMIT 1"
-      ),
-      params = list(entity_id)
-    )
-    if (!nrow(row) || is.na(row$agency_id[[1]]) || !nzchar(trimws(row$agency_id[[1]]))) {
-      stop("Choose a valid agency or entity.")
-    }
-    service_id <- if ("service_id" %in% names(row) && !is.na(row$service_id[[1]])) as.integer(row$service_id[[1]]) else NA_integer_
-    return(list(agency_id = row$agency_id[[1]], service_id = service_id, label = row$public_name[[1]]))
-  }
-  stop("Choose a valid agency or entity.")
-}
-
-create_agency_viewer_account <- function(connection, email, password, selected_entity) {
-  email <- normalize_login_email(email)
-  if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) stop("Enter a valid email address.")
-  if (!password_meets_minimum(password)) stop("Password must be at least 8 characters.")
-  existing <- find_active_user_by_email(connection, email)
-  if (nrow(existing)) stop("That email address already exists. Sign in or activate the existing account.")
-  context <- selected_entity_context(connection, selected_entity)
-  password_hash <- hash_local_password(password)
-  full_name <- default_full_name_from_email(email)
-  DBI::dbWithTransaction(connection, {
-    inserted <- DBI::dbGetQuery(
-      connection,
-      paste(
-        'INSERT INTO access."user" (email, full_name, auth_type, password_hash, active, created_at, updated_at)',
-        "VALUES ($1, $2, 'Email', $3, true, now(), now())",
-        "RETURNING user_id"
-      ),
-      params = list(email, full_name, password_hash)
-    )
-    user_id <- inserted$user_id[[1]]
-    DBI::dbExecute(
-      connection,
-      paste(
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, role, budget_access, adaptive_planning, performance_plan_access)",
-        "VALUES ($1, 'AgencyViewer', $2::varchar(20), 'AgencyViewer', false, false, true)"
-      ),
-      params = list(user_id, context$agency_id)
-    )
-    DBI::dbExecute(
-      connection,
-      paste(
-        "INSERT INTO access.user_agency_access (user_id, agency_id, service_id, agency_role, access_level, budget_access, performance_plan_access)",
-        "VALUES ($1, $2::varchar(20), $3::integer, 'Agency Staff', 'ReadOnly', false, true)"
-      ),
-      params = list(user_id, context$agency_id, context$service_id)
-    )
-    user_id
-  })
 }
 
 load_app_data <- function(connection) {
@@ -733,13 +563,6 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
   reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)
   if (is.null(scores) || !length(scores)) stop("No review scores were submitted.")
   if (is.null(internal_notes) || length(internal_notes) == 0 || is.na(internal_notes)) internal_notes <- ""
-  if (is.na(reviewer_id)) stop("A reviewer must be selected before scoring this plan.")
-  reviewer_exists <- DBI::dbGetQuery(
-    connection,
-    'SELECT user_id FROM access."user" WHERE user_id = $1 AND active LIMIT 1',
-    params = list(reviewer_id)
-  )
-  if (!nrow(reviewer_exists)) stop("The selected reviewer is not an active user.")
 
   fallback_value <- function(value, fallback) {
     if (is.null(value) || length(value) == 0 || is.na(value)) fallback else value

@@ -3,11 +3,10 @@ library(DBI)
 library(RPostgres)
 
 source(file.path("R", "database.R"), local = TRUE)
-source(file.path("R", "sendgrid.R"), local = TRUE)
+source(file.path("R", "auth.R"), local = TRUE)
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x)) y else x
 
-source(file.path("R", "access_policy.R"), local = TRUE)
 
 pages <- list(
   login = "Login",
@@ -41,6 +40,102 @@ risk_type_choices <- c(
   "Cross-agency inputs" = "cross-agency inputs",
   "Other" = "other"
 )
+
+agency_role_choices <- c(
+  "Agency Head",
+  "Agency Director",
+  "Chief of Staff",
+  "Fiscal Officer",
+  "Fiscal Staff",
+  "Agency Staff",
+  "Program Staff",
+  "Performance Lead",
+  "Admin"
+)
+
+performance_role_choices <- c(
+  "AgencySubmitter",
+  "AgencyWriter",
+  "AgencyApprover",
+  "AgencyViewer",
+  "OPIReviewer",
+  "BBMRReviewer",
+  "DeputyMayor",
+  "CAOffice",
+  "SystemAdmin"
+)
+
+access_policy <- list(
+  role_edit_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor", "AgencySubmitter"),
+  role_edit_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff"),
+  plan_edit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  submitter_assignment_app_roles = c("SystemAdmin", "CAOffice", "DeputyMayor"),
+  submitter_assignment_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff", "Admin"),
+  measure_review_app_roles = c("SystemAdmin", "OPIReviewer"),
+  measure_submit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  measure_submit_agency_roles = c("Performance Lead", "Chief of Staff", "Agency Director", "Agency Head", "Admin"),
+  plan_review_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"),
+  final_plan_approval_app_roles = c("SystemAdmin")
+)
+
+has_any_role <- function(values, allowed) {
+  any(values %in% allowed)
+}
+
+can_edit_roles <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$role_edit_app_roles) ||
+    has_any_role(agency_roles, access_policy$role_edit_agency_roles)
+}
+
+can_assign_submitter <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$submitter_assignment_app_roles) ||
+    has_any_role(agency_roles, access_policy$submitter_assignment_agency_roles)
+}
+
+can_edit_plan_sections <- function(app_roles) {
+  has_any_role(app_roles, access_policy$plan_edit_app_roles)
+}
+
+can_review_measures <- function(app_roles) {
+  has_any_role(app_roles, access_policy$measure_review_app_roles)
+}
+
+can_view_plan_approval_queue <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "DeputyMayor", "CAOffice"))
+}
+
+can_review_plans <- function(app_roles) {
+  has_any_role(app_roles, access_policy$plan_review_app_roles)
+}
+
+can_route_plan_reviews <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))
+}
+
+can_submit_measures <- function(app_roles, agency_roles) {
+  has_any_role(app_roles, access_policy$measure_submit_app_roles) ||
+    has_any_role(agency_roles, access_policy$measure_submit_agency_roles)
+}
+
+can_submit_plans <- function(app_roles) {
+  has_any_role(app_roles, c("AgencySubmitter", "SystemAdmin"))
+}
+
+can_finalize_plans <- function(app_roles) {
+  has_any_role(app_roles, access_policy$final_plan_approval_app_roles)
+}
+
+can_view_application_admin <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
+can_view_performance_reviewing <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
+}
+
+uses_review_administration_mode <- function(app_roles) {
+  has_any_role(app_roles, c("CAOffice", "DeputyMayor"))
+}
 
 risk_type_label <- function(value) {
   labels <- names(risk_type_choices)
@@ -218,6 +313,132 @@ plan_display_name <- function(db, plan) {
   agency_name(db, plan$agency_id[[1]])
 }
 
+assignment_key <- function(value) {
+  value <- as.character(value)
+  value[is.na(value)] <- ""
+  value <- tolower(trimws(value))
+  gsub("[^a-z0-9]+", "", value)
+}
+
+entity_role_assignment_rows <- function(db = NULL) {
+  if (!is.null(db) && "workflow_entity_role_assignment" %in% names(db) && nrow(db$workflow_entity_role_assignment)) {
+    rows <- db$workflow_entity_role_assignment
+    return(data.frame(
+      entity_type = rows$entity_type,
+      agency_id = rows$agency_id,
+      agency = rows$agency,
+      entity_id = as.character(rows$entity_id),
+      public_name = rows$public_name,
+      submitter = rows$submitter_name,
+      reviewer = rows$reviewer_name,
+      deputy_mayor = rows$deputy_mayor_name,
+      ca_office = rows$ca_office_name,
+      submitter_user_id = rows$submitter_user_id,
+      reviewer_user_id = rows$reviewer_user_id,
+      deputy_mayor_user_id = rows$deputy_mayor_user_id,
+      ca_office_user_id = rows$ca_office_user_id,
+      stringsAsFactors = FALSE
+    ))
+  }
+  path <- file.path("database", "seed", "entity_role_assignments.csv")
+  if (!file.exists(path)) {
+    return(data.frame(
+      entity_type = character(),
+      agency_id = character(),
+      agency = character(),
+      entity_id = character(),
+      public_name = character(),
+      reviewer = character(),
+      deputy_mayor = character(),
+      ca_office = character(),
+      submitter = character(),
+      stringsAsFactors = FALSE
+    ))
+  }
+  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+plan_role_assignment <- function(db, plan) {
+  assignments <- entity_role_assignment_rows(db)
+  if (is.null(plan) || !nrow(plan) || !nrow(assignments)) return(assignments[0, , drop = FALSE])
+  if (!is.na(plan$entity_id[[1]]) && "entity_id" %in% names(assignments)) {
+    entity_match <- !is.na(assignments$entity_id) & as.character(assignments$entity_id) == as.character(plan$entity_id[[1]])
+    rows <- assignments[entity_match, , drop = FALSE]
+    if (nrow(rows)) return(rows[1, , drop = FALSE])
+  }
+  display_key <- assignment_key(plan_display_name(db, plan))
+  rows <- assignments[assignment_key(assignments$public_name) == display_key, , drop = FALSE]
+  if (nrow(rows)) return(rows[1, , drop = FALSE])
+  if (!is.na(plan$agency_id[[1]]) && "agency_id" %in% names(assignments)) {
+    agency_match <- !is.na(assignments$agency_id) & assignments$agency_id == plan$agency_id[[1]]
+    no_entity <- is.na(assignments$entity_id) | !nzchar(trimws(as.character(assignments$entity_id)))
+    rows <- assignments[agency_match & no_entity, , drop = FALSE]
+    if (nrow(rows)) return(rows[1, , drop = FALSE])
+  }
+  assignments[0, , drop = FALSE]
+}
+
+plan_deputy_mayor_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "deputy_mayor" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$deputy_mayor[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  agency_id <- plan_accounting_agency_id(db, plan)
+  agency <- db$reference_agency[db$reference_agency$agency_id == agency_id, , drop = FALSE]
+  if (!nrow(agency) || !"deputy_mayor_pillar" %in% names(agency)) return("Unassigned")
+  value <- trimws(as.character(agency$deputy_mayor_pillar[[1]] %||% ""))
+  if (!nzchar(value)) "Unassigned" else value
+}
+
+plan_ca_office_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "ca_office" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$ca_office[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  "Unassigned"
+}
+
+plan_submitter_label <- function(db, plan) {
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "submitter" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$submitter[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  agency_id <- plan_accounting_agency_id(db, plan)
+  submitters <- db$access_user_role[
+    db$access_user_role$agency_id == agency_id &
+      db$access_user_role$app_role == "AgencySubmitter",
+    ,
+    drop = FALSE
+  ]
+  if (nrow(submitters)) {
+    labels <- unique(trimws(submitters$full_name[!is.na(submitters$full_name) & nzchar(trimws(submitters$full_name))]))
+    if (length(labels)) return(paste(labels, collapse = "; "))
+  }
+  "Unassigned"
+}
+
+plan_reviewer_label <- function(db, plan) {
+  if (!is.null(plan) && nrow(plan) && "assigned_reviewer_name" %in% names(plan)) {
+    value <- trimws(as.character(plan$assigned_reviewer_name[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  reviews <- db$review_plan_review[db$review_plan_review$plan_id == plan$plan_id[[1]], , drop = FALSE]
+  if (nrow(reviews)) {
+    reviews <- reviews[order(reviews$review_started_at, reviews$review_id, decreasing = TRUE, na.last = TRUE), , drop = FALSE]
+    value <- trimws(as.character(reviews$reviewer_name[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "reviewer" %in% names(assignment)) {
+    value <- trimws(as.character(assignment$reviewer[[1]] %||% ""))
+    if (nzchar(value)) return(value)
+  }
+  "Unassigned"
+}
+
 performance_plan_title <- function(db, plan, suffix = NULL) {
   base <- paste(plan_display_name(db, plan), "Performance Plan")
   if (is.null(suffix) || !nzchar(trimws(suffix))) base else paste(base, suffix, sep = ": ")
@@ -244,6 +465,10 @@ plan_service_rows <- function(db, plan) {
   if (is.na(plan$plan_id[[1]])) return(db$reference_service[0, , drop = FALSE])
   plan_services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan$plan_id[[1]], , drop = FALSE]
   service_rows <- merge(plan_services, db$reference_service, by = "service_id", all.x = TRUE)
+  # Plan links to services missing from the active reference list (e.g. a
+  # service deactivated after the plan was seeded) merge to NA rows; drop them
+  # rather than letting NA subscripts crash every page that counts services.
+  service_rows <- service_rows[!is.na(service_rows$active), , drop = FALSE]
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     assigned_service_ids <- character(0)
     if (!is.na(plan$entity_id[[1]])) {
@@ -1131,7 +1356,96 @@ pillar_modal <- function(pillar_id, db) {
   )
 }
 
-page_login <- function(db, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_agency = "") {
+login_notice <- function(notice, tone = "warning") {
+  if (is.null(notice)) return(NULL)
+  div(class = "chip-row login-notice", status_chip(notice, tone))
+}
+
+login_view_login <- function(state) {
+  tagList(
+    h1("Sign in to continue"),
+    p("Sign in with your work email. Accounts are provisioned by the performance team; use “First time here” below to set your password."),
+    login_notice(state$notice),
+    div(
+      class = "login-email-panel",
+      div(
+        class = "measure-field login-email-field",
+        textInput("login_email", "Email address", placeholder = "name@baltimorecity.gov"),
+        passwordInput("login_password", "Password")
+      ),
+      actionButton("login_email_continue", "Sign in", class = "civic-button primary")
+    ),
+    div(
+      class = "login-links",
+      actionLink("goto_first_time", "First time here? Set your password"),
+      actionLink("goto_forgot", "Forgot your password?")
+    )
+  )
+}
+
+login_view_request <- function(state) {
+  first_time <- isTRUE(state$first_time)
+  tagList(
+    h1(if (first_time) "Set your password" else "Reset your password"),
+    p(paste(
+      "Enter the work email your account was provisioned with.",
+      "We will send a one-time link for choosing", if (first_time) "your password." else "a new password."
+    )),
+    login_notice(state$notice),
+    div(
+      class = "measure-field login-email-field",
+      textInput("request_email", "Work email", placeholder = "name@baltimorecity.gov")
+    ),
+    actionButton("request_submit", "Send me a link", class = "civic-button primary"),
+    div(class = "login-links", actionLink("goto_login", "Back to sign in"))
+  )
+}
+
+login_view_sent <- function(state) {
+  tagList(
+    h1("Check your email"),
+    p("If that address is registered, a password link is on its way. It expires in 60 minutes."),
+    if (!is.null(state$dev_link)) div(
+      class = "login-dev-link",
+      login_notice("Local demo mode (AUTH_DEV_LINKS): the link is shown here instead of being emailed.", "warning"),
+      tags$a(href = state$dev_link, state$dev_link)
+    ),
+    div(class = "login-links", actionLink("goto_login", "Back to sign in"))
+  )
+}
+
+login_view_reset <- function(state) {
+  tagList(
+    h1("Choose a new password"),
+    p("Passwords must be at least 10 characters."),
+    login_notice(state$notice),
+    div(
+      class = "measure-field login-email-field",
+      passwordInput("reset_password", "New password"),
+      passwordInput("reset_confirm", "Confirm new password")
+    ),
+    actionButton("reset_submit", "Save password", class = "civic-button primary")
+  )
+}
+
+login_view_reset_done <- function(state) {
+  tagList(
+    h1("Password saved"),
+    p("Your password is set. Sign in with your work email to continue."),
+    div(class = "login-links", actionLink("goto_login", "Go to sign in"))
+  )
+}
+
+page_login <- function(state = list(view = "login")) {
+  view <- if (is.null(state$view)) "login" else state$view
+  body <- switch(
+    view,
+    request = login_view_request(state),
+    sent = login_view_sent(state),
+    reset = login_view_reset(state),
+    reset_done = login_view_reset_done(state),
+    login_view_login(state)
+  )
   div(
     class = "login-page",
     div(
@@ -1144,72 +1458,10 @@ page_login <- function(db, app_roles = c("AgencyViewer"), agency_roles = charact
           div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
         )
       ),
-      h1("Sign in to continue"),
-      p("Enter email address to continue sign in."),
-      div(
-        class = "login-email-panel",
-        div(
-          class = "measure-field login-email-field",
-          textInput("login_email", "Email address", placeholder = "name@baltimorecity.gov")
-        ),
-        actionButton("login_email_continue", "Continue", class = "civic-button primary")
-      ),
-      uiOutput("login_flow_panel"),
+      body,
       div(class = "support-note", "Need access? Contact performance@baltimorecity.gov.")
     )
   )
-}
-
-login_flow_panel <- function(db, state) {
-  mode <- state$mode %||% "start"
-  email <- state$email %||% ""
-  if (identical(mode, "start")) {
-    return(div(class = "login-flow-placeholder", ""))
-  }
-  if (identical(mode, "sign_in")) {
-    return(div(
-      class = "login-activation-panel",
-      div(class = "eyebrow", "Password"),
-      p(paste("Enter your password for", email)),
-      div(
-        class = "login-activation-grid login-password-grid",
-        div(class = "measure-field", passwordInput("login_password", "Password")),
-        actionButton("login_sign_in", "Sign in", class = "civic-button primary")
-      )
-    ))
-  }
-  if (identical(mode, "activate_existing")) {
-    return(div(
-      class = "login-activation-panel",
-      div(class = "eyebrow", "Create password"),
-      p(paste("Your email is in the user database. Create a password to activate", email)),
-      div(
-        class = "login-activation-grid",
-        div(class = "measure-field", passwordInput("activate_password", "Create password")),
-        div(class = "measure-field", passwordInput("activate_password_confirm", "Confirm password"))
-      ),
-      actionButton("login_activate_account", "Create account", class = "civic-button secondary")
-    ))
-  }
-  if (identical(mode, "create_new")) {
-    choices <- agency_selector_choices(db)
-    return(div(
-      class = "login-activation-panel",
-      div(class = "eyebrow", "New account"),
-      p("This email is not in the user database. Select your agency, mayoral service, or quasi agency to create an AgencyViewer account."),
-      div(
-        class = "login-new-account-grid",
-        div(
-          class = "measure-field",
-          selectInput("new_user_entity", "Agency, mayoral service, or quasi agency", choices = c("Choose one" = "", choices), selected = "", width = "100%")
-        ),
-        div(class = "measure-field", passwordInput("new_user_password", "Create password")),
-        div(class = "measure-field", passwordInput("new_user_password_confirm", "Confirm password"))
-      ),
-      actionButton("login_create_new_user", "Create AgencyViewer account", class = "civic-button secondary")
-    ))
-  }
-  div(class = "login-flow-placeholder", "")
 }
 
 reviewer_assignment_rows <- function() {
@@ -1332,6 +1584,67 @@ filter_review_rows_for_user <- function(db, rows, app_roles, user_id = NA_intege
     return(rows[portfolio_matches, , drop = FALSE])
   }
   rows[0, , drop = FALSE]
+}
+
+user_name_matches_text <- function(db, user_id, text) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  if (is.na(user_id) || is.na(text) || !nzchar(trimws(as.character(text)))) return(FALSE)
+  users <- db$access_user[db$access_user$user_id == user_id, , drop = FALSE]
+  if (!nrow(users)) return(FALSE)
+  name_parts <- unlist(strsplit(tolower(users$full_name[[1]]), "\\s+"))
+  name_parts <- name_parts[nzchar(name_parts)]
+  if (!length(name_parts)) return(FALSE)
+  text_key <- tolower(as.character(text))
+  all(vapply(name_parts[c(1, length(name_parts))], function(part) grepl(part, text_key, fixed = TRUE), logical(1)))
+}
+
+user_name_matches_portfolio <- function(db, user_id, portfolio) {
+  user_name_matches_text(db, user_id, portfolio)
+}
+
+user_is_portfolio_approver <- function(db, user_id) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  if (is.na(user_id)) return(FALSE)
+  assignments <- entity_role_assignment_rows(db)
+  assignment_match <- nrow(assignments) &&
+    any(vapply(assignments$deputy_mayor, function(approver) user_name_matches_text(db, user_id, approver), logical(1)), na.rm = TRUE)
+  reference_match <- "deputy_mayor_pillar" %in% names(db$reference_agency) &&
+    any(vapply(db$reference_agency$deputy_mayor_pillar, function(portfolio) user_name_matches_portfolio(db, user_id, portfolio), logical(1)), na.rm = TRUE)
+  assignment_match || reference_match
+}
+
+can_view_plan_approval_queue_context <- function(db, app_roles, user_id = NA_integer_) {
+  can_view_plan_approval_queue(app_roles) || user_is_portfolio_approver(db, user_id)
+}
+
+can_approve_plan_gate_context <- function(db, plan, app_roles, user_id = NA_integer_) {
+  if (is.null(plan) || !nrow(plan)) return(FALSE)
+  status <- as.character(plan$plan_status[[1]])
+  if (identical(status, "CAReview")) {
+    if (
+      has_any_role(app_roles, "DeputyMayor") &&
+        user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)) &&
+        plan_has_approval_stamp(db, plan$plan_id[[1]], "DeputyMayor")
+    ) {
+      return(TRUE)
+    }
+    return(has_any_role(app_roles, "CAOffice") && user_name_matches_text(db, user_id, plan_ca_office_label(db, plan)))
+  }
+  if (identical(status, "DeputyMayorReview")) {
+    return((has_any_role(app_roles, "DeputyMayor") || has_any_role(app_roles, "CAOffice")) && user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)))
+  }
+  FALSE
+}
+
+can_manage_plan_stamp_context <- function(db, plan, stage, app_roles, user_id = NA_integer_) {
+  if (has_any_role(app_roles, "SystemAdmin")) return(TRUE)
+  stage <- as.character(stage)
+  if (identical(stage, "Reviewer")) return(has_any_role(app_roles, c("OPIReviewer", "BBMRReviewer")))
+  if (identical(stage, "DeputyMayor")) {
+    return((has_any_role(app_roles, "DeputyMayor") || has_any_role(app_roles, "CAOffice")) && user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)))
+  }
+  if (identical(stage, "CAOffice")) return(has_any_role(app_roles, "CAOffice") && user_name_matches_text(db, user_id, plan_ca_office_label(db, plan)))
+  FALSE
 }
 
 page_reviewer_dashboard <- function(db, can_view_publish_queue = FALSE, app_roles = character(0), user_id = NA_integer_) {
@@ -2330,7 +2643,9 @@ plan_service_measure_counts <- function(db, plan, services) {
   counts <- data.frame(
     plan_service_id = services$plan_service_id,
     service_id = services$service_id,
-    measure_count = vapply(services$service_id, function(service_id) length(unique(service_metric_ids(db, plan, service_id, include_ineligible = TRUE))), integer(1)),
+    # unname: vapply carries service_id names, and data.frame would adopt them
+    # as row names, which errors if any are NA
+    measure_count = unname(vapply(services$service_id, function(service_id) length(unique(service_metric_ids(db, plan, service_id, include_ineligible = TRUE))), integer(1))),
     stringsAsFactors = FALSE
   )
   counts
@@ -2465,6 +2780,7 @@ user_submitter_choices <- function(db, user_id) {
   valid_values <- unname(valid_choices)
   user_id <- as.character(user_id %||% "")
   if (!nzchar(user_id)) return(valid_choices[0])
+  numeric_user_id <- suppressWarnings(as.integer(user_id))
   agency_rows <- db$access_user_agency_access[as.character(db$access_user_agency_access$user_id) == user_id, , drop = FALSE]
   role_rows <- db$access_user_role[as.character(db$access_user_role$user_id) == user_id, , drop = FALSE]
   values <- character(0)
@@ -2492,12 +2808,19 @@ user_submitter_choices <- function(db, user_id) {
   }
 
   assignments <- entity_role_assignment_rows(db)
-  if (nrow(assignments) && "submitter" %in% names(assignments)) {
-    assignment_matches <- vapply(
-      assignments$submitter,
-      function(submitter) user_name_matches_text(db, user_id, submitter),
-      logical(1)
-    )
+  if (nrow(assignments)) {
+    assignment_matches <- rep(FALSE, nrow(assignments))
+    if ("submitter_user_id" %in% names(assignments) && !is.na(numeric_user_id)) {
+      submitter_user_ids <- suppressWarnings(as.integer(assignments$submitter_user_id))
+      assignment_matches <- assignment_matches | (!is.na(submitter_user_ids) & submitter_user_ids == numeric_user_id)
+    }
+    if ("submitter" %in% names(assignments)) {
+      assignment_matches <- assignment_matches | vapply(
+        assignments$submitter,
+        function(submitter) user_name_matches_text(db, user_id, submitter),
+        logical(1)
+      )
+    }
     assignment_rows <- assignments[assignment_matches, , drop = FALSE]
     if (nrow(assignment_rows)) {
       entity_ids <- suppressWarnings(as.integer(assignment_rows$entity_id))
@@ -3272,18 +3595,24 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
 plan_export_python <- function() {
   configured <- Sys.getenv("PLAN_EXPORT_PYTHON")
   if (nzchar(configured) && file.exists(configured)) return(configured)
-  bundled <- "C:/Users/melanie.lada/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe"
-  if (file.exists(bundled)) return(bundled)
-  python <- Sys.which("python")
-  if (nzchar(python)) return(python)
-  stop("No Python executable is available for plan exports.")
+  for (candidate in c("python3", "python")) {
+    python <- Sys.which(candidate)
+    if (nzchar(python)) return(python)
+  }
+  stop("No Python executable is available for plan exports. Set PLAN_EXPORT_PYTHON or install python3.")
+}
+
+plan_export_pptx_template <- function() {
+  configured <- Sys.getenv("PLAN_EXPORT_PPTX_TEMPLATE")
+  if (nzchar(configured)) return(configured)
+  file.path("templates", "agency-performance-plan-template.pptx")
 }
 
 build_plan_export_file <- function(db, plan_id, output_file, export_type, include_review = TRUE) {
   payload_file <- tempfile(fileext = ".json")
   jsonlite::write_json(plan_export_payload(db, plan_id, include_review), payload_file, auto_unbox = TRUE, null = "null", pretty = TRUE)
   script_path <- normalizePath(file.path("scripts", "build_plan_export.py"), winslash = "/", mustWork = TRUE)
-  template_path <- "C:/Users/melanie.lada/AppData/Local/Temp/Agency Performance Plan Template.pptx"
+  template_path <- plan_export_pptx_template()
   args <- c("--input", payload_file, "--output", output_file, "--type", export_type)
   if (identical(export_type, "pptx") && file.exists(template_path)) {
     args <- c(args, "--template", template_path)
@@ -4768,7 +5097,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
   team_scope_choices <- if (review_admin_mode) agency_choices_only(db) else NULL
   switch(
     page,
-    login = page_login(db, app_roles, agency_roles, selected_user_id, agency_id),
+    login = page_login(),
     landing = page_landing(db, agency_id, app_roles, agency_roles),
     reviewer_dashboard = page_reviewer_dashboard(db, can_finalize_plans(app_roles), app_roles, selected_user_id),
     plan_review_detail = {
@@ -4985,7 +5314,9 @@ server <- function(input, output, session) {
   ensure_review_schema(database)
   session$onSessionEnded(function() DBI::dbDisconnect(database))
   app_data <- reactiveVal(load_app_data(database))
-  current_page <- reactiveVal("role_preview")
+  current_user <- reactiveVal(NULL)
+  auth_state <- reactiveVal(list(view = "login"))
+  current_page <- reactiveVal("login")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
   current_risk_id <- reactiveVal(NULL)
@@ -5000,15 +5331,11 @@ server <- function(input, output, session) {
   current_role_preview_user_id <- reactiveVal(NULL)
   current_role_preview_app_role <- reactiveVal("SystemAdmin")
   current_role_preview_agency_role <- reactiveVal("Admin")
-  login_flow_state <- reactiveVal(list(mode = "start", email = ""))
   feedback_modal_open <- reactiveVal(FALSE)
   service_open_flags <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
 
   refresh_app_data <- function() app_data(load_app_data(database))
-  output$login_flow_panel <- renderUI({
-    login_flow_panel(app_data(), login_flow_state())
-  })
   update_cached_section_draft <- function(plan_id, section_key, payload_json, row) {
     key <- paste(as.integer(plan_id), as.character(section_key), sep = "::")
     section_draft_cache[[key]] <- data.frame(
@@ -5053,7 +5380,7 @@ server <- function(input, output, session) {
     } else {
       user_submitter_choices(data, user_id)
     }
-    if (!length(choices)) choices <- agency_selector_choices(data)
+    if (!length(choices)) return("")
     valid_values <- unname(choices)
     if (is.null(selected) || !selected %in% valid_values) valid_values[[1]] else selected
   }
@@ -5101,8 +5428,7 @@ server <- function(input, output, session) {
     if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
       agency_selector_choices(data)
     } else {
-      choices <- user_submitter_choices(data, user_id)
-      if (length(choices)) choices else agency_selector_choices(data)
+      user_submitter_choices(data, user_id)
     }
   }
   update_submitter_selectors <- function(data = app_data(), selected = NULL) {
@@ -5591,11 +5917,6 @@ server <- function(input, output, session) {
     reported_by <- if (nrow(user_rows)) user_rows$user_id[[1]] else data$access_user_agency_access$user_id[[1]]
     result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit), error = function(error) error)
     if (inherits(result, "error")) {
-      session$sendCustomMessage("plan-review-save-result", list(
-        ok = FALSE,
-        source = source,
-        message = conditionMessage(result)
-      ))
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
@@ -6352,6 +6673,11 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   observeEvent(input$current_page, {
+    if (is.null(current_user()) && !identical(input$current_page, "login")) {
+      current_page("login")
+      session$sendCustomMessage("set-page", "login")
+      return()
+    }
     if (identical(current_page(), "plan_review_detail") && !identical(input$current_page, "plan_review_detail")) {
       current_history_plan_id(NULL)
       current_history_include_review(TRUE)
@@ -6359,14 +6685,82 @@ server <- function(input, output, session) {
     current_page(input$current_page)
   }, ignoreInit = TRUE)
 
-  complete_user_sign_in <- function(user_id) {
-    data <- app_data()
-    user_rows <- data$access_user[as.character(data$access_user$user_id) == as.character(user_id), , drop = FALSE]
-    if (!nrow(user_rows)) {
-      showNotification("That user account is not active. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
-      return(invisible(FALSE))
+  # A ?reset=<token> link lands on the choose-a-new-password view.
+  observeEvent(session$clientData$url_search, {
+    query <- parseQueryString(session$clientData$url_search)
+    if (is.null(query$reset) || !is.null(current_user())) return()
+    if (is.null(auth_lookup_reset_token(database, query$reset))) {
+      auth_state(list(view = "login", notice = "That password link is invalid or has expired. Request a new one."))
+    } else {
+      auth_state(list(view = "reset", token = query$reset))
     }
-    user_id <- as.character(user_id)
+  })
+
+  observeEvent(input$goto_first_time, auth_state(list(view = "request", first_time = TRUE)))
+  observeEvent(input$goto_forgot, auth_state(list(view = "request", first_time = FALSE)))
+  observeEvent(input$goto_login, auth_state(list(view = "login")))
+
+  observeEvent(input$request_submit, {
+    state <- auth_state()
+    email <- trimws(input$request_email %||% "")
+    dev_link <- NULL
+    if (nzchar(email)) {
+      user <- auth_find_user(database, email)
+      if (!is.null(user)) {
+        token <- auth_issue_reset_token(database, user$user_id[[1]])
+        link <- auth_reset_link(session, token)
+        if (auth_dev_links_enabled()) {
+          # Dev mode shows the link and never emails — local demos must not
+          # send real mail to seeded (real) employee addresses.
+          dev_link <- link
+        } else {
+          auth_send_reset_email(user$email[[1]], link, isTRUE(state$first_time))
+        }
+      }
+    }
+    auth_state(list(view = "sent", first_time = isTRUE(state$first_time), dev_link = dev_link))
+  })
+
+  observeEvent(input$reset_submit, {
+    state <- auth_state()
+    problem <- auth_password_problem(input$reset_password, input$reset_confirm)
+    if (!is.null(problem)) {
+      auth_state(modifyList(state, list(notice = problem)))
+      return()
+    }
+    if (auth_complete_reset(database, state$token, input$reset_password)) {
+      auth_state(list(view = "reset_done"))
+    } else {
+      auth_state(list(view = "login", notice = "That password link is invalid or has expired. Request a new one."))
+    }
+  })
+
+  observeEvent(input$login_email_continue, {
+    email <- tolower(trimws(input$login_email %||% ""))
+    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
+      showNotification("Enter a valid email address to continue.", type = "error", duration = 8)
+      return()
+    }
+    if (auth_attempt_blocked(email)) {
+      auth_state(list(view = "login", notice = paste("Too many failed attempts. Try again in", AUTH_LOCKOUT_MINUTES, "minutes.")))
+      return()
+    }
+    verified <- auth_verify_login(database, email, input$login_password %||% "")
+    if (is.null(verified)) {
+      auth_note_failure(email)
+      auth_state(list(view = "login", notice = "Sign-in failed. Check your email and password, or use “First time here” if you have not set a password yet."))
+      return()
+    }
+    auth_clear_failures(email)
+    current_user(verified)
+    auth_state(list(view = "login"))
+    data <- app_data()
+    user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
+    if (!nrow(user_rows)) {
+      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
+      return()
+    }
+    user_id <- as.character(user_rows$user_id[[1]])
     current_role_preview_user_id(user_id)
     defaults <- matched_user_role_defaults(data, user_id)
     current_role_preview_app_role(defaults$app_role)
@@ -6384,156 +6778,7 @@ server <- function(input, output, session) {
     next_page <- if (admin_mode) "reviewer_dashboard" else "landing"
     current_page(next_page)
     session$sendCustomMessage("set-page", next_page)
-    invisible(TRUE)
-  }
-
-  send_login_flow_email <- function(email, subject, message) {
-    tryCatch(
-      send_account_email(email, subject, message),
-      error = function(error) {
-        showNotification(paste("Account updated, but email could not be sent:", conditionMessage(error)), type = "warning", duration = 10)
-      }
-    )
-  }
-
-  observeEvent(input$login_email_continue, {
-    email <- normalize_login_email(input$login_email)
-    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
-      login_flow_state(list(mode = "start", email = ""))
-      showNotification("Enter a valid email address to continue.", type = "error", duration = 8)
-      return()
-    }
-    user <- find_active_user_by_email(database, email)
-    if (nrow(user)) {
-      has_password <- nzchar(trimws(as.character(user$password_hash[[1]] %||% "")))
-      login_flow_state(list(mode = if (has_password) "sign_in" else "activate_existing", email = email))
-    } else {
-      login_flow_state(list(mode = "create_new", email = email))
-    }
   }, ignoreInit = TRUE)
-
-  observeEvent(input$login_sign_in, {
-    email <- normalize_login_email(login_flow_state()$email %||% input$login_email)
-    password <- input$login_password %||% ""
-    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
-      showNotification("Enter a valid email address to continue.", type = "error", duration = 8)
-      return()
-    }
-    if (!nzchar(password)) {
-      showNotification("Enter your password to sign in.", type = "error", duration = 8)
-      return()
-    }
-    tryCatch({
-      user_id <- authenticate_local_user(database, email, password)
-      complete_user_sign_in(user_id)
-    }, error = function(error) {
-      showNotification(conditionMessage(error), type = "error", duration = 10)
-    })
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$login_activate_account, {
-    email <- normalize_login_email(login_flow_state()$email %||% input$login_email)
-    password <- input$activate_password %||% ""
-    confirm_password <- input$activate_password_confirm %||% ""
-    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
-      showNotification("Enter a valid email address to activate your account.", type = "error", duration = 8)
-      return()
-    }
-    if (!identical(password, confirm_password)) {
-      showNotification("Passwords do not match.", type = "error", duration = 8)
-      return()
-    }
-    tryCatch({
-      user_id <- activate_local_user_account(database, email, password)
-      refresh_app_data()
-      send_login_flow_email(
-        email,
-        "Beacon account activated",
-        "Your Beacon account has been activated. You can now sign in to Baltimore City Performance & Budgeting."
-      )
-      complete_user_sign_in(user_id)
-      showNotification("Account created. You are signed in.", type = "message", duration = 8)
-    }, error = function(error) {
-      showNotification(conditionMessage(error), type = "error", duration = 10)
-    })
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$login_create_new_user, {
-    email <- normalize_login_email(login_flow_state()$email %||% input$login_email)
-    password <- input$new_user_password %||% ""
-    confirm_password <- input$new_user_password_confirm %||% ""
-    selected_entity <- input$new_user_entity %||% ""
-    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
-      showNotification("Enter a valid email address to create an account.", type = "error", duration = 8)
-      return()
-    }
-    if (!nzchar(selected_entity)) {
-      showNotification("Choose an agency, mayoral service, or quasi agency.", type = "error", duration = 8)
-      return()
-    }
-    if (!identical(password, confirm_password)) {
-      showNotification("Passwords do not match.", type = "error", duration = 8)
-      return()
-    }
-    tryCatch({
-      user_id <- create_agency_viewer_account(database, email, password, selected_entity)
-      refresh_app_data()
-      send_login_flow_email(
-        email,
-        "Beacon account created",
-        "Your Beacon account has been created with AgencyViewer access. You can now sign in to Baltimore City Performance & Budgeting."
-      )
-      complete_user_sign_in(user_id)
-      showNotification("AgencyViewer account created. You are signed in.", type = "message", duration = 8)
-    }, error = function(error) {
-      showNotification(conditionMessage(error), type = "error", duration = 10)
-    })
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$login_agency, {
-    current_workspace("agency")
-    current_user_type("agency")
-    current_role_preview_app_role("AgencySubmitter")
-    current_role_preview_agency_role("None")
-    current_page("landing")
-    session$sendCustomMessage("set-page", "landing")
-  })
-
-  observeEvent(input$login_agency_director, {
-    current_workspace("agency")
-    current_user_type("agency_director")
-    current_role_preview_app_role("AgencyWriter")
-    current_role_preview_agency_role("Agency Director")
-    current_page("landing")
-    session$sendCustomMessage("set-page", "landing")
-  })
-
-  observeEvent(input$login_reviewer, {
-    current_workspace("admin")
-    current_user_type("admin")
-    current_role_preview_app_role("OPIReviewer")
-    current_role_preview_agency_role("Admin")
-    current_page("reviewer_dashboard")
-    session$sendCustomMessage("set-page", "reviewer_dashboard")
-  })
-
-  observeEvent(input$login_staff, {
-    current_workspace("agency")
-    current_user_type("agency")
-    current_role_preview_app_role("AgencyWriter")
-    current_role_preview_agency_role("Agency Staff")
-    current_page("landing")
-    session$sendCustomMessage("set-page", "landing")
-  })
-
-  observeEvent(input$login_admin, {
-    current_workspace("admin")
-    current_user_type("admin")
-    current_role_preview_app_role("SystemAdmin")
-    current_role_preview_agency_role("Admin")
-    current_page("reviewer_dashboard")
-    session$sendCustomMessage("set-page", "reviewer_dashboard")
-  })
 
   initial_data <- isolate(app_data())
   lapply(seq_along(initial_data$strategic_plan), function(index) {
@@ -6550,6 +6795,9 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   output$page <- renderUI({
+    if (is.null(current_user()) || identical(current_page(), "login")) {
+      return(page_login(auth_state()))
+    }
     feedback_filter_values <- function(value) {
       if (is.null(value) || length(value) == 0) character(0) else as.character(value)
     }

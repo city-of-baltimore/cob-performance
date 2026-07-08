@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "beacon",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "up", "app"],
+      "port": 3838,
+      "autoPort": false
+    }
+  ]
+}

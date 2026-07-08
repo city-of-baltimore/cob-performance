@@ -1,0 +1,17 @@
+.git
+.env
+terraform/
+database/
+!database/
+database/*
+!database/seed/
+database/seed/*
+!database/seed/entity_role_assignments.csv
+!database/seed/reviewer_assignments.csv
+docker/
+docker-compose.yml
+scripts/__pycache__/
+scripts/generate_*.py
+scripts/create_schema_pdf.py
+LICENSE
+*.md
