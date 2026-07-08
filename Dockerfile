@@ -22,7 +22,7 @@ RUN R -q -e "options(repos = c(CRAN = 'https://cloud.r-project.org')); pkgs <- c
 # Python environment for PDF/PowerPoint plan exports
 COPY scripts/requirements.txt /opt/plan-export/requirements.txt
 RUN python3 -m venv /opt/plan-export/venv \
-    && /opt/plan-export/venv/bin/pip install --no-cache-dir --index-url http://pypi.org/simple/ -r /opt/plan-export/requirements.txt
+    && /opt/plan-export/venv/bin/pip install --no-cache-dir -r /opt/plan-export/requirements.txt
 ENV PLAN_EXPORT_PYTHON=/opt/plan-export/venv/bin/python
 
 WORKDIR /app
