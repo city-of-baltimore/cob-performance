@@ -98,7 +98,7 @@ auth_user_roles <- function(connection, user_id) {
 auth_user_agencies <- function(connection, user_id) {
   DBI::dbGetQuery(
     connection,
-    "SELECT agency_id, agency_role FROM access.user_agency_access WHERE user_id = $1",
+    "SELECT agency_id, agency_role, COALESCE(NULLIF(agency_roles, ''), agency_role) AS agency_roles FROM access.user_agency_access WHERE user_id = $1",
     params = list(as.integer(user_id))
   )
 }

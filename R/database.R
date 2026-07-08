@@ -38,6 +38,7 @@ connect_app_database <- function() {
 }
 
 ensure_review_schema <- function(connection) {
+  DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_type varchar(20) NOT NULL DEFAULT 'plan'")
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_id integer")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_section_score_target ON review.section_score(review_id, target_type, target_id)")
@@ -291,7 +292,8 @@ load_app_data <- function(connection) {
     access_user_agency_access = query(
       paste(
         "SELECT uaa.access_id, u.user_id, uaa.agency_id, uaa.service_id, u.full_name, u.email,",
-        "uaa.agency_role, uaa.access_level, uaa.budget_access, uaa.performance_plan_access",
+        "uaa.agency_role, COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+        "uaa.access_level, uaa.budget_access, uaa.performance_plan_access",
         "FROM access.user_agency_access uaa JOIN access.\"user\" u ON u.user_id = uaa.user_id",
         "WHERE u.active ORDER BY uaa.agency_id, u.full_name"
       )
@@ -1021,24 +1023,33 @@ set_measure_active <- function(connection, measure_id, agency_id, active) {
   if (changed != 1) stop("Measure not found for this agency")
 }
 
-save_team_role_assignment <- function(connection, access_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access) {
+save_team_role_assignment <- function(connection, access_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
   performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
   is_new <- identical(as.character(access_id), "new")
   access_id <- if (is_new) NA_integer_ else as.integer(access_id)
   agency_id <- trimws(as.character(agency_id %||% ""))
+  service_id <- trimws(as.character(service_id %||% ""))
+  if (!nzchar(service_id)) service_id <- NA_character_
   full_name <- trimws(as.character(full_name %||% ""))
   email <- tolower(trimws(as.character(email %||% "")))
-  agency_role <- trimws(as.character(agency_role %||% ""))
+  agency_roles <- if (is.null(agency_role) || length(agency_role) == 0) "" else agency_role
+  agency_roles <- unique(trimws(as.character(agency_roles)))
+  agency_roles <- agency_roles[nzchar(agency_roles)]
+  agency_role <- if (length(agency_roles)) agency_roles[[1]] else ""
+  agency_roles_value <- paste(agency_roles, collapse = "||")
   performance_role <- trimws(as.character(performance_role %||% ""))
   if (!nzchar(agency_id)) stop("Agency assignment is required.")
   if (!nzchar(full_name)) stop("Person name is required.")
   if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) stop("A valid email is required.")
-  if (!agency_role %in% agency_role_values) stop("Choose a valid agency role.")
+  if (!length(agency_roles) || any(!agency_roles %in% agency_role_values)) stop("Choose valid agency roles.")
   if (!performance_role %in% performance_role_values) stop("Choose a valid performance role.")
 
   DBI::dbWithTransaction(connection, {
     if (is_new) {
+      DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.\"user\"', 'user_id'), COALESCE((SELECT MAX(user_id) FROM access.\"user\"), 1), (SELECT COUNT(*) > 0 FROM access.\"user\"))")
+      DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_agency_access', 'access_id'), COALESCE((SELECT MAX(access_id) FROM access.user_agency_access), 1), (SELECT COUNT(*) > 0 FROM access.user_agency_access))")
+      DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_role', 'user_role_id'), COALESCE((SELECT MAX(user_role_id) FROM access.user_role), 1), (SELECT COUNT(*) > 0 FROM access.user_role))")
       user <- DBI::dbGetQuery(
         connection,
         paste(
@@ -1052,16 +1063,16 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
       user_id <- user$user_id[[1]]
       access <- DBI::dbGetQuery(
         connection,
-        "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE user_id = $1 AND agency_id = $2 AND service_id IS NULL ORDER BY access_id LIMIT 1",
-        params = list(user_id, agency_id)
+        "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE user_id = $1 AND agency_id = $2 AND service_id IS NOT DISTINCT FROM $3::varchar(20) ORDER BY access_id LIMIT 1",
+        params = list(user_id, agency_id, service_id)
       )
       if (nrow(access)) {
         access_id <- access$access_id[[1]]
       } else {
         access <- DBI::dbGetQuery(
           connection,
-          "INSERT INTO access.user_agency_access (user_id, agency_id, service_id, agency_role, access_level, budget_access, performance_plan_access) VALUES ($1, $2, NULL, $3::varchar(30), CASE WHEN $3::text = 'Agency Staff' THEN 'ReadOnly' WHEN $3::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, false, true) RETURNING access_id, user_id, agency_id, service_id",
-          params = list(user_id, agency_id, agency_role)
+          "INSERT INTO access.user_agency_access (user_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, performance_plan_access) VALUES ($1, $2, $4::varchar(20), $3::varchar(30), $5, CASE WHEN $3::text = 'Agency Staff' THEN 'ReadOnly' WHEN $3::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, false, true) RETURNING access_id, user_id, agency_id, service_id",
+          params = list(user_id, agency_id, agency_role, service_id, agency_roles_value)
         )
         access_id <- access$access_id[[1]]
       }
@@ -1078,8 +1089,8 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
     )
     DBI::dbExecute(
       connection,
-      "UPDATE access.user_agency_access SET agency_role = $2::varchar(30), access_level = CASE WHEN $2::text = 'Agency Staff' THEN 'ReadOnly' WHEN $2::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END WHERE access_id = $1",
-      params = list(access_id, agency_role)
+      "UPDATE access.user_agency_access SET agency_role = $2::varchar(30), agency_roles = $3, access_level = CASE WHEN $2::text = 'Agency Staff' THEN 'ReadOnly' WHEN $2::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END WHERE access_id = $1",
+      params = list(access_id, agency_role, agency_roles_value)
     )
     existing_role <- DBI::dbGetQuery(
       connection,
@@ -1089,14 +1100,60 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
     if (nrow(existing_role)) {
       DBI::dbExecute(
         connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        "UPDATE access.user_role SET app_role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
         params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
       )
     } else {
       DBI::dbExecute(
         connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, role, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $2::varchar(30), $4, $5, $6)",
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
         params = list(user_id, performance_role, agency_id, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+    }
+  })
+  invisible(TRUE)
+}
+
+delete_team_role_assignment <- function(connection, access_id, acting_user_id = NULL) {
+  access_id <- as.integer(access_id)
+  acting_user_id <- suppressWarnings(as.integer(acting_user_id %||% NA_integer_))
+  access <- DBI::dbGetQuery(
+    connection,
+    "SELECT access_id, user_id, agency_id, service_id FROM access.user_agency_access WHERE access_id = $1",
+    params = list(access_id)
+  )
+  if (!nrow(access)) stop("Team access row not found.")
+  if (!is.na(acting_user_id) && access$user_id[[1]] == acting_user_id) {
+    stop("You cannot delete your own team access row.")
+  }
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM access.user_agency_access WHERE access_id = $1",
+      params = list(access_id)
+    )
+    remaining_access_for_agency <- DBI::dbGetQuery(
+      connection,
+      "SELECT COUNT(*)::integer AS n FROM access.user_agency_access WHERE user_id = $1 AND agency_id = $2",
+      params = list(access$user_id[[1]], access$agency_id[[1]])
+    )$n[[1]]
+    if (remaining_access_for_agency == 0L) {
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20)",
+        params = list(access$user_id[[1]], access$agency_id[[1]])
+      )
+    }
+    remaining_access <- DBI::dbGetQuery(
+      connection,
+      "SELECT (SELECT COUNT(*) FROM access.user_agency_access WHERE user_id = $1) + (SELECT COUNT(*) FROM access.user_role WHERE user_id = $1) AS n",
+      params = list(access$user_id[[1]])
+    )$n[[1]]
+    if (remaining_access == 0) {
+      DBI::dbExecute(
+        connection,
+        'UPDATE access."user" SET active = false, updated_at = now() WHERE user_id = $1',
+        params = list(access$user_id[[1]])
       )
     }
   })

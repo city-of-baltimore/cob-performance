@@ -78,8 +78,25 @@ access_policy <- list(
   final_plan_approval_app_roles = c("SystemAdmin")
 )
 
+role_grant_policy <- list(
+  system_admin = performance_role_choices,
+  reviewer_admin = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
+  portfolio_admin = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
+  agency_leadership = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
+  agency_submitter = c("AgencyWriter", "AgencyViewer")
+)
+
 has_any_role <- function(values, allowed) {
   any(values %in% allowed)
+}
+
+split_stored_roles <- function(value) {
+  if (is.null(value) || !length(value)) return(character(0))
+  value <- as.character(value)
+  value <- value[!is.na(value)]
+  roles <- unlist(strsplit(value, "\\|\\||;", perl = TRUE), use.names = FALSE)
+  roles <- unique(trimws(roles))
+  roles[nzchar(roles)]
 }
 
 can_edit_roles <- function(app_roles, agency_roles) {
@@ -90,6 +107,31 @@ can_edit_roles <- function(app_roles, agency_roles) {
 can_assign_submitter <- function(app_roles, agency_roles) {
   has_any_role(app_roles, access_policy$submitter_assignment_app_roles) ||
     has_any_role(agency_roles, access_policy$submitter_assignment_agency_roles)
+}
+
+grantable_performance_roles <- function(app_roles, agency_roles) {
+  if (has_any_role(app_roles, "SystemAdmin")) {
+    return(role_grant_policy$system_admin)
+  }
+  allowed <- character(0)
+  if (has_any_role(app_roles, c("OPIReviewer", "BBMRReviewer"))) {
+    allowed <- c(allowed, role_grant_policy$reviewer_admin)
+  }
+  if (has_any_role(app_roles, c("CAOffice", "DeputyMayor"))) {
+    allowed <- c(allowed, role_grant_policy$portfolio_admin)
+  }
+  if (has_any_role(agency_roles, access_policy$role_edit_agency_roles)) {
+    allowed <- c(allowed, role_grant_policy$agency_leadership)
+  }
+  if (has_any_role(app_roles, "AgencySubmitter")) {
+    allowed <- c(allowed, role_grant_policy$agency_submitter)
+  }
+  unique(allowed[allowed %in% performance_role_choices])
+}
+
+can_grant_performance_role <- function(app_roles, agency_roles, target_role) {
+  target_role <- as.character(target_role %||% "")
+  nzchar(target_role) && target_role %in% grantable_performance_roles(app_roles, agency_roles)
 }
 
 can_edit_plan_sections <- function(app_roles) {
@@ -843,7 +885,10 @@ role_capability_row <- function(label, detail, enabled = FALSE) {
 
 role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "", selected_agency = "", id_prefix = "", agency_input_id = "selected_agency", compact = FALSE) {
   app_role <- app_roles[[1]]
-  agency_role <- if (length(agency_roles)) agency_roles[[1]] else "No agency title selected"
+  agency_roles <- unique(as.character(agency_roles))
+  agency_roles <- agency_roles[agency_roles %in% agency_role_choices]
+  agency_role_selected <- if (length(agency_roles)) agency_roles else "None"
+  agency_role_label <- if (length(agency_roles)) paste(agency_roles, collapse = ", ") else "No agency title selected"
   user_choices <- role_preview_user_choices(db)
   if (!nzchar(selected_user_id) || !selected_user_id %in% unname(user_choices)) {
     selected_user_id <- default_role_preview_user_id(db)
@@ -890,14 +935,14 @@ role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "
         ),
         div(
           class = "measure-field",
-          selectInput(agency_role_input_id, "Agency role/title", choices = c("None", agency_role_choices), selected = agency_role, selectize = FALSE)
+          selectInput(agency_role_input_id, "Agency role/title", choices = c("None", agency_role_choices), selected = agency_role_selected, multiple = TRUE, selectize = TRUE)
         )
       )
     ),
     div(
       class = "role-preview-summary",
       div(class = "eyebrow", "Selected access"),
-      h3(paste(app_role, "|", agency_role)),
+      h3(paste(app_role, "|", agency_role_label)),
       p("This preview uses the selected agency/entity plus the role combination here.")
     ),
     div(
@@ -953,7 +998,16 @@ matched_user_role_defaults <- function(db, user_id) {
   } else {
     "None"
   }
-  list(app_role = app_role, agency_role = agency_role)
+  agency_roles <- if (nrow(matched_agency_roles)) {
+    unique(unlist(lapply(seq_len(nrow(matched_agency_roles)), function(i) {
+      split_stored_roles(if ("agency_roles" %in% names(matched_agency_roles)) matched_agency_roles$agency_roles[[i]] else matched_agency_roles$agency_role[[i]])
+    }), use.names = FALSE))
+  } else {
+    character(0)
+  }
+  agency_roles <- agency_roles[agency_roles %in% agency_role_choices]
+  if (!length(agency_roles) && !identical(agency_role, "None")) agency_roles <- agency_role
+  list(app_role = app_role, agency_role = agency_role, agency_roles = agency_roles)
 }
 
 matched_user_submitter_value <- function(db, user_id) {
@@ -2384,12 +2438,55 @@ page_strategic_plan <- function(db, agency_id) {
   )
 }
 
-team_rows_for_plan <- function(db, agency_id) {
-  plan <- current_plan(db, agency_id)
+plan_team_service_ids <- function(db, plan) {
+  if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(character(0))
+  links <- db$reference_plan_entity_service[db$reference_plan_entity_service$entity_id == plan$entity_id[[1]], , drop = FALSE]
+  unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
+}
+
+plan_team_primary_service_id <- function(db, plan) {
+  service_ids <- plan_team_service_ids(db, plan)
+  if (!length(service_ids)) return(NA_character_)
+  links <- db$reference_plan_entity_service[
+    db$reference_plan_entity_service$entity_id == plan$entity_id[[1]] &
+      db$reference_plan_entity_service$service_id %in% service_ids,
+    ,
+    drop = FALSE
+  ]
+  primary <- links$service_id[!is.na(links$is_primary) & links$is_primary]
+  if (length(primary)) primary[[1]] else service_ids[[1]]
+}
+
+plan_team_public_name <- function(db, plan) {
+  if (is.null(plan) || !nrow(plan)) return("Public name")
+  if (!is.na(plan$entity_id[[1]])) {
+    entity <- db$reference_plan_entity[db$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
+    if (nrow(entity)) {
+      label <- trimws(as.character(entity$public_name[[1]] %||% ""))
+      if (nzchar(label)) return(label)
+    }
+  }
+  agency_name(db, plan_accounting_agency_id(db, plan))
+}
+
+team_rows_for_plan <- function(db, submitter_value) {
+  plan <- current_plan(db, submitter_value)
   agency_id <- plan_accounting_agency_id(db, plan)
   team <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
   if (!nrow(team)) return(team)
-  team <- team[order(team$full_name, team$agency_role), , drop = FALSE]
+  if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) {
+    service_ids <- plan_team_service_ids(db, plan)
+    team <- team[!is.na(team$service_id) & team$service_id %in% service_ids, , drop = FALSE]
+  } else {
+    team <- team[is.na(team$service_id) | !nzchar(trimws(as.character(team$service_id))), , drop = FALSE]
+  }
+  if (!nrow(team)) return(team)
+  team$agency_role_display <- vapply(seq_len(nrow(team)), function(i) {
+    roles <- split_stored_roles(if ("agency_roles" %in% names(team)) team$agency_roles[[i]] else team$agency_role[[i]])
+    if (length(roles)) paste(roles, collapse = "; ") else team$agency_role[[i]]
+  }, character(1))
+  team <- team[order(team$full_name, team$agency_role_display), , drop = FALSE]
+  team$public_name <- plan_team_public_name(db, plan)
   team$performance_role <- vapply(seq_len(nrow(team)), function(i) {
     roles <- db$access_user_role[
       db$access_user_role$user_id == team$user_id[[i]] &
@@ -2403,18 +2500,19 @@ team_rows_for_plan <- function(db, agency_id) {
   team
 }
 
-team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
-  plan <- current_plan(db, agency_id)
+team_role_modal_ui <- function(db, submitter_value, access_id, can_edit = FALSE, grantable_roles = performance_role_choices) {
+  plan <- current_plan(db, submitter_value)
   accounting_agency_id <- plan_accounting_agency_id(db, plan)
   parent_agency_name <- agency_name(db, accounting_agency_id)
-  entity_name <- if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) plan_display_name(db, plan) else NA_character_
+  public_name <- plan_team_public_name(db, plan)
+  current_service_id <- plan_team_primary_service_id(db, plan)
   is_new <- identical(as.character(access_id), "new")
   access <- if (is_new) {
     data.frame(
       access_id = NA_integer_,
       user_id = NA_integer_,
       agency_id = accounting_agency_id,
-      service_id = NA_character_,
+      service_id = current_service_id,
       full_name = "",
       email = "",
       agency_role = "Agency Staff",
@@ -2434,8 +2532,13 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
       drop = FALSE
     ]
   }
-  agency_role <- access$agency_role[[1]]
+  agency_roles <- split_stored_roles(if ("agency_roles" %in% names(access)) access$agency_roles[[1]] else access$agency_role[[1]])
+  if (!length(agency_roles)) agency_roles <- access$agency_role[[1]]
+  agency_role_display <- paste(agency_roles, collapse = "; ")
   performance_role <- if (nrow(user_roles)) user_roles$app_role[[1]] else "AgencyViewer"
+  role_choices <- unique(c(grantable_roles, performance_role))
+  role_choices <- role_choices[role_choices %in% performance_role_choices]
+  if (!length(role_choices)) role_choices <- performance_role
   role_row <- if (nrow(user_roles)) user_roles[1, , drop = FALSE] else data.frame()
   readonly_field <- function(label, value) {
     div(
@@ -2449,8 +2552,8 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
       class = "measure-form-grid",
       div(class = "measure-field", textInput("team_full_name", "Person name", value = access$full_name[[1]])),
       div(class = "measure-field", textInput("team_email", "Email", value = access$email[[1]])),
-      div(class = "measure-field", selectInput("team_agency_role", "Agency role", choices = agency_role_choices, selected = agency_role, selectize = FALSE)),
-      div(class = "measure-field", selectInput("team_performance_role", "Performance role", choices = performance_role_choices, selected = performance_role, selectize = FALSE)),
+      div(class = "measure-field", selectInput("team_agency_role", "Agency role", choices = agency_role_choices, selected = agency_roles, multiple = TRUE)),
+      div(class = "measure-field", selectInput("team_performance_role", "Performance role", choices = role_choices, selected = performance_role, selectize = FALSE)),
       div(class = "measure-field", checkboxInput("team_budget_access", "Budget access", value = if (nrow(role_row)) isTRUE(role_row$budget_access[[1]]) else FALSE)),
       div(class = "measure-field", checkboxInput("team_adaptive_planning", "Adaptive planning", value = if (nrow(role_row)) isTRUE(role_row$adaptive_planning[[1]]) else FALSE)),
       div(class = "measure-field", checkboxInput("team_performance_plan_access", "Performance plan access", value = if (nrow(role_row)) isTRUE(role_row$performance_plan_access[[1]]) else TRUE))
@@ -2460,12 +2563,20 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
       class = "measure-form-grid team-readonly-grid",
       readonly_field("Person name", access$full_name[[1]]),
       readonly_field("Email", access$email[[1]]),
-      readonly_field("Agency role", agency_role),
+      readonly_field("Agency role", agency_role_display),
       readonly_field("Performance role", performance_role),
       readonly_field("Budget access", if (nrow(role_row) && isTRUE(role_row$budget_access[[1]])) "Yes" else "No"),
       readonly_field("Adaptive planning", if (nrow(role_row) && isTRUE(role_row$adaptive_planning[[1]])) "Yes" else "No"),
       readonly_field("Performance plan access", if (!nrow(role_row) || isTRUE(role_row$performance_plan_access[[1]])) "Yes" else "No")
     )
+  }
+  delete_action <- if (can_edit && !is_new) {
+    div(
+      class = "measure-submit-group team-delete-group",
+      tags$button(id = "delete_team_role", type = "button", class = "civic-button danger", icon("trash-can"), "Delete user")
+    )
+  } else {
+    div()
   }
   save_actions <- if (can_edit) {
     div(
@@ -2497,7 +2608,7 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
           div(
             class = "goal-field-instruction",
             p(tags$strong("Parent agency: "), parent_agency_name),
-            if (!is.na(entity_name)) p(tags$strong("Plan entity: "), entity_name)
+            p(tags$strong("Public name: "), public_name)
           ),
           if (!can_edit) p(class = "goal-field-instruction", "Role assignment changes are limited by app role, agency role, and scope."),
           access_fields
@@ -2505,18 +2616,18 @@ team_role_modal_ui <- function(db, agency_id, access_id, can_edit = FALSE) {
       ),
       div(
         class = "measure-modal-actions",
-        div(),
+        delete_action,
         save_actions
       )
     )
   )
 }
 
-page_team <- function(db, agency_id, can_manage_team = FALSE, team_scope_choices = NULL) {
-  if (!is.null(team_scope_choices) && length(team_scope_choices) > 0 && !agency_id %in% unname(team_scope_choices)) {
-    agency_id <- unname(team_scope_choices)[[1]]
+page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_choices = NULL) {
+  if (!is.null(team_scope_choices) && length(team_scope_choices) > 0 && !submitter_value %in% unname(team_scope_choices)) {
+    submitter_value <- unname(team_scope_choices)[[1]]
   }
-  plan <- current_plan(db, agency_id)
+  plan <- current_plan(db, submitter_value)
   page_title <- performance_plan_title(db, plan, "Team & Roles")
   page_description <- if (can_manage_team) {
     "Review and update user role assignments for this plan."
@@ -2524,12 +2635,12 @@ page_team <- function(db, agency_id, can_manage_team = FALSE, team_scope_choices
     "Review who owns plan sections, metric approvals, and final submission. Role edits are limited by app role, agency role, and scope."
   }
   plan_id <- if (!is.null(plan) && nrow(plan)) plan$plan_id[[1]] else NA_integer_
-  team <- team_rows_for_plan(db, agency_id)
+  team <- team_rows_for_plan(db, submitter_value)
   add_button <- if (can_manage_team) {
     tags$button(type = "button", class = "civic-button primary small", `data-team-access-id` = "new", icon("user-plus"), "Add team member")
   }
   team_scope_dropdown <- if (!is.null(team_scope_choices) && length(team_scope_choices) > 1) {
-    selected_team_scope <- if (agency_id %in% unname(team_scope_choices)) agency_id else unname(team_scope_choices)[[1]]
+    selected_team_scope <- if (submitter_value %in% unname(team_scope_choices)) submitter_value else unname(team_scope_choices)[[1]]
     div(
       class = "team-scope-selector",
       selectInput(
@@ -2567,7 +2678,7 @@ page_team <- function(db, agency_id, can_manage_team = FALSE, team_scope_choices
       div(class = "team-page-actions", team_scope_dropdown, add_button),
       div(
         class = "app-table team-role-table",
-        div(class = "table-row table-head", span("Person"), span("Agency role"), span("Performance role")),
+        div(class = "table-row table-head", span("Person"), span("Public name"), span("Agency role"), span("Performance role")),
         lapply(seq_len(nrow(team)), function(i) {
           div(
             class = "table-row team-role-row",
@@ -2575,7 +2686,8 @@ page_team <- function(db, agency_id, can_manage_team = FALSE, team_scope_choices
             tabindex = "0",
             `data-team-access-id` = team$access_id[i],
             span(team$full_name[i]),
-            span(team$agency_role[i]),
+            span(team$public_name[i]),
+            span(team$agency_role_display[i]),
             span(
               class = paste("role-link-button", if (!can_manage_team) "view-only" else ""),
               team$performance_role[i]
@@ -2989,12 +3101,16 @@ metric_export_summary <- function(db, measure_ids, current_fy = 2027) {
 
 agency_director_contact <- function(db, plan) {
   agency_id <- plan_accounting_agency_id(db, plan)
-  director_rows <- db$access_user_agency_access[
-    db$access_user_agency_access$agency_id == agency_id &
-      db$access_user_agency_access$agency_role %in% c("Agency Director", "Agency Head"),
-    ,
-    drop = FALSE
-  ]
+  access_rows <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
+  director_mask <- if (nrow(access_rows)) {
+    vapply(seq_len(nrow(access_rows)), function(i) {
+      roles <- split_stored_roles(if ("agency_roles" %in% names(access_rows)) access_rows$agency_roles[[i]] else access_rows$agency_role[[i]])
+      any(roles %in% c("Agency Director", "Agency Head"))
+    }, logical(1))
+  } else {
+    logical(0)
+  }
+  director_rows <- access_rows[director_mask, , drop = FALSE]
   if (nrow(director_rows)) return(director_rows$full_name[[1]])
   approver_rows <- db$access_user_role[
     db$access_user_role$agency_id == agency_id & db$access_user_role$app_role == "AgencyApprover",
@@ -5143,8 +5259,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260706-3"),
-    tags$script(src = "app.js?v=20260706-2", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-1"),
+    tags$script(src = "app.js?v=20260708-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5330,7 +5446,7 @@ server <- function(input, output, session) {
   current_team_access_id <- reactiveVal(NULL)
   current_role_preview_user_id <- reactiveVal(NULL)
   current_role_preview_app_role <- reactiveVal("SystemAdmin")
-  current_role_preview_agency_role <- reactiveVal("Admin")
+  current_role_preview_agency_role <- reactiveVal(c("Admin"))
   feedback_modal_open <- reactiveVal(FALSE)
   service_open_flags <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
@@ -5407,12 +5523,15 @@ server <- function(input, output, session) {
     )
   }
   current_user_agency_roles <- function() {
-    selected_role <- current_role_preview_agency_role() %||% input$role_preview_agency_role
-    if (!is.null(selected_role) && identical(selected_role, "None")) {
-      return(character(0))
+    selected_role <- current_role_preview_agency_role()
+    if (is.null(selected_role) || !length(selected_role)) {
+      selected_role <- input$role_preview_agency_role
     }
-    if (!is.null(selected_role) && selected_role %in% agency_role_choices) {
-      return(c(selected_role))
+    selected_role <- unique(as.character(selected_role %||% character(0)))
+    selected_role <- selected_role[!is.na(selected_role) & selected_role != "None"]
+    selected_role <- selected_role[selected_role %in% agency_role_choices]
+    if (length(selected_role)) {
+      return(selected_role)
     }
     switch(
       current_user_type(),
@@ -5448,7 +5567,7 @@ server <- function(input, output, session) {
     data <- app_data()
     defaults <- matched_user_role_defaults(data, user_id)
     current_role_preview_app_role(defaults$app_role)
-    current_role_preview_agency_role(defaults$agency_role)
+    current_role_preview_agency_role(defaults$agency_roles)
     for (input_id in c("role_preview_user_id")) {
       updateSelectInput(session, input_id, selected = user_id)
     }
@@ -5456,7 +5575,7 @@ server <- function(input, output, session) {
       updateSelectInput(session, input_id, selected = defaults$app_role)
     }
     for (input_id in c("role_preview_agency_role")) {
-      updateSelectInput(session, input_id, selected = defaults$agency_role)
+      updateSelectInput(session, input_id, selected = if (length(defaults$agency_roles)) defaults$agency_roles else "None")
     }
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
@@ -5478,9 +5597,14 @@ server <- function(input, output, session) {
 
   observeEvent(input$role_preview_agency_role, {
     selected_role <- input$role_preview_agency_role
-    if (!is.null(selected_role) && (identical(selected_role, "None") || selected_role %in% agency_role_choices)) {
-      current_role_preview_agency_role(selected_role)
+    if (is.null(selected_role)) return()
+    selected_role <- unique(as.character(selected_role))
+    selected_role <- selected_role[!is.na(selected_role)]
+    if ("None" %in% selected_role && length(selected_role) > 1) {
+      selected_role <- setdiff(selected_role, "None")
+      updateSelectInput(session, "role_preview_agency_role", selected = selected_role)
     }
+    if (all(selected_role %in% c("None", agency_role_choices))) current_role_preview_agency_role(setdiff(selected_role, "None"))
   }, ignoreInit = FALSE)
 
   current_user_can_manage_team <- function() {
@@ -6060,8 +6184,8 @@ server <- function(input, output, session) {
       showNotification("You do not have permission to change team roles.", type = "error", duration = 8)
       return()
     }
-    if (identical(input$team_performance_role, "AgencySubmitter") && !current_user_can_assign_submitter()) {
-      showNotification("Only an Agency Head, Agency Director, Chief of Staff, or admin role can assign AgencySubmitter access.", type = "error", duration = 8)
+    if (!can_grant_performance_role(current_user_app_roles(), current_user_agency_roles(), input$team_performance_role)) {
+      showNotification("You do not have permission to assign that performance role.", type = "error", duration = 8)
       return()
     }
     access_id <- current_team_access_id()
@@ -6069,6 +6193,7 @@ server <- function(input, output, session) {
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
     accounting_agency_id <- plan_accounting_agency_id(data, plan)
+    service_id <- plan_team_primary_service_id(data, plan)
     result <- tryCatch(
       save_team_role_assignment(
         database,
@@ -6080,7 +6205,8 @@ server <- function(input, output, session) {
         input$team_performance_role,
         isTRUE(input$team_budget_access),
         isTRUE(input$team_adaptive_planning),
-        isTRUE(input$team_performance_plan_access)
+        isTRUE(input$team_performance_plan_access),
+        service_id
       ),
       error = function(error) error
     )
@@ -6091,6 +6217,29 @@ server <- function(input, output, session) {
     refresh_app_data()
     current_team_access_id(NULL)
     showNotification("Team role updated.", type = "message")
+  }, ignoreInit = TRUE)
+  observeEvent(input$team_role_delete_confirmed_request, {
+    if (!current_user_can_manage_team()) {
+      showNotification("You do not have permission to delete team access.", type = "error", duration = 8)
+      return()
+    }
+    access_id <- current_team_access_id()
+    if (is.null(access_id) || identical(access_id, "new")) return()
+    result <- tryCatch(
+      delete_team_role_assignment(
+        database,
+        access_id,
+        current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
+      ),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_team_access_id(NULL)
+    showNotification("Team access deleted.", type = "message")
   }, ignoreInit = TRUE)
   observeEvent(input$risk_save_request, {
     if (!current_user_can_edit_plan()) {
@@ -6764,17 +6913,17 @@ server <- function(input, output, session) {
     current_role_preview_user_id(user_id)
     defaults <- matched_user_role_defaults(data, user_id)
     current_role_preview_app_role(defaults$app_role)
-    current_role_preview_agency_role(defaults$agency_role)
+    current_role_preview_agency_role(defaults$agency_roles)
     updateSelectInput(session, "role_preview_user_id", selected = user_id)
     updateSelectInput(session, "role_preview_app_role", selected = defaults$app_role)
-    updateSelectInput(session, "role_preview_agency_role", selected = defaults$agency_role)
+    updateSelectInput(session, "role_preview_agency_role", selected = if (length(defaults$agency_roles)) defaults$agency_roles else "None")
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
       update_submitter_selectors(data, submitter_value)
     }
     admin_mode <- can_view_performance_reviewing(c(defaults$app_role))
     current_workspace(if (admin_mode) "admin" else "agency")
-    current_user_type(if (admin_mode) "admin" else if (identical(defaults$agency_role, "Agency Director")) "agency_director" else "agency")
+    current_user_type(if (admin_mode) "admin" else if ("Agency Director" %in% defaults$agency_roles) "agency_director" else "agency")
     next_page <- if (admin_mode) "reviewer_dashboard" else "landing"
     current_page(next_page)
     session$sendCustomMessage("set-page", next_page)
@@ -6867,7 +7016,13 @@ server <- function(input, output, session) {
   output$team_role_modal <- renderUI({
     access_id <- current_team_access_id()
     if (is.null(access_id)) return(NULL)
-    team_role_modal_ui(app_data(), current_submitter_value(), access_id, current_user_can_manage_team())
+    team_role_modal_ui(
+      app_data(),
+      current_submitter_value(),
+      access_id,
+      current_user_can_manage_team(),
+      grantable_performance_roles(current_user_app_roles(), current_user_agency_roles())
+    )
   })
   output$feedback_modal <- renderUI({
     if (!isTRUE(feedback_modal_open())) return(NULL)
