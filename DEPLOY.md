@@ -8,6 +8,32 @@ docker compose up -d --build
 # Postgres: localhost:5433 (postgres/postgres), schema + seeds load on first start
 ```
 
+You do not need to rebuild the Docker image every time you restart your
+computer. After the first successful build, Docker keeps the app image and the
+database volume. For normal local use, start the stack with:
+
+```bash
+docker compose up
+```
+
+Use `docker compose up --build` when the Dockerfile, R package dependencies,
+Python requirements, or app code changes enough that you want the image
+refreshed. To run it in the background:
+
+```bash
+docker compose up -d
+```
+
+Stop the local stack with:
+
+```bash
+docker compose down
+```
+
+`docker compose down` keeps the local database volume by default. Do not run
+`docker compose down -v` unless you intentionally want to delete the local
+Docker database and reseed from scratch.
+
 `AUTH_DEV_LINKS=true` is set in the compose file, so password set/reset links
 appear on screen instead of being emailed — local demo convenience only.
 
