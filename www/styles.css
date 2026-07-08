@@ -693,6 +693,43 @@ body.hide-application-admin .application-nav-item {
   display: none;
 }
 
+body.auth-signed-out .drawer-context-selector,
+body.auth-signed-out .nav-item:not([data-page="login"]),
+body.auth-signed-out .desktop-drawer,
+body.auth-signed-out .desktop-drawer-edge-toggle,
+body.auth-signed-out .mobile-nav,
+body.auth-signed-out .mobile-nav-toggle-bar,
+body.auth-signed-out .mobile-nav-backdrop {
+  display: none;
+}
+
+body.auth-signed-out {
+  padding-bottom: 0;
+}
+
+body.auth-signed-out .shell-body,
+body.auth-signed-out.desktop-nav-collapsed .shell-body {
+  padding-left: 1.25rem;
+}
+
+body.auth-signed-out .app-footer,
+body.auth-signed-out.desktop-nav-collapsed .app-footer {
+  margin-left: 0;
+}
+
+body.auth-signed-in .nav-item[data-page="login"] {
+  display: none;
+}
+
+.auth-signout-action {
+  color: #5b6571;
+}
+
+.auth-signout-action:hover,
+.auth-signout-action:focus-visible {
+  color: #2f1b45;
+}
+
 .nav-subitem {
   padding-left: 1.4rem;
 }
@@ -4093,14 +4130,40 @@ body:has(.sticky-save-bar) .floating-feedback-button {
 
 .login-email-panel {
   display: grid;
-  grid-template-columns: minmax(16rem, 1fr) auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
   gap: 0.75rem;
   align-items: end;
   margin-top: 1.5rem;
 }
 
 .login-email-panel .shiny-input-container {
-  margin-bottom: 0;
+  margin-bottom: 0 !important;
+}
+
+.login-email-panel .civic-button {
+  min-height: 2.85rem;
+  height: 2.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  line-height: 1.1;
+  padding: 0 1.15rem;
+  white-space: nowrap;
+}
+
+.login-panel .login-email-panel .shiny-input-container,
+.login-panel .login-email-panel .form-group {
+  margin-bottom: 0 !important;
+}
+
+.login-panel .login-email-panel .action-button.civic-button.primary {
+  margin: 0;
+  min-height: 2.85rem;
+  height: 2.85rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
 }
 
 .login-email-field {
@@ -4549,6 +4612,11 @@ body.desktop-nav-collapsed .app-footer {
   .role-preview-controls,
   .role-capability-grid {
     grid-template-columns: 1fr;
+  }
+
+  .login-email-panel .civic-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .reviewer-plan-row {

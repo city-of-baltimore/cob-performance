@@ -1424,9 +1424,9 @@ login_view_login <- function(state) {
       class = "login-email-panel",
       div(
         class = "measure-field login-email-field",
-        textInput("login_email", "Email address", placeholder = "name@baltimorecity.gov"),
-        passwordInput("login_password", "Password")
+        textInput("login_email", "Email address", placeholder = "name@baltimorecity.gov")
       ),
+      div(class = "measure-field login-password-field", passwordInput("login_password", "Password")),
       actionButton("login_email_continue", "Sign in", class = "civic-button primary")
     ),
     div(
@@ -5259,8 +5259,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-1"),
-    tags$script(src = "app.js?v=20260708-1", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-7"),
+    tags$script(src = "app.js?v=20260708-7", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5310,6 +5310,14 @@ ui <- tagList(
         tags$nav(
           class = "drawer-nav",
           nav_item("login", "Sign in", icon("right-to-bracket")),
+          tags$button(
+            type = "button",
+            class = "nav-item auth-signout-action",
+            `data-auth-action` = "sign-out",
+            `aria-label` = "Sign out",
+            span(class = "nav-icon", `aria-hidden` = "true", icon("right-from-bracket")),
+            span(class = "nav-label", "Sign out")
+          ),
           nav_item("landing", "Cycle home", icon("house")),
           nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
           nav_item("team", "Team and roles", icon("users")),
@@ -5342,6 +5350,14 @@ ui <- tagList(
       class = "mobile-nav",
       div(class = "mobile-nav-header", div(class = "drawer-title", "Navigation"), tags$button(id = "close_mobile_nav", type = "button", class = "icon-button", title = "Close navigation", `aria-label` = "Close navigation", icon("xmark"))),
       nav_item("login", "Sign in", icon("right-to-bracket")),
+      tags$button(
+        type = "button",
+        class = "nav-item auth-signout-action",
+        `data-auth-action` = "sign-out",
+        `aria-label` = "Sign out",
+        span(class = "nav-icon", `aria-hidden` = "true", icon("right-from-bracket")),
+        span(class = "nav-label", "Sign out")
+      ),
       nav_item("landing", "Home", icon("house")),
       nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
       nav_item("team", "Team and roles", icon("users")),
@@ -5452,6 +5468,43 @@ server <- function(input, output, session) {
   section_draft_cache <- new.env(parent = emptyenv())
 
   refresh_app_data <- function() app_data(load_app_data(database))
+
+  complete_sign_in <- function(user, issue_session = TRUE) {
+    current_user(user)
+    auth_state(list(view = "login"))
+    data <- app_data()
+    email <- tolower(trimws(user$email[[1]] %||% ""))
+    user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
+    if (!nrow(user_rows)) {
+      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
+      return(FALSE)
+    }
+    user_id <- as.character(user_rows$user_id[[1]])
+    current_role_preview_user_id(user_id)
+    defaults <- matched_user_role_defaults(data, user_id)
+    current_role_preview_app_role(defaults$app_role)
+    current_role_preview_agency_role(defaults$agency_roles)
+    updateSelectInput(session, "role_preview_user_id", selected = user_id)
+    updateSelectInput(session, "role_preview_app_role", selected = defaults$app_role)
+    updateSelectInput(session, "role_preview_agency_role", selected = if (length(defaults$agency_roles)) defaults$agency_roles else "None")
+    submitter_value <- matched_user_submitter_value(data, user_id)
+    if (!is.null(submitter_value)) {
+      update_submitter_selectors(data, submitter_value)
+    }
+    admin_mode <- can_view_performance_reviewing(c(defaults$app_role))
+    current_workspace(if (admin_mode) "admin" else "agency")
+    current_user_type(if (admin_mode) "admin" else if ("Agency Director" %in% defaults$agency_roles) "agency_director" else "agency")
+    next_page <- if (admin_mode) "reviewer_dashboard" else "landing"
+    current_page(next_page)
+    if (isTRUE(issue_session)) {
+      token <- auth_issue_login_session(database, user$user_id[[1]])
+      session$sendCustomMessage("auth-session-issued", list(token = token, email = user$email[[1]], expiresDays = AUTH_SESSION_DAYS))
+    }
+    session$sendCustomMessage("set-auth-state", list(signedIn = TRUE, email = user$email[[1]]))
+    session$sendCustomMessage("set-page", next_page)
+    TRUE
+  }
+
   update_cached_section_draft <- function(plan_id, section_key, payload_json, row) {
     key <- paste(as.integer(plan_id), as.character(section_key), sep = "::")
     section_draft_cache[[key]] <- data.frame(
@@ -5733,6 +5786,10 @@ server <- function(input, output, session) {
   })
 
   observe({
+    if (is.null(current_user())) {
+      session$sendCustomMessage("set-auth-state", list(signedIn = FALSE))
+      return()
+    }
     data <- app_data()
     submitter_value <- current_submitter_value()
     hide_services <- submitter_is_mayoral_service(data, submitter_value)
@@ -6217,7 +6274,7 @@ server <- function(input, output, session) {
     refresh_app_data()
     current_team_access_id(NULL)
     showNotification("Team role updated.", type = "message")
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
   observeEvent(input$team_role_delete_confirmed_request, {
     if (!current_user_can_manage_team()) {
       showNotification("You do not have permission to delete team access.", type = "error", duration = 8)
@@ -6884,6 +6941,49 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(input$auth_restore_session, {
+    if (!is.null(current_user())) return()
+    token <- as.character(input$auth_restore_session$token %||% "")
+    if (!nzchar(token)) return()
+    restored_user <- auth_lookup_login_session(database, token)
+    if (is.null(restored_user)) {
+      session$sendCustomMessage("auth-session-expired", list())
+      return()
+    }
+    complete_sign_in(restored_user, issue_session = FALSE)
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$auth_session_activity, {
+    if (is.null(current_user())) return()
+    token <- as.character(input$auth_session_activity$token %||% "")
+    if (!nzchar(token)) return()
+    if (!auth_touch_login_session(database, token)) {
+      current_user(NULL)
+      current_page("login")
+      auth_state(list(view = "login", notice = "You were signed out after 60 minutes of inactivity."))
+      session$sendCustomMessage("auth-session-expired", list())
+      session$sendCustomMessage("set-auth-state", list(signedIn = FALSE))
+      session$sendCustomMessage("set-page", "login")
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$auth_sign_out, {
+    token <- as.character(input$auth_sign_out$token %||% "")
+    reason <- as.character(input$auth_sign_out$reason %||% "manual")
+    if (nzchar(token)) {
+      tryCatch(auth_revoke_login_session(database, token), error = function(error) NULL)
+    }
+    current_user(NULL)
+    current_page("login")
+    notice <- if (identical(reason, "idle")) "You were signed out after 60 minutes of inactivity." else "You have been signed out."
+    auth_state(list(view = "login", notice = notice))
+    current_history_plan_id(NULL)
+    current_history_include_review(TRUE)
+    session$sendCustomMessage("auth-session-expired", list())
+    session$sendCustomMessage("set-auth-state", list(signedIn = FALSE))
+    session$sendCustomMessage("set-page", "login")
+  }, ignoreInit = TRUE)
+
   observeEvent(input$login_email_continue, {
     email <- tolower(trimws(input$login_email %||% ""))
     if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
@@ -6901,32 +7001,7 @@ server <- function(input, output, session) {
       return()
     }
     auth_clear_failures(email)
-    current_user(verified)
-    auth_state(list(view = "login"))
-    data <- app_data()
-    user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
-    if (!nrow(user_rows)) {
-      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
-      return()
-    }
-    user_id <- as.character(user_rows$user_id[[1]])
-    current_role_preview_user_id(user_id)
-    defaults <- matched_user_role_defaults(data, user_id)
-    current_role_preview_app_role(defaults$app_role)
-    current_role_preview_agency_role(defaults$agency_roles)
-    updateSelectInput(session, "role_preview_user_id", selected = user_id)
-    updateSelectInput(session, "role_preview_app_role", selected = defaults$app_role)
-    updateSelectInput(session, "role_preview_agency_role", selected = if (length(defaults$agency_roles)) defaults$agency_roles else "None")
-    submitter_value <- matched_user_submitter_value(data, user_id)
-    if (!is.null(submitter_value)) {
-      update_submitter_selectors(data, submitter_value)
-    }
-    admin_mode <- can_view_performance_reviewing(c(defaults$app_role))
-    current_workspace(if (admin_mode) "admin" else "agency")
-    current_user_type(if (admin_mode) "admin" else if ("Agency Director" %in% defaults$agency_roles) "agency_director" else "agency")
-    next_page <- if (admin_mode) "reviewer_dashboard" else "landing"
-    current_page(next_page)
-    session$sendCustomMessage("set-page", next_page)
+    complete_sign_in(verified, issue_session = TRUE)
   }, ignoreInit = TRUE)
 
   initial_data <- isolate(app_data())

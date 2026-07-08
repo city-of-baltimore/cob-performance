@@ -1,4 +1,5 @@
 (function () {
+  document.body.classList.add("auth-signed-out");
   var pendingGoalDeletion = null;
   var MAX_MEASURES_PER_BLOCK = 5;
   var reviewerFilterResetKey = "";
@@ -8,6 +9,12 @@
   var pendingServiceDescriptionSave = null;
   var pendingNavigationPage = null;
   var pendingNavigationTimer = null;
+  var AUTH_IDLE_MS = 60 * 60 * 1000;
+  var AUTH_HEARTBEAT_MS = 5 * 60 * 1000;
+  var authIdleTimer = null;
+  var authHeartbeatTimer = null;
+  var lastAuthHeartbeatAt = 0;
+  var authHandlersRegistered = false;
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -199,6 +206,140 @@
         setActivePage("landing");
       });
     }
+  }
+
+  function storedAuthToken() {
+    try { return window.localStorage.getItem("beaconAuthToken") || ""; } catch (error) { return ""; }
+  }
+
+  function storedAuthEmail() {
+    try { return window.localStorage.getItem("beaconAuthEmail") || ""; } catch (error) { return ""; }
+  }
+
+  function storeAuthSession(message) {
+    if (!message || !message.token) return;
+    try {
+      window.localStorage.setItem("beaconAuthToken", message.token);
+      if (message.email) window.localStorage.setItem("beaconAuthEmail", message.email);
+    } catch (error) {}
+    resetAuthIdleTimer();
+    prefillLoginEmail();
+  }
+
+  function clearAuthSession() {
+    try { window.localStorage.removeItem("beaconAuthToken"); } catch (error) {}
+    if (authIdleTimer) {
+      window.clearTimeout(authIdleTimer);
+      authIdleTimer = null;
+    }
+    if (authHeartbeatTimer) {
+      window.clearTimeout(authHeartbeatTimer);
+      authHeartbeatTimer = null;
+    }
+  }
+
+  function setAuthState(message) {
+    var signedIn = Boolean(message && message.signedIn);
+    document.body.classList.toggle("auth-signed-in", signedIn);
+    document.body.classList.toggle("auth-signed-out", !signedIn);
+    if (signedIn) {
+      resetAuthIdleTimer();
+    }
+  }
+
+  function requestStoredAuthRestore() {
+    if (!window.Shiny) return;
+    var token = storedAuthToken();
+    if (!token) {
+      setAuthState({ signedIn: false });
+      prefillLoginEmail();
+      return;
+    }
+    window.Shiny.setInputValue("auth_restore_session", {
+      token: token,
+      nonce: Date.now()
+    }, { priority: "event" });
+    resetAuthIdleTimer();
+    prefillLoginEmail();
+  }
+
+  function scheduleStoredAuthRestore() {
+    window.setTimeout(requestStoredAuthRestore, 75);
+    window.setTimeout(function () {
+      if (!document.body.classList.contains("auth-signed-in")) requestStoredAuthRestore();
+    }, 750);
+  }
+
+  function sendAuthActivity() {
+    var token = storedAuthToken();
+    if (!window.Shiny || !token || !document.body.classList.contains("auth-signed-in")) return;
+    var now = Date.now();
+    if (now - lastAuthHeartbeatAt < AUTH_HEARTBEAT_MS) return;
+    lastAuthHeartbeatAt = now;
+    window.Shiny.setInputValue("auth_session_activity", {
+      token: token,
+      nonce: now
+    }, { priority: "event" });
+  }
+
+  function resetAuthIdleTimer() {
+    if (!storedAuthToken()) return;
+    if (authIdleTimer) window.clearTimeout(authIdleTimer);
+    authIdleTimer = window.setTimeout(function () {
+      if (!document.body.classList.contains("auth-signed-in")) return;
+      requestSignOut("idle");
+    }, AUTH_IDLE_MS);
+    if (document.body.classList.contains("auth-signed-in")) sendAuthActivity();
+  }
+
+  function requestSignOut(reason) {
+    var token = storedAuthToken();
+    clearAuthSession();
+    setAuthState({ signedIn: false });
+    if (window.Shiny) {
+      window.Shiny.setInputValue("auth_sign_out", {
+        token: token,
+        reason: reason || "manual",
+        nonce: Date.now()
+      }, { priority: "event" });
+    }
+  }
+
+  ["click", "keydown", "pointermove", "scroll", "touchstart"].forEach(function (eventName) {
+    document.addEventListener(eventName, function () {
+      if (!document.body.classList.contains("auth-signed-in")) return;
+      resetAuthIdleTimer();
+    }, { passive: true });
+  });
+
+  function prefillLoginEmail() {
+    var email = storedAuthEmail();
+    var input = document.getElementById("login_email");
+    if (!email || !input || input.value) return;
+    input.value = email;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function registerShinyHandlers() {
+    if (!window.Shiny || authHandlersRegistered) return;
+    authHandlersRegistered = true;
+    window.Shiny.addCustomMessageHandler("set-page", function (page) {
+      setActivePage(page);
+      if (page === "reviewer_dashboard") {
+        reviewerFilterResetKey = "";
+      }
+      schedulePageInitialization();
+    });
+    window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
+    window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
+    window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
+    window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
+    window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
+    window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
+    window.Shiny.addCustomMessageHandler("set-auth-state", setAuthState);
+    window.Shiny.addCustomMessageHandler("auth-session-issued", storeAuthSession);
+    window.Shiny.addCustomMessageHandler("auth-session-expired", clearAuthSession);
   }
 
   function selectedMetricsFromEditor(editor) {
@@ -412,6 +553,12 @@
       }
       return;
     }
+    var signOutButton = event.target.closest('[data-auth-action="sign-out"]');
+    if (signOutButton) {
+      event.preventDefault();
+      requestSignOut();
+      return;
+    }
     var button = event.target.closest("[data-page]");
     if (!button) return;
     if (button.hasAttribute("data-new-measure")) return;
@@ -585,6 +732,30 @@
     if (!event.target.closest("#save_team_role") || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter") return;
+    var target = event.target;
+    if (!target || !target.closest) return;
+    if (target.closest("#login_email, #login_password")) {
+      if (window.Shiny) {
+        event.preventDefault();
+        window.Shiny.setInputValue("login_email_continue", Date.now(), { priority: "event" });
+      }
+    }
+    if (target.closest("#request_email")) {
+      if (window.Shiny) {
+        event.preventDefault();
+        window.Shiny.setInputValue("request_submit", Date.now(), { priority: "event" });
+      }
+    }
+    if (target.closest("#reset_password, #reset_confirm")) {
+      if (window.Shiny) {
+        event.preventDefault();
+        window.Shiny.setInputValue("reset_submit", Date.now(), { priority: "event" });
+      }
+    }
   });
 
   document.addEventListener("click", function (event) {
@@ -1894,6 +2065,7 @@
       updateReviewProgress(document.querySelector(".history-modal-panel"));
       updateMeasureNumberFormat();
       clearReviewerPlanFiltersOnQueueRender(false);
+      prefillLoginEmail();
     }, 0);
   }
 
@@ -1912,39 +2084,18 @@
   });
 
   document.addEventListener("shiny:connected", function () {
+    registerShinyHandlers();
     setActivePage("login");
+    scheduleStoredAuthRestore();
     schedulePageInitialization();
   });
 
   if (window.Shiny) {
-    window.Shiny.addCustomMessageHandler("set-page", function (page) {
-      setActivePage(page);
-      if (page === "reviewer_dashboard") {
-        reviewerFilterResetKey = "";
-      }
-      schedulePageInitialization();
-    });
-    window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
-    window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
-    window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
-    window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
-    window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
-    window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
+    registerShinyHandlers();
   } else {
     document.addEventListener("shiny:connected", function () {
-      window.Shiny.addCustomMessageHandler("set-page", function (page) {
-        setActivePage(page);
-        if (page === "reviewer_dashboard") {
-          reviewerFilterResetKey = "";
-        }
-        schedulePageInitialization();
-      });
-      window.Shiny.addCustomMessageHandler("shared-draft-loaded", applyLoadedDraft);
-      window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
-      window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
-      window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
-      window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
-      window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
+      registerShinyHandlers();
+      scheduleStoredAuthRestore();
     });
   }
 })();
