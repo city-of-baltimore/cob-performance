@@ -28,6 +28,17 @@ name_key <- function(value) {
   gsub("[^a-z0-9]+", "", value)
 }
 
+public_name_key <- function(value) {
+  value <- clean(value)
+  value <- gsub("&", " and ", value, fixed = TRUE)
+  value <- sub("^M-R\\s+Office\\s+of\\s+", "Mayor's Office of ", value, ignore.case = TRUE)
+  value <- sub("^M-R\\s+", "Mayor's Office of ", value, ignore.case = TRUE)
+  value <- sub("^Mayors\\s+Office\\s+of\\s+", "Mayor's Office of ", value, ignore.case = TRUE)
+  value <- tolower(value)
+  value <- gsub("\\band\\b", "", value)
+  gsub("[^a-z0-9]+", "", value)
+}
+
 next_id <- function(con, table, column) {
   as.integer(dbGetQuery(con, sprintf("SELECT COALESCE(MAX(%s), 0) + 1 AS next_id FROM %s", column, table))$next_id[[1]])
 }
@@ -65,6 +76,7 @@ read_clean_csv <- function(filename) {
 user_rows <- read_clean_csv("user.csv")
 role_rows <- read_clean_csv("user_role.csv")
 function_rows <- read_clean_csv("user_functions.csv")
+entity_scope_rows <- read_clean_csv("dh_userlist_with_entities.csv")
 
 user_rows <- user_rows[nzchar(user_rows$email) & grepl("@", user_rows$email, fixed = TRUE), , drop = FALSE]
 user_rows$email_key <- tolower(user_rows$email)
@@ -162,7 +174,7 @@ DBI::dbWithTransaction(con, {
             paste(
               "INSERT INTO access.user_agency_access",
               "(access_id, user_id, agency_id, service_id, agency_role, access_level, budget_access, performance_plan_access)",
-              "VALUES ($1,$2,$3,NULLIF($4, ''),$5,NULL,false,true)"
+              "VALUES ($1,$2,$3,NULLIF($4, ''),$5,'Edit',false,true)"
             ),
             list(
               next_id(con, "access.user_agency_access", "access_id"),
@@ -174,6 +186,134 @@ DBI::dbWithTransaction(con, {
           )
         }
       }
+    }
+  }
+
+  db_users_for_scope <- dbGetQuery(con, "SELECT user_id, lower(email) AS email_key FROM access.\"user\" WHERE active")
+  user_id_by_email <- stats::setNames(db_users_for_scope$user_id, db_users_for_scope$email_key)
+  db_entities <- dbGetQuery(
+    con,
+    paste(
+      "SELECT pe.entity_id, pe.parent_agency_id, pe.public_name, pes.service_id, pes.is_primary",
+      "FROM reference.plan_entity pe",
+      "LEFT JOIN reference.plan_entity_service pes ON pes.entity_id = pe.entity_id",
+      "WHERE pe.active AND pe.has_own_plan",
+      "ORDER BY pe.entity_id, pes.is_primary DESC NULLS LAST, pes.pes_id"
+    )
+  )
+  entity_ids <- unique(db_entities$entity_id)
+  primary_entity_rows <- do.call(rbind, lapply(entity_ids, function(entity_id) {
+    rows <- db_entities[db_entities$entity_id == entity_id, , drop = FALSE]
+    rows[1, , drop = FALSE]
+  }))
+  entity_by_id <- stats::setNames(seq_len(nrow(primary_entity_rows)), as.character(primary_entity_rows$entity_id))
+  entity_by_public_name <- stats::setNames(seq_len(nrow(primary_entity_rows)), public_name_key(primary_entity_rows$public_name))
+  db_agencies <- dbGetQuery(con, "SELECT agency_id, public_name, agency_name FROM reference.agency WHERE active")
+  agency_by_public_name <- stats::setNames(db_agencies$agency_id, public_name_key(ifelse(nzchar(clean(db_agencies$public_name)), db_agencies$public_name, db_agencies$agency_name)))
+
+  resolve_scope <- function(row) {
+    entity_id <- suppressWarnings(as.integer(clean(row[["Entity ID"]][[1]])))
+    if (!is.na(entity_id) && as.character(entity_id) %in% names(entity_by_id)) {
+      entity <- primary_entity_rows[entity_by_id[[as.character(entity_id)]], , drop = FALSE]
+      return(list(agency_id = entity$parent_agency_id[[1]], service_id = clean(entity$service_id[[1]]), matched_public_name = entity$public_name[[1]]))
+    }
+    candidates <- unique(c(clean(row[["Final Tracking Name"]][[1]]), clean(row[["Entity Name"]][[1]]), clean(row[["Agency Name"]][[1]])))
+    candidates <- candidates[nzchar(candidates)]
+    for (candidate in candidates) {
+      key <- public_name_key(candidate)
+      if (nzchar(key) && key %in% names(entity_by_public_name)) {
+        entity <- primary_entity_rows[entity_by_public_name[[key]], , drop = FALSE]
+        return(list(agency_id = entity$parent_agency_id[[1]], service_id = clean(entity$service_id[[1]]), matched_public_name = entity$public_name[[1]]))
+      }
+    }
+    for (candidate in candidates) {
+      key <- public_name_key(candidate)
+      if (nzchar(key) && key %in% names(agency_by_public_name)) {
+        return(list(agency_id = agency_by_public_name[[key]], service_id = "", matched_public_name = candidate))
+      }
+    }
+    agency_id <- clean(row[["agency_id FK"]][[1]])
+    if (nzchar(agency_id)) return(list(agency_id = agency_id, service_id = "", matched_public_name = clean(row[["Final Tracking Name"]][[1]])))
+    NULL
+  }
+
+  scoped_rows_added <- 0L
+  scoped_roles_added <- 0L
+  unmatched_scope_rows <- data.frame(email = character(), final_tracking_name = character(), stringsAsFactors = FALSE)
+  valid_entity_scope_rows <- entity_scope_rows[
+    nzchar(entity_scope_rows[["user_id FK2"]]) &
+      grepl("@", entity_scope_rows[["user_id FK2"]], fixed = TRUE),
+    ,
+    drop = FALSE
+  ]
+  for (i in seq_len(nrow(valid_entity_scope_rows))) {
+    row <- valid_entity_scope_rows[i, , drop = FALSE]
+    email <- tolower(clean(row[["user_id FK2"]][[1]]))
+    user_id <- user_id_by_email[[email]]
+    if (is.null(user_id) || is.na(user_id)) next
+    scope <- resolve_scope(row)
+    if (is.null(scope) || !nzchar(clean(scope$agency_id))) {
+      unmatched_scope_rows <- rbind(unmatched_scope_rows, data.frame(email = email, final_tracking_name = clean(row[["Final Tracking Name"]][[1]])))
+      next
+    }
+    app_role <- clean(row$app_role[[1]])
+    if (nzchar(app_role)) {
+      existing_role <- query_params(
+        con,
+        paste(
+          "SELECT user_role_id FROM access.user_role",
+          "WHERE user_id=$1 AND app_role=$2 AND agency_id IS NOT DISTINCT FROM $3::varchar(20)",
+          "LIMIT 1"
+        ),
+        list(user_id, app_role, scope$agency_id)
+      )
+      if (!nrow(existing_role)) {
+        exec(
+          con,
+          paste(
+            "INSERT INTO access.user_role",
+            "(user_role_id, user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)",
+            "VALUES ($1,$2,$3,$4,$5,$6,$7)"
+          ),
+          list(
+            next_id(con, "access.user_role", "user_role_id"),
+            user_id,
+            app_role,
+            scope$agency_id,
+            bool_from_sheet(row$budget_access[[1]], FALSE),
+            bool_from_sheet(row$adaptive_planning[[1]], FALSE),
+            bool_from_sheet(row$performance_plan_access[[1]], TRUE)
+          )
+        )
+        scoped_roles_added <- scoped_roles_added + 1L
+      }
+    }
+    existing_access <- query_params(
+      con,
+      paste(
+        "SELECT access_id FROM access.user_agency_access",
+        "WHERE user_id=$1 AND agency_id=$2 AND service_id IS NOT DISTINCT FROM NULLIF($3, '')::varchar(20)",
+        "LIMIT 1"
+      ),
+      list(user_id, scope$agency_id, scope$service_id)
+    )
+    if (!nrow(existing_access)) {
+      exec(
+        con,
+        paste(
+          "INSERT INTO access.user_agency_access",
+          "(access_id, user_id, agency_id, service_id, agency_role, access_level, budget_access, performance_plan_access)",
+          "VALUES ($1,$2,$3,NULLIF($4, ''),$5,'Edit',false,true)"
+        ),
+        list(
+          next_id(con, "access.user_agency_access", "access_id"),
+          user_id,
+          scope$agency_id,
+          scope$service_id,
+          "Agency Staff"
+        )
+      )
+      scoped_rows_added <- scoped_rows_added + 1L
     }
   }
 
@@ -222,3 +362,9 @@ cat("Inserted users:", nrow(inserted), "\n")
 if (nrow(inserted)) print(inserted)
 cat("Assignment rows still missing at least one user id:", nrow(unmatched_assignments), "\n")
 if (nrow(unmatched_assignments)) print(utils::head(unmatched_assignments, 12))
+if (exists("scoped_rows_added")) cat("Entity/public-name scoped access rows added:", scoped_rows_added, "\n")
+if (exists("scoped_roles_added")) cat("Entity/public-name scoped roles added:", scoped_roles_added, "\n")
+if (exists("unmatched_scope_rows") && nrow(unmatched_scope_rows)) {
+  cat("DH_USERLIST rows still unmatched by public name:", nrow(unmatched_scope_rows), "\n")
+  print(utils::head(unmatched_scope_rows, 12))
+}

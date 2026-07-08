@@ -2076,7 +2076,7 @@ body.hide-application-admin .application-nav-item {
 }
 
 .team-role-table .table-row {
-  grid-template-columns: minmax(12rem, 1.3fr) minmax(10rem, 1fr) minmax(12rem, 1fr);
+  grid-template-columns: minmax(12rem, 1.2fr) minmax(12rem, 1.1fr) minmax(10rem, 0.9fr) minmax(12rem, 1fr);
 }
 
 .team-page-actions {
@@ -2119,6 +2119,11 @@ body.hide-application-admin .application-nav-item {
 
 .team-role-modal .measure-modal-actions {
   position: static;
+  align-items: center;
+}
+
+.team-delete-group {
+  justify-content: flex-start;
 }
 
 .team-readonly-field {

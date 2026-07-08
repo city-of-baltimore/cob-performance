@@ -588,6 +588,14 @@
   });
 
   document.addEventListener("click", function (event) {
+    if (!event.target.closest("#delete_team_role") || !window.Shiny) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this user from this team?")) return;
+    window.Shiny.setInputValue("team_role_delete_confirmed_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
     var button = event.target.closest("#save_plan_review_scores");
     if (!button || !window.Shiny) return;
     event.preventDefault();

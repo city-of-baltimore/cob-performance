@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS access.user_agency_access (
         'Agency Head', 'Agency Director', 'Chief of Staff', 'Fiscal Officer',
         'Fiscal Staff', 'Agency Staff', 'Program Staff', 'Performance Lead', 'Admin'
     )),
+    agency_roles text,
     access_level varchar(20) NOT NULL DEFAULT 'Edit' CHECK (access_level IN ('ReadOnly', 'Edit', 'Submit')),
     budget_access boolean NOT NULL DEFAULT false,
     performance_plan_access boolean NOT NULL DEFAULT true,
@@ -157,6 +158,7 @@ CREATE TABLE IF NOT EXISTS access.user_agency_access (
 );
 
 ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS access_level varchar(20) NOT NULL DEFAULT 'Edit';
+ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text;
 ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS budget_access boolean NOT NULL DEFAULT false;
 ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS performance_plan_access boolean NOT NULL DEFAULT true;
 
