@@ -9,6 +9,8 @@
 AUTH_REVIEWER_ROLES <- c("OPIReviewer", "BBMRReviewer", "SystemAdmin", "DeputyMayor", "CAOffice")
 AUTH_MIN_PASSWORD_CHARS <- 10L
 AUTH_TOKEN_MINUTES <- 60L
+AUTH_SESSION_DAYS <- 7L
+AUTH_SESSION_IDLE_MINUTES <- 60L
 AUTH_MAX_FAILURES <- 5L
 AUTH_LOCKOUT_MINUTES <- 15L
 
@@ -30,6 +32,18 @@ auth_verify_login <- function(connection, email, password) {
   if (is.na(hash) || !nzchar(hash)) return(NULL)
   ok <- tryCatch(sodium::password_verify(hash, password), error = function(error) FALSE)
   if (isTRUE(ok)) user else NULL
+}
+
+auth_find_user_by_id <- function(connection, user_id) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  if (is.na(user_id)) return(NULL)
+  rows <- DBI::dbGetQuery(
+    connection,
+    'SELECT user_id, email, full_name, auth_type, password_hash, active FROM access."user" WHERE user_id = $1 AND active',
+    params = list(user_id)
+  )
+  if (!nrow(rows)) return(NULL)
+  rows[1, , drop = FALSE]
 }
 
 auth_password_problem <- function(password, confirm) {
@@ -62,6 +76,66 @@ auth_issue_reset_token <- function(connection, user_id) {
     params = list(as.integer(user_id), auth_hash_token(token))
   )
   token
+}
+
+auth_issue_login_session <- function(connection, user_id) {
+  token <- sodium::bin2hex(sodium::random(32L))
+  DBI::dbExecute(
+    connection,
+    paste0(
+      "INSERT INTO access.user_login_session (user_id, token_hash, expires_at) ",
+      "VALUES ($1, $2, now() + interval '", AUTH_SESSION_DAYS, " days')"
+    ),
+    params = list(as.integer(user_id), auth_hash_token(token))
+  )
+  token
+}
+
+auth_lookup_login_session <- function(connection, token) {
+  if (is.null(token) || !nzchar(token)) return(NULL)
+  rows <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT session_id, user_id FROM access.user_login_session",
+      "WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()",
+      paste0("AND COALESCE(last_seen_at, created_at) > now() - interval '", AUTH_SESSION_IDLE_MINUTES, " minutes'"),
+      "ORDER BY created_at DESC LIMIT 1"
+    ),
+    params = list(auth_hash_token(token))
+  )
+  if (!nrow(rows)) return(NULL)
+  user <- auth_find_user_by_id(connection, rows$user_id[[1]])
+  if (is.null(user)) return(NULL)
+  DBI::dbExecute(
+    connection,
+    "UPDATE access.user_login_session SET last_seen_at = now() WHERE session_id = $1",
+    params = list(rows$session_id[[1]])
+  )
+  user
+}
+
+auth_touch_login_session <- function(connection, token) {
+  if (is.null(token) || !nzchar(token)) return(FALSE)
+  updated <- DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE access.user_login_session SET last_seen_at = now()",
+      "WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()",
+      paste0("AND COALESCE(last_seen_at, created_at) > now() - interval '", AUTH_SESSION_IDLE_MINUTES, " minutes'")
+    ),
+    params = list(auth_hash_token(token))
+  )
+  isTRUE(updated > 0)
+}
+
+auth_revoke_login_session <- function(connection, token) {
+  if (is.null(token) || !nzchar(token)) return(invisible(FALSE))
+  DBI::dbExecute(
+    connection,
+    "UPDATE access.user_login_session SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL",
+    params = list(auth_hash_token(token))
+  )
+  invisible(TRUE)
 }
 
 auth_lookup_reset_token <- function(connection, token) {
