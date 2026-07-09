@@ -30,6 +30,7 @@ COPY app.R ./
 COPY R/ R/
 COPY scripts/build_plan_export.py scripts/
 COPY scripts/import_entity_role_assignments.R scripts/
+COPY scripts/apply_user_entity_access_cleanup.R scripts/
 COPY database/seed/entity_role_assignments.csv database/seed/entity_role_assignments.csv
 COPY database/seed/reviewer_assignments.csv database/seed/reviewer_assignments.csv
 COPY database/seed/user_entity_access_seed.csv database/seed/user_entity_access_seed.csv

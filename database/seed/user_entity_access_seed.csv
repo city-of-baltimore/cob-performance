@@ -1,419 +1,415 @@
-"email","full_name","entity_id","public_name","agency_id","service_id","agency_role","agency_roles","access_level","budget_access","adaptive_planning","performance_plan_access","app_role"
-"alee@bcyfund.org","Alysia Lee",30,"Baltimore Children's and Youth Fund","AGC4321","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"breanna.johnson@baltimorecity.gov","BreAnna Briggs",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"chris.harrington@baltimorecity.gov","Christopher Harrington",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"dante.merrell@baltimorecity.gov","Dante Merrell",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jim.hicks@baltimorecity.gov","Jim Hicks",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kathy.bentz@baltimorecity.gov","Kathy Bentz",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"lawana.gibson@baltimorecity.gov","Lawana Gibson",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"leyla.layman@baltimorecity.gov","Leyla Layman",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"tierra.pearson@baltimorecity.gov","Tierra Pearson",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"tj.mayotte@baltimorecity.gov","Timothy Mayotte",63,"Baltimore City Information Technology (BCIT)","AGC4303","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sara.whaley2@baltimorecity.gov","Sara Whaley",6,"Baltimore City Mayor's Office of Overdose Response","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"hyesook@baltimorecivicfund.org","HyeSook Chung",25,"Baltimore Civic Fund","AGC4326","SRV0793","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jchughani@bccenter.org","Jaikishin Chughani",9,"Baltimore Convention Center","AGC4361","SRV0855","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"mcampbell@bccenter.org","Mac Campbell",9,"Baltimore Convention Center","AGC4361","SRV0855","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"matthew.campbell@baltimorecity.gov","Matt Campbell",9,"Baltimore Convention Center","AGC4361","SRV0855","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"pcosta@bccenter.org","Philip Costa",9,"Baltimore Convention Center","AGC4361","SRV0855","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"robert.brooks@baltimorecity.gov","Robe Brooks",9,"Baltimore Convention Center","AGC4361","SRV0855","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ehinderberger@baltimoredevelopment.com","Elias Hinderberger ",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jwatson@baltimoredevelopment.com","Jeremy Watson",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kking@baltimoredevelopment.com","Kenn L King",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kseawright@baltimoredevelopment.com","Kevin Seawright",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kclark@baltimoredevelopment.com","Kimberly Clark",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"larysa.salamacha@baltimoredevelopment.com","Lary Salamacha",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"otis@baltimoredevelopment.com","Otis Rolley",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"otis.rolley@baltimoredevelopment.com","Otis Rolley",23,"Baltimore Development Corporation","AGC3100","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"rbroderickjr@baltimoredevelopment.com","Roy Broderick, Jr.",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"tom.whelley@baltimoredevelopment.com","Tom Whelley",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"Tom.Whelley@baltimoredevelopment.com","Tom Whelley",23,"Baltimore Development Corporation","AGC3100","SRV0809","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"hopkins@baltimoreheritage.org","Johns Hopkins",12,"Baltimore Heritage Area","AGC4326","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"anaeem@artbma.org","Asma Naeem",16,"Baltimore Museum of Art","AGC4356","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"shernandez@baltimoremarkets.org","Shaina Hernandez",13,"Baltimore Public Markets","AGC4326","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"mhanson@bsomusic.org","Mark Hanson",19,"Baltimore Symphony Orchestra","AGC4356","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"clifford.tatum@baltimorecity.gov","Clifford Tatum",40,"Board of Elections","AGC1900","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"lisa.stanley@baltimorecity.gov","Lisa Stanley",40,"Board of Elections","AGC1900","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"justin.williams@baltimorecity.gov","Justin Williams",48,"Board of Municipal and Zoning Appeals","AGC7900","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sunny.boyce@baltimorecity.gov","Sunny Boyce",48,"Board of Municipal and Zoning Appeals","AGC7900","","Fiscal Officer","Fiscal Officer","",FALSE,FALSE,TRUE,"AgencyWriter"
-"hosea.chew@baltimorecity.gov","Hosea Chew",36,"City Council","AGC1000","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"michael.castagnola1@baltimorecity.gov","Michael Castagnola",36,"City Council","AGC1000","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"marguerite.currin@baltimorecity.gov","Marguerite Currin",37,"City Council Services","AGC1100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"nancy.mead@baltimorecity.gov","Nancy Mead",37,"City Council Services","AGC1100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"paroma.nandi@baltimorecity.gov","Paroma Nandi",37,"City Council Services","AGC1100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"wbh@baltimorecity.gov","Bill Henry",38,"Comptroller","AGC1200","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"celeste.amato@baltimorecity.gov","Celeste Amato",38,"Comptroller","AGC1200","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ccallahan@baltimorecity.gov","Charmaine Callahan",38,"Comptroller","AGC1200","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"eric.evans@baltimorecity.gov","Eric Evans",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"erika.mcclammy@baltimorecity.gov","Erika McClammy",38,"Comptroller","AGC1200","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"josh.pasch@baltimorecity.gov","Josh Pasch",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"kc.kelleher@baltimorecity.gov","Kc Kelleher",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"michelled.derricott@baltimorecity.gov","Michelle Derricott",38,"Comptroller","AGC1200","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"nia.govan@baltimorecity.gov","Nia Govan",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"simon.etta@baltimorecity.gov","Simon Etta",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"thandee.maung@baltimorecity.gov","Thandee Maung",38,"Comptroller","AGC1200","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"timothy.goldsby@baltimorecity.gov","Timothy Goldsby",38,"Comptroller","AGC1200","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"tony.bedon@baltimorecity.gov","Tony Bedon",38,"Comptroller","AGC1200","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"desdemona.smith@mdcourts.gov","Desdemona Smith",39,"Courts - Circuit Court","AGC1311","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"lionel.moore@baltimorecity.gov","Lionel Moore",39,"Courts - Circuit Court","AGC1311","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"ajile.brown@baltimorecity.gov","Ajile Brown",50,"Courts - Orphans' Court","AGC1321","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"orphanscourt.baltimorecity@gmail.com","Orphan Court Gmail",50,"Courts - Orphans' Court","AGC1321","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jjohnson@promotionandarts.org","Ja-Mel Johnson",20,"Create Baltimore","AGC4356","SRV0828","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"rmurphy@promotionandarts.org","Robyn Murphy",20,"Create Baltimore","AGC4356","SRV0828","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"trobinson@promotionandarts.org","Tamara Robinson",20,"Create Baltimore","AGC4356","SRV0828","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"mamadou.samba@baltimorecity.gov","Mamadou Samba",75,"Department of Consumer Protection and Business Licensing","AGC4317","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"nadine.olaniran@baltimorecity.gov","Nadine Olaniran",75,"Department of Consumer Protection and Business Licensing","AGC4317","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"atalabi@bcers.org","Adetutu Talabi",51,"Employees' Retirement Systems","AGC2100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"crobey@bcers.org","Corey Robey",51,"Employees' Retirement Systems","AGC2100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"drandall@bcers.org","David Randall",51,"Employees' Retirement Systems","AGC2100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"elulandala@bcers.org","Ezra Lulandala",51,"Employees' Retirement Systems","AGC2100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"hmossovitz@bcfpers.org","Howard Mossovitz",51,"Employees' Retirement Systems","AGC2100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"rholley@bcfpers.org","Robert Holley",51,"Employees' Retirement Systems","AGC2100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"vignacio@bcfpers.org","Venerando Ignacio",51,"Employees' Retirement Systems","AGC2100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"chelton@prattlibrary.org","Chad Helton",60,"Enoch Pratt Free Library","AGC3900","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ethompson@prattlibrary.org","Erik Thompson",60,"Enoch Pratt Free Library","AGC3900","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jmange@prattlibrary.org","J Mange",60,"Enoch Pratt Free Library","AGC3900","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"rscheuer@prattlibrary.org","Rachel Scheuerman",60,"Enoch Pratt Free Library","AGC3900","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"sveeramachaneni@prattlibrary.org","Sridevi (Sri) Veeramacheni",60,"Enoch Pratt Free Library","AGC3900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"tmatteau@prattlibrary.org","Tyler Matteau",60,"Enoch Pratt Free Library","AGC3900","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"brittany.vendryes@baltimorecity.gov","Brittany Vendryes",88,"Environmental Control Board","AGC4383","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"richard.chambers@baltimorecity.gov","Richard Chambers",88,"Environmental Control Board","AGC4383","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"dmillard@familyleague.org","Demaune Millard",22,"Family League","AGC4321","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"adam.manne@baltimorecity.gov","Adam Manne",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"anne.gardner@baltimorecity.gov","Anne Gardner",52,"Finance","AGC2300","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"annie.fullas@baltimorecity.gov","Annie Fullas",52,"Finance","AGC2300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ashley.meyer@baltimorecity.gov","Ashley Meyer",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"bolu.oluwasuji@baltimorecity.gov","Bolu Oluwasuji",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"carla.nealy@baltimorecity.gov","Carla Nealy",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"daniel.goldberg@baltimorecity.gov","Daniel Goldberg",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"devlin.tricamo-palmer@baltimorecity.gov","Devlin Tricamo-Palmer",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"dreed@baltimorecity.gov","Dorothy Reed",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"eric.duneman@baltimorecity.gov","Eric Duneman",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"gabriel.stuart-sikow@baltimorecity.gov","Gabriel Stuart-Sikowitz",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"jrogers@baltimorecity.gov","Jennell Rogers",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"johanna.collado@baltimorecity.gov","Johanna Collado",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"john.burklew@baltimorecity.gov","John Burklew",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"joseph.gatto@baltimorecity.gov","Joseph Gatto",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kalief.cole@baltimorecity.gov","Kalief Cole",52,"Finance","AGC2300","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kamaria.harmon@baltimorecity.gov","Kamaria Harmon",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"malachi.gaines@baltimorecity.gov","Malachi Gaines",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"mara.james@baltimorecity.gov","Mara James",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"matthew.rappaport@baltimorecity.gov","Matthew Rappaport",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"matthew.zachary@baltimorecity.gov","Matthew Zachary",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"melanie.lada@baltimorecity.gov","Melanie Lada",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"SystemAdmin"
-"michael.brede@baltimorecity.gov","Michael Brede",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"michael.moiseyev@baltimorecity.gov","Michael Moiseyev",52,"Finance","AGC2300","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"robert.cenname@baltimorecity.gov","Robert Cenname",52,"Finance","AGC2300","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"robert.feehley@baltimorecity.gov","Robert Feehley",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"sarah.schulte@baltimorecity.gov","Sarah Schulte",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"SystemAdmin"
-"sharrkwazia.blackwell@baltimorecity.gov","Sharrkwazia Blackwell",52,"Finance","AGC2300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"shonkaye.stanley@baltimorecity.gov","Shonkaye Stanley",52,"Finance","AGC2300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"stephanie.hentemann@baltimorecity.gov","Stephanie Hentemann",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"sumaiya.islam@baltimorecity.gov","Sumaiya Binta Islam",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"travis.platt@baltimorecity.gov","Travis Platt",52,"Finance","AGC2300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"bill.clinton@baltimorecity.gov","William Clinton",52,"Finance","AGC2300","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"yoanna.moisides@baltimorecity.gov","Yoanna Moisides",52,"Finance","AGC2300","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"zachary.harris@baltimorecity.gov","Zachary Harris",52,"Finance","AGC2300","","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"BBMRReviewer"
-"alexis.cruz@baltimorecity.gov","Alexis Cruz",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"amandac.gray@baltimorecity.gov","Amanda Gray",53,"Fire","AGC2500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"cpompey@baltimorecity.gov","Courtney Pompeo",53,"Fire","AGC2500","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"edmund.goode@baltimorecity.gov","Ed Goode",53,"Fire","AGC2500","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jake.miter@baltimorecity.gov","Jake Miter",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"james.wallace@baltimorecity.gov","James Wallace",53,"Fire","AGC2500","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"joey.henderson@baltimorecity.gov","Joey Henderson",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"john.eid@baltimorecity.gov","John Eid",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kensington.white@baltimorecity.gov","Kensington White",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kimberly.stinchcomb@baltimorecity.gov","Kimberly Stinchcomb",53,"Fire","AGC2500","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"laura.shiloh@baltimorecity.gov","Laura Shiloh",53,"Fire","AGC2500","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"nikki.lewis@baltimorecity.gov","Nikki Lewis",53,"Fire","AGC2500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"shontee.hart@baltimorecity.gov","Shontee Hart",53,"Fire","AGC2500","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"veobia.akilo2@baltimorecity.gov","Veobia Akilo",53,"Fire","AGC2500","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"virginia.eckard@baltimorecity.gov","Virginia Eckard",53,"Fire","AGC2500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"abogan.apetoh@baltimorecity.gov","Abogan Apetoh",54,"General Services","AGC2600","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"abrar.abukhdeir@baltimorecity.gov","Abrar Abukhdeir",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"babila.lima@baltimorecity.gov","Babila Lima",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"berke.attila@baltimorecity.gov","Berke Attila",54,"General Services","AGC2600","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"catherine.burns2@baltimorecity.gov","Catherine Burns",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"christopher.hepler@baltimorecity.gov","Christopher Hepler",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"david.kowalewski@baltimorecity.gov","David Kowalewski",54,"General Services","AGC2600","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"elijah.bell-clarke@baltimorecity.gov","Elijah Bell-Clarke",54,"General Services","AGC2600","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ellen.cattle@baltimorecity.gov","Ellen Cattle",54,"General Services","AGC2600","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"erica.rivas@baltimorecity.gov","Erica Rivas",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"fariha.khurshid@baltimorecity.gov","Fariha Khurshid",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"james.trimarco@baltimorecity.gov","James Trimarco",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"john.kirk@baltimorecity.gov","John Kirk",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"julia.kalloz@baltimorecity.gov","Julia Kalloz",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"keith.davis@baltimorecity.gov","Keith Davis",54,"General Services","AGC2600","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"marwan.alkarajat@baltimorecity.gov","Marwan Alkarajat",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ruth.mosley@baltimorecity.gov","Ruth Mosley",54,"General Services","AGC2600","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"terrel.chesson@baltimorecity.gov","Terrel Chesson",54,"General Services","AGC2600","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"adena.greenbaum@baltimorecity.gov","Adena Greenbaum",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"adrianne.mcauley@baltimorecity.gov","Adrianne McAuley",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"aisha.burgess@baltimorecity.gov","Aisha Burgess",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"alice.huang@baltimorecity.gov","Alice Huang",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"andrew.ellis@baltimorecity.gov","Andrew Ellis",55,"Health","AGC2700","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"angel.shay@baltimorecity.gov","Angel Shai",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"angela.ross@baltimorecity.gov","Angela Ross",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"brianne.gilkes@baltimorecity.gov","Brianne Gilkes",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"brionna.adams@baltimorecity.gov","Brionna Adams",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"byron.pugh@baltimorecity.gov","Byron Pugh",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"camille.burke@baltimorecity.gov","Camille Burke",55,"Health","AGC2700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"christine.ogbue@baltimorecity.gov","Christine Ogbue",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"chrystle.samuels@baltimorecity.gov","Chrystle Samuels",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"courtney.tipper@baltimorecity.gov","Courtney Tipper",55,"Health","AGC2700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"darcy.phelan@baltimorecity.gov","Darcy Phelan-Emrick",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"david.haselton@baltimorecity.gov","David Haselton",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"deborah.mulangu@baltimorecity.gov","Deborah Mulangu",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"faraz.mahmood@baltimorecity.gov","Faraz Mahmood",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"francine.childs@baltimorecity.gov","Francine Childs",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"heang.tan@baltimorecity.gov","Heang Tan",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jaasmain.rao@baltimorecity.gov","Jaasmain Reo",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jennifer.martin1@baltimorecity.gov","Jennifer Martin",55,"Health","AGC2700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jessica.speaker@baltimorecity.gov","Jessica Speaker",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kay.webster@baltimorecity.gov","Kay Webster",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"keidra.rowe@baltimorecity.gov","Keidra Rowe",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"khei.lin@baltimorecity.gov","Khei LIn",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kusum.bhandari@baltimorecity.gov","Kusum Bhandari",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"liban.jama@baltimorecity.gov","Liban Jama",55,"Health","AGC2700","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"marybeth.haller@baltimorecity.gov","Mary Beth Haller",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"messay.beyene@baltimorecity.gov","Messay Beyene",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"michelle.taylor@baltimorecity.gov","Michelle Taylor",55,"Health","AGC2700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"olgav.hontz@baltimorecity.gov","Olga Hontz",55,"Health","AGC2700","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ralph.pierce@baltimorecity.gov","Ralph Pierce",55,"Health","AGC2700","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ravikiran.muvva@baltimorecity.gov","Ravikiran Muvva",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"sadiya.muqueeth@baltimorecity.gov","Sadiya Muqueeth",55,"Health","AGC2700","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sharon.colburn@baltimorecity.gov","Sharon Colburn",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"travis.green@baltimorecity.gov","Travis Green",55,"Health","AGC2700","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"unyime.ekpa@baltimorecity.gov","Unyime Ekpa",55,"Health","AGC2700","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"victoria.davis@baltimorecity.gov","Victoria Davis",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"victoria.minka@baltimorecity.gov","Victoria Minka",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"willietta.gombeh@baltimorecity.gov","Willietta Gombeh-Fonjungo",55,"Health","AGC2700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"amber@waterfrontpartnership.org","Amber Chavis",56,"Housing and Community Development","AGC3100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"cassie.clemente@baltimorecity.gov","Cassie Clemente",56,"Housing and Community Development","AGC3100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"cephas.thornton@baltimorecity.gov","Cephas Thornton",56,"Housing and Community Development","AGC3100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"cvay@baltimore.org","Craig Vay",56,"Housing and Community Development","AGC3100","","Fiscal Officer","Fiscal Officer","",FALSE,FALSE,TRUE,"AgencyWriter"
-"dacia.davenport@baltimorecity.gov","Dacia Davenport",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"eric.booker@baltimorecity.gov","Eric Booker",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"henry.waldron@baltimorecity.gov","Henry Waldron",56,"Housing and Community Development","AGC3100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"james.turner2@baltimorecity.gov","Jame Turner",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jasmine.parris-brooks@baltimorecity.gov","Jasmine Parris-Brooks",56,"Housing and Community Development","AGC3100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jason.hessler@baltimorecity.gov","Jason Hessler",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jeffrey.holland@baltimorecity.gov","Jeffrey Holland",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"kimberly.jackson2@baltimorecity.gov","Kimberly Jackson",56,"Housing and Community Development","AGC3100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kswinton@baltimore.org","Kireem Swinton",56,"Housing and Community Development","AGC3100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"laurie@waterfrontpartnership.org","Laurie Schwartz",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"leah.gatling@baltimorecity.gov","Leah Gatling",56,"Housing and Community Development","AGC3100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"mary.correia@baltimorecity.gov","Mary Correia",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"mblom@baltimore.org","Mia Blom",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"nicole.hart@baltimorecity.gov","Nicole Hart",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"renee.newton@baltimorecity.gov","Renee Newton",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"stacy.freed@baltimorecity.gov","Stacy Freed",56,"Housing and Community Development","AGC3100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"timothy.keane@baltimorecity.gov","Timothy Keane",56,"Housing and Community Development","AGC3100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"tommy.williams@baltimorecity.gov","Tommy Williams",56,"Housing and Community Development","AGC3100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"wendi.redfern@baltimorecity.gov","Wendi Redfern-Curtis",56,"Housing and Community Development","AGC3100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jacia.falcon@baltimorecity.gov","Jacia Falcon",57,"Human Resources","AGC3300","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"julie.colucci@baltimorecity.gov","Julie Colucci",57,"Human Resources","AGC3300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"michael.tate@baltimorecity.gov","Michael Tate",57,"Human Resources","AGC3300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"terrance.smith@baltimorecity.gov","Terrance Smith",8,"Innovation Team","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"ebony.thompson@baltimorecity.gov","Ebony Thompson",58,"Law","AGC3500","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kate.edwards@baltimorecity.gov","Kate Edwards",58,"Law","AGC3500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"laura.goodman@baltimorecity.gov","Laura Goodman",58,"Law","AGC3500","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"matthew.bradford@baltimorecity.gov","Matthew Bradford",58,"Law","AGC3500","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"obarnes@baltimorecity.gov","Onica Barnes",58,"Law","AGC3500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"stephen.salsbury@baltimorecity.gov","Stephen Salsbury",58,"Law","AGC3500","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jschauffler@mdlab.org","Jennifer Schauffler",21,"Legal Aid","AGC4316","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"ben.guthorn@baltimorecity.gov","Ben Guthorn",59,"Legislative Reference","AGC3700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"shernandez@baltimoremarkets.org","Shaina Hernandez",14,"Lexington Market","AGC4326","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"douglas_paige@baltimorecity.gov","Douglas Paige",61,"Liquor Board","AGC4100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kimberly.kerns2@baltimorecity.gov","Kimberly Kerns",61,"Liquor Board","AGC4100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"michelle.wirzberger@baltimorecity.gov","Michelle Wirzberger",61,"Liquor Board","AGC4100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sophia.reid-marsh@baltimorecity.gov","Sophia Reid-Marsh",61,"Liquor Board","AGC4100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jfrench@livebaltimore.com","Julie French",15,"Live Baltimore","AGC3100","SRV0815","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"meghan@livebaltimore.com","Meghan McCorkell",15,"Live Baltimore","AGC3100","SRV0815","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"cdoherty@bcps.k12.md.us","Chris Doherty",84,"M-R Baltimore City Public Schools","AGC4371","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"jade.mcdonnell@baltimorecity.gov","Jade McDonnell",83,"M-R Cable and Communications","AGC4366","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"maya.gilmore@baltimorecity.gov","Maya Gilmore",83,"M-R Cable and Communications","AGC4366","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"michael.wells@baltimorecity.gov","Michael Wells",83,"M-R Cable and Communications","AGC4366","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sarletta.richardson@baltimorecity.gov","Sarletta Richardson",83,"M-R Cable and Communications","AGC4366","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"brittny.gartrell@baltimorecity.gov","Brittny Gartrell",68,"M-R Office of Small Minority Business Advocacy & Development","AGC4310","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"christopher.lundy@baltimorecity.gov","Christopher Lundy",68,"M-R Office of Small Minority Business Advocacy & Development","AGC4310","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"tiffany.lipford@baltimorecity.gov","Tiffany Lipford",68,"M-R Office of Small Minority Business Advocacy & Development","AGC4310","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"vanessa.freund@baltimorecity.gov","Vanessa Freund",68,"M-R Office of Small Minority Business Advocacy & Development","AGC4310","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"robh@mdschblind.org","Robert Hair",27,"Maryland School of the Blind","AGC4321","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kirby.fowler@marylandzoo.org","Kirby Fowler",18,"Maryland Zoo","AGC4356","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"andrey.bundley@baltimorecity.gov","Andrey Bundley",2,"Mayor's Office of African American Male Engagement","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"latreace.parris@baltimorecity.gov","Latreace Parris",2,"Mayor's Office of African American Male Engagement","AGC4301","SRV0905","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"tracey.estep@baltimorecity.gov","Tracey Estep",2,"Mayor's Office of African American Male Engagement","AGC4301","SRV0905","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"alissa.ferguson@baltimorecity.gov","Alissa Ferguson",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","SRV0920","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"candisse.bennett-par@baltimorecity.gov","Candisse Bennett-Parker",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","SRV0920","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kristerfer.burnett1@baltimorecity.gov","Kristerfer Burnett",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","SRV0920","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"linzy.jackson@baltimorecity.gov","Linzy Jackson",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","SRV0920","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"rmurphy@promotionandarts.org","Robyn Murphy",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sharon.jackson@baltimorecity.gov","Sharon Jackson",7,"Mayor's Office of Art, Culture, and Entertainment","AGC4301","SRV0920","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"nina.themelis@baltimorecity.gov","Nina Themelis",28,"Mayor's Office of Government Relations","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"andrew.aleshire@baltimorecity.gov","Andrew Aleshire",4,"Mayor's Office of Infrastructure Development","AGC4301","SRV0907","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ann.haskinsbrookover@baltimorecity.gov","Ann Haskins",4,"Mayor's Office of Infrastructure Development","AGC4301","SRV0907","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"janice.adamo@baltimorecity.gov","Janice Adamo",4,"Mayor's Office of Infrastructure Development","AGC4301","SRV0907","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"alexis.blackmon@baltimorecity.gov","Alexis Blackmon",3,"Mayor's Office of LGBTQ Affairs","AGC4301","SRV0906","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"melanie.bryant@baltimorecity.gov","Melanie Bryant",3,"Mayor's Office of LGBTQ Affairs","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"danielle.reynolds@baltimorecity.gov","Danielle Reynolds",5,"Mayor's Office of Older Adult Affairs and Advocacy","AGC4301","SRV0908","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ondoria.harmon@baltimorecity.gov","Ondoria Harmon",5,"Mayor's Office of Older Adult Affairs and Advocacy","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"danny.heller@baltimorecity.gov","Danny Heller",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"SystemAdmin"
-"darren.lu@baltimorecity.gov","Darren Lu",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"OPIReviewer"
-"dartanion.swift-williams@baltimorecity.gov","Dartanion Swift-Williams",1,"Mayor's Office of Performance and Innovation","AGC4301","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"derek.thomas@baltimorecity.gov","Derek Thomas",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"OPIReviewer"
-"ethan.buckborough@baltimorecity.gov","Ethan Buckborough",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"SystemAdmin"
-"griffin.riddler@baltimorecity.gov","Griffin Riddler",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"SystemAdmin"
-"nelson.gomesboronat@baltimorecity.gov","Nelson Gomesboronat",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"OPIReviewer"
-"rakeim.young@baltimorecity.gov","RAKEIM YOUNG",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ross.hackett@baltimorecity.gov","Ross Hackett",1,"Mayor's Office of Performance and Innovation","AGC4301","SRV0903","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"OPIReviewer"
-"angela.whitaker@baltimorecity.gov","Angela Whitaker",67,"Office of Children and Family Success","AGC4309","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"chuma.nkamhoua@baltimorecity.gov","Chuma Nkamhoua",67,"Office of Children and Family Success","AGC4309","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"dante.franklin@baltimorecity.gov","Dante Franklin",67,"Office of Children and Family Success","AGC4309","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"debra.brooks@baltimorecity.gov","Debra Brooks",67,"Office of Children and Family Success","AGC4309","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"janelle.penney@baltimorecity.gov","Janelle Penney",67,"Office of Children and Family Success","AGC4309","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"lyche.ferguson@baltimorecity.gov","Lyche` Ferguson",67,"Office of Children and Family Success","AGC4309","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"niya.garrett@baltimorecity.gov","Niya Allen",67,"Office of Children and Family Success","AGC4309","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"samuel.helmey@baltimorecity.gov","Samuel Helmey",67,"Office of Children and Family Success","AGC4309","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"shannon.burroughs-campbell@baltimorecity.gov","Shannon Burroughs-Campbell",67,"Office of Children and Family Success","AGC4309","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"angela.harrison@baltimorecity.gov","Angela Harrison",91,"Office of Employment Development","AGC4500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"craig.lewis@baltimorecity.gov","Craig Lewis",91,"Office of Employment Development","AGC4500","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"david.hagans@baltimorecity.gov","David Hagans",91,"Office of Employment Development","AGC4500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jasmine.armstrong@baltimorecity.gov","Jasmine Armstrong",91,"Office of Employment Development","AGC4500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jon.smeton@baltimorecity.gov","Jonathan Smeton Devenport",91,"Office of Employment Development","AGC4500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"kumasi.vines@baltimorecity.gov","Kumasi Vines",91,"Office of Employment Development","AGC4500","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"mackenzie.garvin@baltimorecity.gov","MacKenzie Garvin",91,"Office of Employment Development","AGC4500","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"tmiller@baltimorecity.gov","T Miller",91,"Office of Employment Development","AGC4500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"yvette.clark@baltimorecity.gov","Yvette Clark",91,"Office of Employment Development","AGC4500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"akeem.kirk@baltimorecity.gov","Akeem Kirk",41,"Office of Equity and Civil Rights","AGC5500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"amber.greene@baltimorecity.gov","Amber Greene",41,"Office of Equity and Civil Rights","AGC5500","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"aracely.stafford@baltimorecity.gov","Aracely Stafford",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"danielle.burton@baltimorecity.gov","Danielle Burton",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jill.muth@baltimorecity.gov","Jill Muth",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"keoni.morris@baltimorecity.gov","Keoni Morris",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"lisa.kelly@baltimorecity.gov","Lisa Kelly",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"marlon.marion@baltimorecity.gov","Marlon Marion",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"sruthi.surendran@baltimorecity.gov","Sruthi Surendran",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"viola.woolums@baltimorecity.gov","Viola Woolums",41,"Office of Equity and Civil Rights","AGC5500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"althea.lyness-fernandez@baltimorecity.gov","Althea Lyness-Fernandez",87,"Office of Homeless Services","AGC4381","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"diamond.okojie@baltimorecity.gov","Diamond Okojie",87,"Office of Homeless Services","AGC4381","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"ernestina.simmons@baltimorecity.gov","Ernestina Simmons",87,"Office of Homeless Services","AGC4381","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sade.creightonwade@baltimorecity.gov","Sade Creighton-Wade",87,"Office of Homeless Services","AGC4381","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"angela.ra@baltimorecity.gov","Angela Ra",90,"Office of Immigrant and Multicultural Affairs","AGC4393","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"catalina.rodriguez-lima@baltimorecity.gov","Catalina Rodriguez-Lima",90,"Office of Immigrant and Multicultural Affairs","AGC4393","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"cassidy.anderson@baltimorecity.gov","Cassidy Anderson",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"chanel.white@baltimorecity.gov","Chanel White",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"costella.davis@baltimorecity.gov","Costella Davis",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"joseph.muhlhausen@baltimorecity.gov","Joseph Muhlhausen",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"stefanie.mavronis@baltimorecity.gov","Stefanie Mavronis",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"tynikia.lee@baltimorecity.gov","Tynikia Lee",79,"Office of Neighborhood Safety and Engagement","AGC4346","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"alexander.rouse@baltimorecity.gov","Alexander Rouse",89,"Office of Recovery Programs","AGC4392","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"brandon.paige@baltimorecity.gov","Brandon Paige",89,"Office of Recovery Programs","AGC4392","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"elizabeth.tatum@baltimorecity.gov","Elizabeth Tatum",89,"Office of Recovery Programs","AGC4392","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"gahan.anderson@baltimorecity.gov","Gahan Anderson",89,"Office of Recovery Programs","AGC4392","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"lauren.jackson@baltimorecity.gov","Lauren Jackson",89,"Office of Recovery Programs","AGC4392","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sara.whaley2@baltimorecity.gov","Sara Whaley",89,"Office of Recovery Programs","AGC4392","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"isabel.cumming@baltimorecity.gov","Isabel Cumming",66,"Office of the Inspector General","AGC4308","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"ivan.quinones@baltimorecity.gov","Ivan Quinones",66,"Office of the Inspector General","AGC4308","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"joshua.ramos@baltimorecity.gov","Joshua Ramos",66,"Office of the Inspector General","AGC4308","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"richard.mitchell@baltimorecity.gov","Richard Mitchell",66,"Office of the Inspector General","AGC4308","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"tianna.bond@baltimorecity.gov","Tianna Bond",66,"Office of the Inspector General","AGC4308","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"deborah.moore@baltimorecity.gov","Deborah Moore-Carter",78,"Office of the Labor Commissioner","AGC4341","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"yvette.brown@baltimorecity.gov","Yvette Brown",78,"Office of the Labor Commissioner","AGC4341","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"candace.nue@bcparking.com","Candace Nue",24,"Parking Authority","AGC7000","SRV0682","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"peter.little@bcparking.com","Peter Little",24,"Parking Authority","AGC7000","SRV0682","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sandra.downs@bcparking.com","Sandra Downs",24,"Parking Authority","AGC7000","SRV0682","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"amy.gilder-busatti@baltimorecity.gov","Amy Gilder-Busatti",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ava.richardson@baltimorecity.gov","Ava Richardson",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"chad.hayes@baltimorecity.gov","Chad Hayes",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"eli.pousson@baltimorecity.gov","Eli Pousson",42,"Planning","AGC5700","","Performance Lead","Performance Lead","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"eric.tiso@baltimorecity.gov","Eric Tiso",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jaime.cramer@baltimorecity.gov","Jaime Cramer",42,"Planning","AGC5700","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kyra.mcdonnell@baltimorecity.gov","Kyra McDonnell",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"lauren.schiszik@baltimorecity.gov","Lauren Schiszik",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"nichole.stewart@baltimorecity.gov","Nichole Stewart",42,"Planning","AGC5700","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"renata.southard@baltimorecity.gov","Renata Southard",42,"Planning","AGC5700","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"sara.paranilam@baltimorecity.gov","Sara Paranilam",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"shakia.word@baltimorecity.gov","Shakia Word",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"stephanie.smith@baltimorecity.gov","Stephanie Smith",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"taylorr.lafave@baltimorecity.gov","Taylor LaFave",42,"Planning","AGC5700","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"andrew.smullian@baltimorepolice.org","Andrew Smullian",43,"Police","AGC5900","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"beth.hart@baltimorepolice.org","Beth Hart",43,"Police","AGC5900","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"erin.murphy@baltimorepolice.org","Erin C. Murphy",43,"Police","AGC5900","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kathryn.ely@baltimorepolice.org","Kathryn Ely",43,"Police","AGC5900","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"nicholas.billings@baltimorepolice.org","Nicholas Billings",43,"Police","AGC5900","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"pahini.lampart@baltimorepolice.org","Pahini Lampart",43,"Police","AGC5900","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"paula.williams@baltimorepolice.org","Paula Williams",43,"Police","AGC5900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"richard.worley@baltimorepolice.org","Richard Worley",43,"Police","AGC5900","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"seana.kirkpatrick@baltimorepolice.org","Sean Kirkpatrick",43,"Police","AGC5900","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"shallah.graham@baltimorepolice.org","Shallah Graham",43,"Police","AGC5900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"soralla.faceydeotts@baltimorepolice.org","Soralla Facey De Otts",43,"Police","AGC5900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"olivia.schnitzer@baltimorepolice.org","Sunny Schnitzer",43,"Police","AGC5900","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jan@pride2.org","Jan Miles",26,"Pride of Baltimore","AGC4326","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"aaron.little@baltimorecity.gov","Aaron Little",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"aaron.moore@baltimorecity.gov","Aaron Moore",44,"Public Works","AGC6100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"alan.drobinson@baltimorecity.gov","Alan Robinson",44,"Public Works","AGC6100","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"antonine.ross@baltimorecity.gov","Antonine Ross",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"dgordon@baltimorecity.gov","Deneen Gordon",44,"Public Works","AGC6100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"garret.halbach@baltimorecity.gov","Garrett Halbach",44,"Public Works","AGC6100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"herbert.naylor@baltimorecity.gov","Herbert Naylor",44,"Public Works","AGC6100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"john.land@baltimorecity.gov","John Land",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"krystina.bryant@baltimorecity.gov","Krystina Bryant",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"latoya.curtis@baltimorecity.gov","LaToya Curtis",44,"Public Works","AGC6100","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"matthew.garbark@baltimorecity.gov","Matthew Garbark",44,"Public Works","AGC6100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"philip.gear@baltimorecity.gov","Philip Gear",44,"Public Works","AGC6100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"rijin.lee@baltimorecity.gov","Rijin Lee",44,"Public Works","AGC6100","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"robert.hindt@baltimorecity.gov","Robert Hindt",44,"Public Works","AGC6100","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"santhosh.abraham@baltimorecity.gov","Santhosh Abraham",44,"Public Works","AGC6100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sheronda.winborne@baltimorecity.gov","Sheronda Winborne",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"steve.sharkey@baltimorecity.gov","Steven Sharkey",44,"Public Works","AGC6100","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"timothy.wolfe@baltimorecity.gov","Timothy Wolfe",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"tking@baltimorecity.gov","Troy King",44,"Public Works","AGC6100","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"valentina.ukwuoma@baltimorecity.gov","Valentina Ukwuoma",44,"Public Works","AGC6100","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ashley.bush@baltimorecity.gov","Ashley Bush",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"charlotte.keys@baltimorecity.gov","Charlotte Keys",45,"Recreation and Parks","AGC6300","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"darryl.sutton@baltimorecity.gov","Darryl Sutton",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"dorsey.skinner@baltimorecity.gov","Dorsey Skinner",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"dwayne.douglas@baltimorecity.gov","Dwayne Douglas",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"edward.wheeling@baltimorecity.gov","Edward Wheeling",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"haneef.muhammad@baltimorecity.gov","Haneef Muhammad",45,"Recreation and Parks","AGC6300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"hashim.zafar@baltimorecity.gov","Hashim Zafar",45,"Recreation and Parks","AGC6300","","Fiscal Staff","Fiscal Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"iman.linton@baltimorecity.gov","Iman Linton",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"inunez@baltimorecity.gov","Israel Nunez",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"jtekie@baltimorecity.gov","J Tekie",45,"Recreation and Parks","AGC6300","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jarell.johnson@baltimorecity.gov","Jarell Johnson",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"karen.jordan@baltimorecity.gov","Karen Jordan",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"kendra.moore@baltimorecity.gov","Kendra Moore",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"leslie.yancey@baltimorecity.gov","Leslie Yancey",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"lori.tyer-ellis@baltimorecity.gov","Lori Tyer-Ellis",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"makponse.yamonche@baltimorecity.gov","Makponse Yamonche",45,"Recreation and Parks","AGC6300","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"manuel.gonzalez@baltimorecity.gov","Manuel Gonzalez",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"matthew.rescott@baltimorecity.gov","Matthew Rescott",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"melissa.grim@baltimorecity.gov","Melissa Grim",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"monica.moore@baltimorecity.gov","Monica Moore",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"nicole.green4@baltimorecity.gov","Nicole Green",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"ncobbs@baltimorecity.gov","Nikki Cobbs",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"olivia.miller@baltimorecity.gov","Olivia Miller",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"quinton.matthews@baltimorecity.gov","Quinton Matthews",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"rmoore@baltimorecity.gov","Reginald Moore",45,"Recreation and Parks","AGC6300","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"rrudisill@baltimorecity.gov","Ronald Rudisill",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"sharon.bucknor@baltimorecity.gov","Sharon Bucknor",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"talmaguer@baltimorecity.gov","Tim Almaguer",45,"Recreation and Parks","AGC6300","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"nicholas.blendy3@baltimorecity.gov","Nicholas Blendy",92,"Sheriff's Office","AGC6500","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"octavius.smith@baltimorecity.gov","Octavius Smith",92,"Sheriff's Office","AGC6500","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sam.cogen@baltimorecity.gov","Sam Cogen",92,"Sheriff's Office","AGC6500","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kimberly.washington@baltimorecity.gov","Washington Kimberly",92,"Sheriff's Office","AGC6500","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"cflynn@stattorney.org","Catherine Flynn",46,"State's Attorney's Office","AGC6900","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"ivan@stattorney.org","Ivan Bates",46,"State's Attorney's Office","AGC6900","","Agency Head","Agency Head","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"roland.selby@baltimorecity.gov","Roland Selby",46,"State's Attorney's Office","AGC6900","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"sbeckham@stattorney.org","Steward Beckham",46,"State's Attorney's Office","AGC6900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"wcarrington@stattorney.org","Wanda Carrington",46,"State's Attorney's Office","AGC6900","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"dhirendra.sinha@baltimorecity.gov","Dhirendra Sinha",47,"Transportation","AGC7000","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"jamarr.rayne@baltimorecity.gov","Jamarr Rayne",47,"Transportation","AGC7000","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyViewer"
-"patrick.fleming@baltimorecity.gov","Patrick A. Fleming",47,"Transportation","AGC7000","","Chief of Staff","Chief of Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"terrell.boston-smith1@baltimorecity.gov","Terrell Boston-Smith",47,"Transportation","AGC7000","","Fiscal Officer","Fiscal Officer","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"veronica.mcbeth@baltimorecity.gov","Veronica P. McBeth",47,"Transportation","AGC7000","","Agency Director","Agency Director","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"webster.mulbah@baltimorecity.gov","Webster Mulbah",47,"Transportation","AGC7000","","Program Staff","Program Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"kswinton@baltimore.org","Kireem Swinton",11,"Visit Baltimore","AGC4326","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"kburgin@thewalters.org","Kate Burgin",17,"Walters Art Gallery","AGC4356","","Agency Staff","Agency Staff","Submit",FALSE,FALSE,TRUE,"AgencySubmitter"
-"dan@waterfrontpartnership.org","Dan Taylor",29,"Waterfront Partnership","AGC3100","SRV0811","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
-"matthew@waterfrontpartnership.org","Matthew Kujava",29,"Waterfront Partnership","AGC3100","SRV0811","Agency Staff","Agency Staff","Edit",FALSE,FALSE,TRUE,"AgencyWriter"
+public_name,email,full_name,entity_id,agency_id,service_id,agency_role,agency_roles,access_level,app_role,budget_access,adaptive_planning,performance_plan_access
+Baltimore Children's and Youth Fund,alee@bcyfund.org,Alysia Lee,30,AGC4321,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),breanna.johnson@baltimorecity.gov,BreAnna Briggs,63,AGC4303,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),chris.harrington@baltimorecity.gov,Christopher Harrington,63,AGC4303,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),dante.merrell@baltimorecity.gov,Dante Merrell,63,AGC4303,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),jim.hicks@baltimorecity.gov,Jim Hicks,63,AGC4303,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),kathy.bentz@baltimorecity.gov,Kathy Bentz,63,AGC4303,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),lawana.gibson@baltimorecity.gov,Lawana Gibson,63,AGC4303,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),leyla.layman@baltimorecity.gov,Leyla Layman,63,AGC4303,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),tierra.pearson@baltimorecity.gov,Tierra Pearson,63,AGC4303,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore City Information Technology (BCIT),tj.mayotte@baltimorecity.gov,Timothy Mayotte,63,AGC4303,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore City Mayor's Office of Overdose Response,sara.whaley2@baltimorecity.gov,Sara Whaley,6,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Civic Fund,hyesook@baltimorecivicfund.org,HyeSook Chung,25,AGC4326,SRV0793,Agency Staff,Agency Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Convention Center,jchughani@bccenter.org,Jaikishin Chughani,9,AGC4361,SRV0855,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Convention Center,mcampbell@bccenter.org,Mac Campbell,9,AGC4361,SRV0855,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Convention Center,matthew.campbell@baltimorecity.gov,Matt Campbell,9,AGC4361,SRV0855,Agency Staff,Agency Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Convention Center,pcosta@bccenter.org,Philip Costa,9,AGC4361,SRV0855,Agency Staff,Agency Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Baltimore Convention Center,robert.brooks@baltimorecity.gov,Robe Brooks,9,AGC4361,SRV0855,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,ehinderberger@baltimoredevelopment.com,Elias Hinderberger ,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,jwatson@baltimoredevelopment.com,Jeremy Watson,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,kking@baltimoredevelopment.com,Kenn L King,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,kseawright@baltimoredevelopment.com,Kevin Seawright,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,kclark@baltimoredevelopment.com,Kimberly Clark,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,larysa.salamacha@baltimoredevelopment.com,Lary Salamacha,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,otis.rolley@baltimoredevelopment.com,Otis Rolley,23,AGC3100,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,otis@baltimoredevelopment.com,Otis Rolley,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,rbroderickjr@baltimoredevelopment.com,"Roy Broderick, Jr.",23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Development Corporation,tom.whelley@baltimoredevelopment.com,Tom Whelley,23,AGC3100,SRV0809,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Baltimore Heritage Area,hopkins@baltimoreheritage.org,Johns Hopkins,12,AGC4326,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Museum of Art,anaeem@artbma.org,Asma Naeem,16,AGC4356,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Public Markets,shernandez@baltimoremarkets.org,Shaina Hernandez,13,AGC4326,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Baltimore Symphony Orchestra,mhanson@bsomusic.org,Mark Hanson,19,AGC4356,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Board of Elections,clifford.tatum@baltimorecity.gov,Clifford Tatum,40,AGC1900,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Board of Elections,lisa.stanley@baltimorecity.gov,Lisa Stanley,40,AGC1900,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Board of Municipal and Zoning Appeals,justin.williams@baltimorecity.gov,Justin Williams,48,AGC7900,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Board of Municipal and Zoning Appeals,sunny.boyce@baltimorecity.gov,Sunny Boyce,48,AGC7900,,Fiscal Officer,Fiscal Officer,,AgencyWriter,FALSE,FALSE,TRUE
+City Council,hosea.chew@baltimorecity.gov,Hosea Chew,36,AGC1000,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+City Council,michael.castagnola1@baltimorecity.gov,Michael Castagnola,36,AGC1000,,Chief of Staff,Chief of Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+City Council Services,marguerite.currin@baltimorecity.gov,Marguerite Currin,37,AGC1100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+City Council Services,nancy.mead@baltimorecity.gov,Nancy Mead,37,AGC1100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+City Council Services,paroma.nandi@baltimorecity.gov,Paroma Nandi,37,AGC1100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,wbh@baltimorecity.gov,Bill Henry,38,AGC1200,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Comptroller,celeste.amato@baltimorecity.gov,Celeste Amato,38,AGC1200,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,ccallahan@baltimorecity.gov,Charmaine Callahan,38,AGC1200,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Comptroller,eric.evans@baltimorecity.gov,Eric Evans,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Comptroller,erika.mcclammy@baltimorecity.gov,Erika McClammy,38,AGC1200,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,josh.pasch@baltimorecity.gov,Josh Pasch,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Comptroller,kc.kelleher@baltimorecity.gov,Kc Kelleher,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,michelled.derricott@baltimorecity.gov,Michelle Derricott,38,AGC1200,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,nia.govan@baltimorecity.gov,Nia Govan,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Comptroller,simon.etta@baltimorecity.gov,Simon Etta,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Comptroller,thandee.maung@baltimorecity.gov,Thandee Maung,38,AGC1200,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Comptroller,timothy.goldsby@baltimorecity.gov,Timothy Goldsby,38,AGC1200,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Comptroller,tony.bedon@baltimorecity.gov,Tony Bedon,38,AGC1200,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Courts - Circuit Court,desdemona.smith@mdcourts.gov,Desdemona Smith,39,AGC1311,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Courts - Circuit Court,lionel.moore@baltimorecity.gov,Lionel Moore,39,AGC1311,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Courts - Orphans' Court,ajile.brown@baltimorecity.gov,Ajile Brown,50,AGC1321,,Fiscal Officer,Fiscal Officer,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+Courts - Orphans' Court,orphanscourt.baltimorecity@gmail.com,Orphan Court Gmail,50,AGC1321,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Create Baltimore,jjohnson@promotionandarts.org,Ja-Mel Johnson,20,AGC4356,SRV0828,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Create Baltimore,trobinson@promotionandarts.org,Tamara Robinson,20,AGC4356,SRV0828,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Department of Consumer Protection and Business Licensing,mamadou.samba@baltimorecity.gov,Mamadou Samba,75,AGC4317,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Department of Consumer Protection and Business Licensing,nadine.olaniran@baltimorecity.gov,Nadine Olaniran,75,AGC4317,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Employees' Retirement Systems,atalabi@bcers.org,Adetutu Talabi,51,AGC2100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,crobey@bcers.org,Corey Robey,51,AGC2100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,drandall@bcers.org,David Randall,51,AGC2100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,elulandala@bcers.org,Ezra Lulandala,51,AGC2100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,hmossovitz@bcfpers.org,Howard Mossovitz,51,AGC2100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,rholley@bcfpers.org,Robert Holley,51,AGC2100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Employees' Retirement Systems,vignacio@bcfpers.org,Venerando Ignacio,51,AGC2100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,chelton@prattlibrary.org,Chad Helton,60,AGC3900,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,ethompson@prattlibrary.org,Erik Thompson,60,AGC3900,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,jmange@prattlibrary.org,J Mange,60,AGC3900,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,rscheuer@prattlibrary.org,Rachel Scheuerman,60,AGC3900,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,sveeramachaneni@prattlibrary.org,Sridevi (Sri) Veeramacheni,60,AGC3900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Enoch Pratt Free Library,tmatteau@prattlibrary.org,Tyler Matteau,60,AGC3900,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Environmental Control Board,brittany.vendryes@baltimorecity.gov,Brittany Vendryes,88,AGC4383,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Environmental Control Board,richard.chambers@baltimorecity.gov,Richard Chambers,88,AGC4383,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Family League,dmillard@familyleague.org,Demaune Millard,22,AGC4321,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Finance,adam.manne@baltimorecity.gov,Adam Manne,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,anne.gardner@baltimorecity.gov,Anne Gardner,52,AGC2300,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,annie.fullas@baltimorecity.gov,Annie Fullas,52,AGC2300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,ashley.meyer@baltimorecity.gov,Ashley Meyer,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,bolu.oluwasuji@baltimorecity.gov,Bolu Oluwasuji,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,carla.nealy@baltimorecity.gov,Carla Nealy,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,daniel.goldberg@baltimorecity.gov,Daniel Goldberg,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,devlin.tricamo-palmer@baltimorecity.gov,Devlin Tricamo-Palmer,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,dreed@baltimorecity.gov,Dorothy Reed,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,eric.duneman@baltimorecity.gov,Eric Duneman,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,gabriel.stuart-sikow@baltimorecity.gov,Gabriel Stuart-Sikowitz,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,jrogers@baltimorecity.gov,Jennell Rogers,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,johanna.collado@baltimorecity.gov,Johanna Collado,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,john.burklew@baltimorecity.gov,John Burklew,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,joseph.gatto@baltimorecity.gov,Joseph Gatto,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,kalief.cole@baltimorecity.gov,Kalief Cole,52,AGC2300,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,kamaria.harmon@baltimorecity.gov,Kamaria Harmon,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,malachi.gaines@baltimorecity.gov,Malachi Gaines,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,mara.james@baltimorecity.gov,Mara James,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,matthew.rappaport@baltimorecity.gov,Matthew Rappaport,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,matthew.zachary@baltimorecity.gov,Matthew Zachary,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,melanie.lada@baltimorecity.gov,Melanie Lada,52,AGC2300,,Agency Staff,Agency Staff,Edit,SystemAdmin,FALSE,FALSE,TRUE
+Finance,michael.brede@baltimorecity.gov,Michael Brede,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,michael.moiseyev@baltimorecity.gov,Michael Moiseyev,52,AGC2300,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Finance,robert.cenname@baltimorecity.gov,Robert Cenname,52,AGC2300,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Finance,robert.feehley@baltimorecity.gov,Robert Feehley,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,sarah.schulte@baltimorecity.gov,Sarah Schulte,52,AGC2300,,Agency Staff,Agency Staff,Edit,SystemAdmin,FALSE,FALSE,TRUE
+Finance,sharrkwazia.blackwell@baltimorecity.gov,Sharrkwazia Blackwell,52,AGC2300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,shonkaye.stanley@baltimorecity.gov,Shonkaye Stanley,52,AGC2300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,stephanie.hentemann@baltimorecity.gov,Stephanie Hentemann,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,sumaiya.islam@baltimorecity.gov,Sumaiya Binta Islam,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Finance,travis.platt@baltimorecity.gov,Travis Platt,52,AGC2300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Finance,bill.clinton@baltimorecity.gov,William Clinton,52,AGC2300,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Finance,yoanna.moisides@baltimorecity.gov,Yoanna Moisides,52,AGC2300,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Finance,zachary.harris@baltimorecity.gov,Zachary Harris,52,AGC2300,,Agency Staff,Agency Staff,Edit,BBMRReviewer,FALSE,FALSE,TRUE
+Fire,alexis.cruz@baltimorecity.gov,Alexis Cruz,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Fire,amandac.gray@baltimorecity.gov,Amanda Gray,53,AGC2500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,cpompey@baltimorecity.gov,Courtney Pompeo,53,AGC2500,,Fiscal Staff,Fiscal Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Fire,edmund.goode@baltimorecity.gov,Ed Goode,53,AGC2500,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,jake.miter@baltimorecity.gov,Jake Miter,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,james.wallace@baltimorecity.gov,James Wallace,53,AGC2500,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Fire,joey.henderson@baltimorecity.gov,Joey Henderson,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,john.eid@baltimorecity.gov,John Eid,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,kensington.white@baltimorecity.gov,Kensington White,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,kimberly.stinchcomb@baltimorecity.gov,Kimberly Stinchcomb,53,AGC2500,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,laura.shiloh@baltimorecity.gov,Laura Shiloh,53,AGC2500,,Performance Lead,Performance Lead,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Fire,nikki.lewis@baltimorecity.gov,Nikki Lewis,53,AGC2500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Fire,shontee.hart@baltimorecity.gov,Shontee Hart,53,AGC2500,,Fiscal Staff,Fiscal Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Fire,veobia.akilo2@baltimorecity.gov,Veobia Akilo,53,AGC2500,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Fire,virginia.eckard@baltimorecity.gov,Virginia Eckard,53,AGC2500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,abogan.apetoh@baltimorecity.gov,Abogan Apetoh,54,AGC2600,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,abrar.abukhdeir@baltimorecity.gov,Abrar Abukhdeir,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,babila.lima@baltimorecity.gov,Babila Lima,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,berke.attila@baltimorecity.gov,Berke Attila,54,AGC2600,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+General Services,catherine.burns2@baltimorecity.gov,Catherine Burns,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,christopher.hepler@baltimorecity.gov,Christopher Hepler,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,david.kowalewski@baltimorecity.gov,David Kowalewski,54,AGC2600,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,elijah.bell-clarke@baltimorecity.gov,Elijah Bell-Clarke,54,AGC2600,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,ellen.cattle@baltimorecity.gov,Ellen Cattle,54,AGC2600,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,erica.rivas@baltimorecity.gov,Erica Rivas,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,fariha.khurshid@baltimorecity.gov,Fariha Khurshid,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,james.trimarco@baltimorecity.gov,James Trimarco,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,john.kirk@baltimorecity.gov,John Kirk,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,julia.kalloz@baltimorecity.gov,Julia Kalloz,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,keith.davis@baltimorecity.gov,Keith Davis,54,AGC2600,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,marwan.alkarajat@baltimorecity.gov,Marwan Alkarajat,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+General Services,ruth.mosley@baltimorecity.gov,Ruth Mosley,54,AGC2600,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+General Services,terrel.chesson@baltimorecity.gov,Terrel Chesson,54,AGC2600,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,adena.greenbaum@baltimorecity.gov,Adena Greenbaum,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,adrianne.mcauley@baltimorecity.gov,Adrianne McAuley,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,aisha.burgess@baltimorecity.gov,Aisha Burgess,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,alice.huang@baltimorecity.gov,Alice Huang,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,andrew.ellis@baltimorecity.gov,Andrew Ellis,55,AGC2700,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,angel.shay@baltimorecity.gov,Angel Shai,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,angela.ross@baltimorecity.gov,Angela Ross,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,brianne.gilkes@baltimorecity.gov,Brianne Gilkes,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,brionna.adams@baltimorecity.gov,Brionna Adams,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,byron.pugh@baltimorecity.gov,Byron Pugh,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,camille.burke@baltimorecity.gov,Camille Burke,55,AGC2700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,christine.ogbue@baltimorecity.gov,Christine Ogbue,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,chrystle.samuels@baltimorecity.gov,Chrystle Samuels,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,courtney.tipper@baltimorecity.gov,Courtney Tipper,55,AGC2700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,darcy.phelan@baltimorecity.gov,Darcy Phelan-Emrick,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,david.haselton@baltimorecity.gov,David Haselton,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,deborah.mulangu@baltimorecity.gov,Deborah Mulangu,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,faraz.mahmood@baltimorecity.gov,Faraz Mahmood,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,francine.childs@baltimorecity.gov,Francine Childs,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,heang.tan@baltimorecity.gov,Heang Tan,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,jaasmain.rao@baltimorecity.gov,Jaasmain Reo,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,jennifer.martin1@baltimorecity.gov,Jennifer Martin,55,AGC2700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,jessica.speaker@baltimorecity.gov,Jessica Speaker,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,kay.webster@baltimorecity.gov,Kay Webster,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,keidra.rowe@baltimorecity.gov,Keidra Rowe,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,khei.lin@baltimorecity.gov,Khei LIn,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,kusum.bhandari@baltimorecity.gov,Kusum Bhandari,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,liban.jama@baltimorecity.gov,Liban Jama,55,AGC2700,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,marybeth.haller@baltimorecity.gov,Mary Beth Haller,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,messay.beyene@baltimorecity.gov,Messay Beyene,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,michelle.taylor@baltimorecity.gov,Michelle Taylor,55,AGC2700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,olgav.hontz@baltimorecity.gov,Olga Hontz,55,AGC2700,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,ralph.pierce@baltimorecity.gov,Ralph Pierce,55,AGC2700,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,ravikiran.muvva@baltimorecity.gov,Ravikiran Muvva,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Health,sadiya.muqueeth@baltimorecity.gov,Sadiya Muqueeth,55,AGC2700,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,sharon.colburn@baltimorecity.gov,Sharon Colburn,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,travis.green@baltimorecity.gov,Travis Green,55,AGC2700,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Health,unyime.ekpa@baltimorecity.gov,Unyime Ekpa,55,AGC2700,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,victoria.davis@baltimorecity.gov,Victoria Davis,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,victoria.minka@baltimorecity.gov,Victoria Minka,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Health,willietta.gombeh@baltimorecity.gov,Willietta Gombeh-Fonjungo,55,AGC2700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,amber@waterfrontpartnership.org,Amber Chavis,56,AGC3100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,cassie.clemente@baltimorecity.gov,Cassie Clemente,56,AGC3100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,cephas.thornton@baltimorecity.gov,Cephas Thornton,56,AGC3100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,cvay@baltimore.org,Craig Vay,56,AGC3100,,Fiscal Officer,Fiscal Officer,,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,dacia.davenport@baltimorecity.gov,Dacia Davenport,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,eric.booker@baltimorecity.gov,Eric Booker,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,henry.waldron@baltimorecity.gov,Henry Waldron,56,AGC3100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,james.turner2@baltimorecity.gov,Jame Turner,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,jasmine.parris-brooks@baltimorecity.gov,Jasmine Parris-Brooks,56,AGC3100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,jason.hessler@baltimorecity.gov,Jason Hessler,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,jeffrey.holland@baltimorecity.gov,Jeffrey Holland,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,kimberly.jackson2@baltimorecity.gov,Kimberly Jackson,56,AGC3100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,kswinton@baltimore.org,Kireem Swinton,56,AGC3100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,laurie@waterfrontpartnership.org,Laurie Schwartz,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,leah.gatling@baltimorecity.gov,Leah Gatling,56,AGC3100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,mary.correia@baltimorecity.gov,Mary Correia,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,mblom@baltimore.org,Mia Blom,56,AGC3100,,Program Staff,Program Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,nicole.hart@baltimorecity.gov,Nicole Hart,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,renee.newton@baltimorecity.gov,Renee Newton,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,stacy.freed@baltimorecity.gov,Stacy Freed,56,AGC3100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Housing and Community Development,timothy.keane@baltimorecity.gov,Timothy Keane,56,AGC3100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Housing and Community Development,tommy.williams@baltimorecity.gov,Tommy Williams,56,AGC3100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Housing and Community Development,wendi.redfern@baltimorecity.gov,Wendi Redfern-Curtis,56,AGC3100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Human Resources,jacia.falcon@baltimorecity.gov,Jacia Falcon,57,AGC3300,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Human Resources,julie.colucci@baltimorecity.gov,Julie Colucci,57,AGC3300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Human Resources,michael.tate@baltimorecity.gov,Michael Tate,57,AGC3300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Innovation Team,terrance.smith@baltimorecity.gov,Terrance Smith,8,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Law,ebony.thompson@baltimorecity.gov,Ebony Thompson,58,AGC3500,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Law,kate.edwards@baltimorecity.gov,Kate Edwards,58,AGC3500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Law,laura.goodman@baltimorecity.gov,Laura Goodman,58,AGC3500,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Law,matthew.bradford@baltimorecity.gov,Matthew Bradford,58,AGC3500,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Law,obarnes@baltimorecity.gov,Onica Barnes,58,AGC3500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Law,stephen.salsbury@baltimorecity.gov,Stephen Salsbury,58,AGC3500,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Legal Aid,jschauffler@mdlab.org,Jennifer Schauffler,21,AGC4316,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Legislative Reference,ben.guthorn@baltimorecity.gov,Ben Guthorn,59,AGC3700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Lexington Market,shernandez@baltimoremarkets.org,Shaina Hernandez,14,AGC4326,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Liquor Board,douglas_paige@baltimorecity.gov,Douglas Paige,61,AGC4100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Liquor Board,kimberly.kerns2@baltimorecity.gov,Kimberly Kerns,61,AGC4100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Liquor Board,michelle.wirzberger@baltimorecity.gov,Michelle Wirzberger,61,AGC4100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Liquor Board,sophia.reid-marsh@baltimorecity.gov,Sophia Reid-Marsh,61,AGC4100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Live Baltimore,jfrench@livebaltimore.com,Julie French,15,AGC3100,SRV0815,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Live Baltimore,meghan@livebaltimore.com,Meghan McCorkell,15,AGC3100,SRV0815,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+M-R Baltimore City Public Schools,cdoherty@bcps.k12.md.us,Chris Doherty,84,AGC4371,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+M-R Cable and Communications,jade.mcdonnell@baltimorecity.gov,Jade McDonnell,83,AGC4366,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+M-R Cable and Communications,maya.gilmore@baltimorecity.gov,Maya Gilmore,83,AGC4366,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+M-R Cable and Communications,michael.wells@baltimorecity.gov,Michael Wells,83,AGC4366,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+M-R Cable and Communications,sarletta.richardson@baltimorecity.gov,Sarletta Richardson,83,AGC4366,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+M-R Office of Small Minority Business Advocacy & Development,brittny.gartrell@baltimorecity.gov,Brittny Gartrell,68,AGC4310,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+M-R Office of Small Minority Business Advocacy & Development,christopher.lundy@baltimorecity.gov,Christopher Lundy,68,AGC4310,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+M-R Office of Small Minority Business Advocacy & Development,tiffany.lipford@baltimorecity.gov,Tiffany Lipford,68,AGC4310,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+M-R Office of Small Minority Business Advocacy & Development,vanessa.freund@baltimorecity.gov,Vanessa Freund,68,AGC4310,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Maryland School of the Blind,robh@mdschblind.org,Robert Hair,27,AGC4321,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Maryland Zoo,kirby.fowler@marylandzoo.org,Kirby Fowler,18,AGC4356,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of African American Male Engagement,andrey.bundley@baltimorecity.gov,Andrey Bundley,2,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of African American Male Engagement,latreace.parris@baltimorecity.gov,Latreace Parris,2,AGC4301,SRV0905,Agency Staff,Agency Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Mayor's Office of African American Male Engagement,tracey.estep@baltimorecity.gov,Tracey Estep,2,AGC4301,SRV0905,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",alissa.ferguson@baltimorecity.gov,Alissa Ferguson,7,AGC4301,SRV0920,Agency Staff,Agency Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",candisse.bennett-par@baltimorecity.gov,Candisse Bennett-Parker,7,AGC4301,SRV0920,Agency Staff,Agency Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",kristerfer.burnett1@baltimorecity.gov,Kristerfer Burnett,7,AGC4301,SRV0920,Agency Staff,Agency Staff,Edit,AgencySubmitter,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",linzy.jackson@baltimorecity.gov,Linzy Jackson,7,AGC4301,SRV0920,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",rmurphy@promotionandarts.org,Robyn Murphy,7,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+"Mayor's Office of Art, Culture, and Entertainment",sharon.jackson@baltimorecity.gov,Sharon Jackson,7,AGC4301,SRV0920,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Mayor's Office of Government Relations,nina.themelis@baltimorecity.gov,Nina Themelis,28,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of Infrastructure Development,andrew.aleshire@baltimorecity.gov,Andrew Aleshire,4,AGC4301,SRV0907,Agency Staff,Agency Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Mayor's Office of Infrastructure Development,ann.haskinsbrookover@baltimorecity.gov,Ann Haskins,4,AGC4301,SRV0907,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Mayor's Office of Infrastructure Development,janice.adamo@baltimorecity.gov,Janice Adamo,4,AGC4301,SRV0907,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Mayor's Office of LGBTQ Affairs,alexis.blackmon@baltimorecity.gov,Alexis Blackmon,3,AGC4301,SRV0906,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Mayor's Office of LGBTQ Affairs,melanie.bryant@baltimorecity.gov,Melanie Bryant,3,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of Older Adult Affairs and Advocacy,danielle.reynolds@baltimorecity.gov,Danielle Reynolds,5,AGC4301,SRV0908,Agency Staff,Agency Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Mayor's Office of Older Adult Affairs and Advocacy,ondoria.harmon@baltimorecity.gov,Ondoria Harmon,5,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,danny.heller@baltimorecity.gov,Danny Heller,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,SystemAdmin,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,darren.lu@baltimorecity.gov,Darren Lu,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,OPIReviewer,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,dartanion.swift-williams@baltimorecity.gov,Dartanion Swift-Williams,1,AGC4301,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,derek.thomas@baltimorecity.gov,Derek Thomas,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,OPIReviewer,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,ethan.buckborough@baltimorecity.gov,Ethan Buckborough,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,SystemAdmin,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,griffin.riddler@baltimorecity.gov,Griffin Riddler,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,SystemAdmin,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,nelson.gomesboronat@baltimorecity.gov,Nelson Gomesboronat,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,OPIReviewer,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,rakeim.young@baltimorecity.gov,RAKEIM YOUNG,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Mayor's Office of Performance and Innovation,ross.hackett@baltimorecity.gov,Ross Hackett,1,AGC4301,SRV0903,Agency Staff,Agency Staff,Edit,OPIReviewer,FALSE,FALSE,TRUE
+Office of Children and Family Success,angela.whitaker@baltimorecity.gov,Angela Whitaker,67,AGC4309,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Children and Family Success,chuma.nkamhoua@baltimorecity.gov,Chuma Nkamhoua,67,AGC4309,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Children and Family Success,dante.franklin@baltimorecity.gov,Dante Franklin,67,AGC4309,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Children and Family Success,debra.brooks@baltimorecity.gov,Debra Brooks,67,AGC4309,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Children and Family Success,janelle.penney@baltimorecity.gov,Janelle Penney,67,AGC4309,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Children and Family Success,lyche.ferguson@baltimorecity.gov,Lyche` Ferguson,67,AGC4309,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Children and Family Success,niya.garrett@baltimorecity.gov,Niya Allen,67,AGC4309,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Children and Family Success,samuel.helmey@baltimorecity.gov,Samuel Helmey,67,AGC4309,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Children and Family Success,shannon.burroughs-campbell@baltimorecity.gov,Shannon Burroughs-Campbell,67,AGC4309,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Employment Development,angela.harrison@baltimorecity.gov,Angela Harrison,91,AGC4500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Employment Development,craig.lewis@baltimorecity.gov,Craig Lewis,91,AGC4500,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Employment Development,david.hagans@baltimorecity.gov,David Hagans,91,AGC4500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Employment Development,jasmine.armstrong@baltimorecity.gov,Jasmine Armstrong,91,AGC4500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Employment Development,jon.smeton@baltimorecity.gov,Jonathan Smeton Devenport,91,AGC4500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Employment Development,kumasi.vines@baltimorecity.gov,Kumasi Vines,91,AGC4500,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Employment Development,mackenzie.garvin@baltimorecity.gov,MacKenzie Garvin,91,AGC4500,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Employment Development,tmiller@baltimorecity.gov,T Miller,91,AGC4500,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Employment Development,yvette.clark@baltimorecity.gov,Yvette Clark,91,AGC4500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,akeem.kirk@baltimorecity.gov,Akeem Kirk,41,AGC5500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,amber.greene@baltimorecity.gov,Amber Greene,41,AGC5500,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,aracely.stafford@baltimorecity.gov,Aracely Stafford,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,danielle.burton@baltimorecity.gov,Danielle Burton,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,jill.muth@baltimorecity.gov,Jill Muth,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,keoni.morris@baltimorecity.gov,Keoni Morris,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,lisa.kelly@baltimorecity.gov,Lisa Kelly,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,marlon.marion@baltimorecity.gov,Marlon Marion,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,sruthi.surendran@baltimorecity.gov,Sruthi Surendran,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Equity and Civil Rights,viola.woolums@baltimorecity.gov,Viola Woolums,41,AGC5500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Homeless Services,althea.lyness-fernandez@baltimorecity.gov,Althea Lyness-Fernandez,87,AGC4381,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Homeless Services,diamond.okojie@baltimorecity.gov,Diamond Okojie,87,AGC4381,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Homeless Services,ernestina.simmons@baltimorecity.gov,Ernestina Simmons,87,AGC4381,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Homeless Services,sade.creightonwade@baltimorecity.gov,Sade Creighton-Wade,87,AGC4381,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Immigrant and Multicultural Affairs,angela.ra@baltimorecity.gov,Angela Ra,90,AGC4393,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Immigrant and Multicultural Affairs,catalina.rodriguez-lima@baltimorecity.gov,Catalina Rodriguez-Lima,90,AGC4393,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,cassidy.anderson@baltimorecity.gov,Cassidy Anderson,79,AGC4346,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,chanel.white@baltimorecity.gov,Chanel White,79,AGC4346,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,costella.davis@baltimorecity.gov,Costella Davis,79,AGC4346,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,joseph.muhlhausen@baltimorecity.gov,Joseph Muhlhausen,79,AGC4346,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,stefanie.mavronis@baltimorecity.gov,Stefanie Mavronis,79,AGC4346,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Neighborhood Safety and Engagement,tynikia.lee@baltimorecity.gov,Tynikia Lee,79,AGC4346,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Recovery Programs,alexander.rouse@baltimorecity.gov,Alexander Rouse,89,AGC4392,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Recovery Programs,brandon.paige@baltimorecity.gov,Brandon Paige,89,AGC4392,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of Recovery Programs,elizabeth.tatum@baltimorecity.gov,Elizabeth Tatum,89,AGC4392,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of Recovery Programs,gahan.anderson@baltimorecity.gov,Gahan Anderson,89,AGC4392,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of Recovery Programs,lauren.jackson@baltimorecity.gov,Lauren Jackson,89,AGC4392,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of the Inspector General,isabel.cumming@baltimorecity.gov,Isabel Cumming,66,AGC4308,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of the Inspector General,ivan.quinones@baltimorecity.gov,Ivan Quinones,66,AGC4308,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of the Inspector General,joshua.ramos@baltimorecity.gov,Joshua Ramos,66,AGC4308,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of the Inspector General,richard.mitchell@baltimorecity.gov,Richard Mitchell,66,AGC4308,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Office of the Inspector General,tianna.bond@baltimorecity.gov,Tianna Bond,66,AGC4308,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Office of the Labor Commissioner,deborah.moore@baltimorecity.gov,Deborah Moore-Carter,78,AGC4341,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Office of the Labor Commissioner,yvette.brown@baltimorecity.gov,Yvette Brown,78,AGC4341,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Parking Authority,candace.nue@bcparking.com,Candace Nue,24,AGC7000,SRV0682,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Parking Authority,peter.little@bcparking.com,Peter Little,24,AGC7000,SRV0682,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Parking Authority,sandra.downs@bcparking.com,Sandra Downs,24,AGC7000,SRV0682,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Planning,amy.gilder-busatti@baltimorecity.gov,Amy Gilder-Busatti,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,ava.richardson@baltimorecity.gov,Ava Richardson,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,chad.hayes@baltimorecity.gov,Chad Hayes,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,eli.pousson@baltimorecity.gov,Eli Pousson,42,AGC5700,,Performance Lead,Performance Lead,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Planning,eric.tiso@baltimorecity.gov,Eric Tiso,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,jaime.cramer@baltimorecity.gov,Jaime Cramer,42,AGC5700,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Planning,kyra.mcdonnell@baltimorecity.gov,Kyra McDonnell,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,lauren.schiszik@baltimorecity.gov,Lauren Schiszik,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,nichole.stewart@baltimorecity.gov,Nichole Stewart,42,AGC5700,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Planning,renata.southard@baltimorecity.gov,Renata Southard,42,AGC5700,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Planning,sara.paranilam@baltimorecity.gov,Sara Paranilam,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,shakia.word@baltimorecity.gov,Shakia Word,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,stephanie.smith@baltimorecity.gov,Stephanie Smith,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Planning,taylorr.lafave@baltimorecity.gov,Taylor LaFave,42,AGC5700,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Police,andrew.smullian@baltimorepolice.org,Andrew Smullian,43,AGC5900,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,beth.hart@baltimorepolice.org,Beth Hart,43,AGC5900,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Police,erin.murphy@baltimorepolice.org,Erin C. Murphy,43,AGC5900,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,kathryn.ely@baltimorepolice.org,Kathryn Ely,43,AGC5900,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,nicholas.billings@baltimorepolice.org,Nicholas Billings,43,AGC5900,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,pahini.lampart@baltimorepolice.org,Pahini Lampart,43,AGC5900,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Police,paula.williams@baltimorepolice.org,Paula Williams,43,AGC5900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,richard.worley@baltimorepolice.org,Richard Worley,43,AGC5900,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Police,seana.kirkpatrick@baltimorepolice.org,Sean Kirkpatrick,43,AGC5900,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,shallah.graham@baltimorepolice.org,Shallah Graham,43,AGC5900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,soralla.faceydeotts@baltimorepolice.org,Soralla Facey De Otts,43,AGC5900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Police,olivia.schnitzer@baltimorepolice.org,Sunny Schnitzer,43,AGC5900,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Pride of Baltimore,jan@pride2.org,Jan Miles,26,AGC4326,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,aaron.little@baltimorecity.gov,Aaron Little,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,aaron.moore@baltimorecity.gov,Aaron Moore,44,AGC6100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,alan.drobinson@baltimorecity.gov,Alan Robinson,44,AGC6100,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,antonine.ross@baltimorecity.gov,Antonine Ross,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,dgordon@baltimorecity.gov,Deneen Gordon,44,AGC6100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,garret.halbach@baltimorecity.gov,Garrett Halbach,44,AGC6100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,herbert.naylor@baltimorecity.gov,Herbert Naylor,44,AGC6100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,john.land@baltimorecity.gov,John Land,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,krystina.bryant@baltimorecity.gov,Krystina Bryant,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,latoya.curtis@baltimorecity.gov,LaToya Curtis,44,AGC6100,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,matthew.garbark@baltimorecity.gov,Matthew Garbark,44,AGC6100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,philip.gear@baltimorecity.gov,Philip Gear,44,AGC6100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,rijin.lee@baltimorecity.gov,Rijin Lee,44,AGC6100,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,robert.hindt@baltimorecity.gov,Robert Hindt,44,AGC6100,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,santhosh.abraham@baltimorecity.gov,Santhosh Abraham,44,AGC6100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,sheronda.winborne@baltimorecity.gov,Sheronda Winborne,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,steve.sharkey@baltimorecity.gov,Steven Sharkey,44,AGC6100,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Public Works,timothy.wolfe@baltimorecity.gov,Timothy Wolfe,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Public Works,tking@baltimorecity.gov,Troy King,44,AGC6100,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Public Works,valentina.ukwuoma@baltimorecity.gov,Valentina Ukwuoma,44,AGC6100,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,ashley.bush@baltimorecity.gov,Ashley Bush,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,charlotte.keys@baltimorecity.gov,Charlotte Keys,45,AGC6300,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,darryl.sutton@baltimorecity.gov,Darryl Sutton,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,dorsey.skinner@baltimorecity.gov,Dorsey Skinner,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,dwayne.douglas@baltimorecity.gov,Dwayne Douglas,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,edward.wheeling@baltimorecity.gov,Edward Wheeling,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,haneef.muhammad@baltimorecity.gov,Haneef Muhammad,45,AGC6300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,hashim.zafar@baltimorecity.gov,Hashim Zafar,45,AGC6300,,Fiscal Staff,Fiscal Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,iman.linton@baltimorecity.gov,Iman Linton,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,inunez@baltimorecity.gov,Israel Nunez,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,jtekie@baltimorecity.gov,J Tekie,45,AGC6300,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,jarell.johnson@baltimorecity.gov,Jarell Johnson,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,karen.jordan@baltimorecity.gov,Karen Jordan,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,kendra.moore@baltimorecity.gov,Kendra Moore,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,leslie.yancey@baltimorecity.gov,Leslie Yancey,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,lori.tyer-ellis@baltimorecity.gov,Lori Tyer-Ellis,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,makponse.yamonche@baltimorecity.gov,Makponse Yamonche,45,AGC6300,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,manuel.gonzalez@baltimorecity.gov,Manuel Gonzalez,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,matthew.rescott@baltimorecity.gov,Matthew Rescott,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,melissa.grim@baltimorecity.gov,Melissa Grim,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,monica.moore@baltimorecity.gov,Monica Moore,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Recreation and Parks,nicole.green4@baltimorecity.gov,Nicole Green,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,ncobbs@baltimorecity.gov,Nikki Cobbs,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,olivia.miller@baltimorecity.gov,Olivia Miller,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,quinton.matthews@baltimorecity.gov,Quinton Matthews,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,rmoore@baltimorecity.gov,Reginald Moore,45,AGC6300,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Recreation and Parks,rrudisill@baltimorecity.gov,Ronald Rudisill,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,sharon.bucknor@baltimorecity.gov,Sharon Bucknor,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Recreation and Parks,talmaguer@baltimorecity.gov,Tim Almaguer,45,AGC6300,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Sheriff's Office,nicholas.blendy3@baltimorecity.gov,Nicholas Blendy,92,AGC6500,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Sheriff's Office,octavius.smith@baltimorecity.gov,Octavius Smith,92,AGC6500,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Sheriff's Office,sam.cogen@baltimorecity.gov,Sam Cogen,92,AGC6500,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Sheriff's Office,kimberly.washington@baltimorecity.gov,Washington Kimberly,92,AGC6500,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+State's Attorney's Office,cflynn@stattorney.org,Catherine Flynn,46,AGC6900,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+State's Attorney's Office,ivan@stattorney.org,Ivan Bates,46,AGC6900,,Agency Head,Agency Head,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+State's Attorney's Office,roland.selby@baltimorecity.gov,Roland Selby,46,AGC6900,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+State's Attorney's Office,sbeckham@stattorney.org,Steward Beckham,46,AGC6900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+State's Attorney's Office,wcarrington@stattorney.org,Wanda Carrington,46,AGC6900,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Transportation,dhirendra.sinha@baltimorecity.gov,Dhirendra Sinha,47,AGC7000,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Transportation,jamarr.rayne@baltimorecity.gov,Jamarr Rayne,47,AGC7000,,Program Staff,Program Staff,Edit,AgencyViewer,FALSE,FALSE,TRUE
+Transportation,patrick.fleming@baltimorecity.gov,Patrick A. Fleming,47,AGC7000,,Chief of Staff,Chief of Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Transportation,terrell.boston-smith1@baltimorecity.gov,Terrell Boston-Smith,47,AGC7000,,Fiscal Officer,Fiscal Officer,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Transportation,veronica.mcbeth@baltimorecity.gov,Veronica P. McBeth,47,AGC7000,,Agency Director,Agency Director,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Transportation,webster.mulbah@baltimorecity.gov,Webster Mulbah,47,AGC7000,,Program Staff,Program Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Walters Art Gallery,kburgin@thewalters.org,Kate Burgin,17,AGC4356,,Agency Staff,Agency Staff,Submit,AgencySubmitter,FALSE,FALSE,TRUE
+Waterfront Partnership,dan@waterfrontpartnership.org,Dan Taylor,29,AGC3100,SRV0811,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE
+Waterfront Partnership,matthew@waterfrontpartnership.org,Matthew Kujava,29,AGC3100,SRV0811,Agency Staff,Agency Staff,Edit,AgencyWriter,FALSE,FALSE,TRUE

@@ -1,3 +1,7 @@
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x
+}
+
 load_env_file <- function(path = ".env") {
   if (!file.exists(path)) return(invisible(FALSE))
   lines <- readLines(path, warn = FALSE)
@@ -42,16 +46,94 @@ logical_seed_value <- function(value) {
   value %in% c("true", "t", "1", "yes", "y")
 }
 
+performance_role_rank <- function(role) {
+  ranks <- c(
+    AgencyViewer = 10L,
+    AgencyWriter = 20L,
+    AgencyApprover = 30L,
+    AgencySubmitter = 40L,
+    BBMRReviewer = 50L,
+    OPIReviewer = 60L,
+    DeputyMayor = 70L,
+    CAOffice = 80L,
+    SystemAdmin = 90L
+  )
+  role <- trimws(as.character(role %||% ""))
+  value <- unname(ranks[role])
+  ifelse(is.na(value), 0L, as.integer(value))
+}
+
+highest_performance_role <- function(roles) {
+  roles <- unique(trimws(as.character(roles %||% character(0))))
+  roles <- roles[nzchar(roles)]
+  if (!length(roles)) return("AgencyViewer")
+  roles[which.max(performance_role_rank(roles))]
+}
+
+consolidate_user_performance_roles <- function(connection) {
+  duplicate_groups <- DBI::dbGetQuery(
+    connection,
+    "SELECT user_id FROM access.user_role GROUP BY user_id HAVING COUNT(*) > 1"
+  )
+  if (!nrow(duplicate_groups)) return(invisible(0L))
+
+  consolidated <- 0L
+  for (i in seq_len(nrow(duplicate_groups))) {
+    user_id <- duplicate_groups$user_id[[i]]
+    role_rows <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT user_role_id, app_role, budget_access, adaptive_planning, performance_plan_access",
+        "FROM access.user_role",
+        "WHERE user_id = $1",
+        "ORDER BY user_role_id"
+      ),
+      params = list(user_id)
+    )
+    if (nrow(role_rows) <= 1) next
+
+    selected_role <- highest_performance_role(role_rows$app_role)
+    selected_rows <- role_rows[role_rows$app_role == selected_role, , drop = FALSE]
+    keep_role_id <- if (nrow(selected_rows)) selected_rows$user_role_id[[1]] else role_rows$user_role_id[[1]]
+    budget_access <- any(role_rows$budget_access %in% TRUE, na.rm = TRUE)
+    adaptive_planning <- any(role_rows$adaptive_planning %in% TRUE, na.rm = TRUE)
+    performance_plan_access <- any(role_rows$performance_plan_access %in% TRUE, na.rm = TRUE)
+
+    DBI::dbExecute(
+      connection,
+      paste(
+        "UPDATE access.user_role",
+        "SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5, updated_at = now()",
+        "WHERE user_role_id = $1"
+      ),
+      params = list(keep_role_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
+    )
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+      params = list(user_id, keep_role_id)
+    )
+    consolidated <- consolidated + 1L
+  }
+  invisible(consolidated)
+}
+
 apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
   if (!file.exists(path)) return(invisible(FALSE))
   seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  required <- c("email", "full_name", "entity_id", "agency_id", "agency_role", "agency_roles", "access_level", "app_role")
+  required <- c("email", "full_name", "agency_id", "agency_role", "agency_roles", "access_level", "app_role")
   missing_columns <- setdiff(required, names(seed))
   if (length(missing_columns)) {
     warning("Skipping user entity access seed; missing columns: ", paste(missing_columns, collapse = ", "))
     return(invisible(FALSE))
   }
-  seed <- seed[!is.na(seed$email) & nzchar(trimws(seed$email)) & !is.na(seed$entity_id), , drop = FALSE]
+  has_public_name <- "public_name" %in% names(seed)
+  has_entity_id <- "entity_id" %in% names(seed)
+  if (!has_public_name && !has_entity_id) {
+    warning("Skipping user entity access seed; missing public_name or entity_id")
+    return(invisible(FALSE))
+  }
+  seed <- seed[!is.na(seed$email) & nzchar(trimws(seed$email)), , drop = FALSE]
   if (!nrow(seed)) return(invisible(TRUE))
 
   DBI::dbWithTransaction(connection, {
@@ -62,7 +144,8 @@ apply_user_entity_access_seed <- function(connection, path = file.path("database
       row <- seed[i, , drop = FALSE]
       email <- tolower(trimws(as.character(row$email[[1]] %||% "")))
       full_name <- trimws(as.character(row$full_name[[1]] %||% ""))
-      entity_id <- suppressWarnings(as.integer(row$entity_id[[1]]))
+      public_name <- if (has_public_name) trimws(as.character(row$public_name[[1]] %||% "")) else ""
+      entity_id <- if (has_entity_id) suppressWarnings(as.integer(row$entity_id[[1]] %||% NA_integer_)) else NA_integer_
       agency_id <- trimws(as.character(row$agency_id[[1]] %||% ""))
       service_id <- trimws(as.character(row$service_id[[1]] %||% ""))
       if (!nzchar(service_id)) service_id <- NA_character_
@@ -74,13 +157,24 @@ apply_user_entity_access_seed <- function(connection, path = file.path("database
       budget_access <- logical_seed_value(row$budget_access[[1]])
       adaptive_planning <- logical_seed_value(row$adaptive_planning[[1]])
       performance_plan_access <- logical_seed_value(row$performance_plan_access[[1]])
-      if (!nzchar(email) || is.na(entity_id) || !nzchar(agency_id) || !nzchar(app_role)) next
-      entity_exists <- DBI::dbGetQuery(
-        connection,
-        "SELECT entity_id FROM reference.plan_entity WHERE entity_id = $1 AND active = true AND has_own_plan = true",
-        params = list(entity_id)
-      )
+      if (!nzchar(email) || !nzchar(agency_id) || !nzchar(app_role)) next
+      entity_exists <- if (nzchar(public_name)) {
+        DBI::dbGetQuery(
+          connection,
+          "SELECT entity_id FROM reference.plan_entity WHERE public_name = $1 AND active = true AND has_own_plan = true ORDER BY entity_id LIMIT 1",
+          params = list(public_name)
+        )
+      } else if (!is.na(entity_id)) {
+        DBI::dbGetQuery(
+          connection,
+          "SELECT entity_id FROM reference.plan_entity WHERE entity_id = $1 AND active = true AND has_own_plan = true",
+          params = list(entity_id)
+        )
+      } else {
+        data.frame()
+      }
       if (!nrow(entity_exists)) next
+      entity_id <- entity_exists$entity_id[[1]]
       user <- DBI::dbGetQuery(
         connection,
         paste(
@@ -105,25 +199,42 @@ apply_user_entity_access_seed <- function(connection, path = file.path("database
         ),
         params = list(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)
       )
-      existing_role <- DBI::dbGetQuery(
+      existing_roles <- DBI::dbGetQuery(
         connection,
-        "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) AND app_role = $3::varchar(30) ORDER BY user_role_id LIMIT 1",
-        params = list(user_id, agency_id, app_role)
+        paste(
+          "SELECT user_role_id, app_role, budget_access, adaptive_planning, performance_plan_access",
+          "FROM access.user_role",
+          "WHERE user_id = $1",
+          "ORDER BY user_role_id"
+        ),
+        params = list(user_id)
       )
-      if (nrow(existing_role)) {
+      selected_role <- highest_performance_role(c(existing_roles$app_role, app_role))
+      budget_access <- isTRUE(budget_access) || any(existing_roles$budget_access %in% TRUE, na.rm = TRUE)
+      adaptive_planning <- isTRUE(adaptive_planning) || any(existing_roles$adaptive_planning %in% TRUE, na.rm = TRUE)
+      performance_plan_access <- isTRUE(performance_plan_access) || any(existing_roles$performance_plan_access %in% TRUE, na.rm = TRUE)
+      if (nrow(existing_roles)) {
+        selected_rows <- existing_roles[existing_roles$app_role == selected_role, , drop = FALSE]
+        keep_role_id <- if (nrow(selected_rows)) selected_rows$user_role_id[[1]] else existing_roles$user_role_id[[1]]
         DBI::dbExecute(
           connection,
-          "UPDATE access.user_role SET budget_access = $2, adaptive_planning = $3, performance_plan_access = $4, updated_at = now() WHERE user_role_id = $1",
-          params = list(existing_role$user_role_id[[1]], budget_access, adaptive_planning, performance_plan_access)
+          "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5, updated_at = now() WHERE user_role_id = $1",
+          params = list(keep_role_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
+        )
+        DBI::dbExecute(
+          connection,
+          "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+          params = list(user_id, keep_role_id)
         )
       } else {
         DBI::dbExecute(
           connection,
-          "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
-          params = list(user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)
+          "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+          params = list(user_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
         )
       }
     }
+    consolidate_user_performance_roles(connection)
   })
   invisible(TRUE)
 }
@@ -1427,20 +1538,25 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
     )
     existing_role <- DBI::dbGetQuery(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) ORDER BY user_role_id LIMIT 1",
-      params = list(user_id, agency_id)
+      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
+      params = list(user_id)
     )
     if (nrow(existing_role)) {
       DBI::dbExecute(
         connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
         params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+        params = list(user_id, existing_role$user_role_id[[1]])
       )
     } else {
       DBI::dbExecute(
         connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
-        params = list(user_id, performance_role, agency_id, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
       )
     }
   })
@@ -1519,20 +1635,25 @@ save_entity_team_role_assignment <- function(connection, entity_access_id, entit
     )
     existing_role <- DBI::dbGetQuery(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) ORDER BY user_role_id LIMIT 1",
-      params = list(user_id, agency_id)
+      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
+      params = list(user_id)
     )
     if (nrow(existing_role)) {
       DBI::dbExecute(
         connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
         params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+        params = list(user_id, existing_role$user_role_id[[1]])
       )
     } else {
       DBI::dbExecute(
         connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
-        params = list(user_id, performance_role, agency_id, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
       )
     }
   })
