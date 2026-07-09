@@ -37,6 +37,97 @@ connect_app_database <- function() {
   )
 }
 
+logical_seed_value <- function(value) {
+  value <- tolower(trimws(as.character(value %||% "")))
+  value %in% c("true", "t", "1", "yes", "y")
+}
+
+apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
+  if (!file.exists(path)) return(invisible(FALSE))
+  seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+  required <- c("email", "full_name", "entity_id", "agency_id", "agency_role", "agency_roles", "access_level", "app_role")
+  missing_columns <- setdiff(required, names(seed))
+  if (length(missing_columns)) {
+    warning("Skipping user entity access seed; missing columns: ", paste(missing_columns, collapse = ", "))
+    return(invisible(FALSE))
+  }
+  seed <- seed[!is.na(seed$email) & nzchar(trimws(seed$email)) & !is.na(seed$entity_id), , drop = FALSE]
+  if (!nrow(seed)) return(invisible(TRUE))
+
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.\"user\"', 'user_id'), COALESCE((SELECT MAX(user_id) FROM access.\"user\"), 1), (SELECT COUNT(*) > 0 FROM access.\"user\"))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_entity_access', 'entity_access_id'), COALESCE((SELECT MAX(entity_access_id) FROM access.user_entity_access), 1), (SELECT COUNT(*) > 0 FROM access.user_entity_access))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_role', 'user_role_id'), COALESCE((SELECT MAX(user_role_id) FROM access.user_role), 1), (SELECT COUNT(*) > 0 FROM access.user_role))")
+    for (i in seq_len(nrow(seed))) {
+      row <- seed[i, , drop = FALSE]
+      email <- tolower(trimws(as.character(row$email[[1]] %||% "")))
+      full_name <- trimws(as.character(row$full_name[[1]] %||% ""))
+      entity_id <- suppressWarnings(as.integer(row$entity_id[[1]]))
+      agency_id <- trimws(as.character(row$agency_id[[1]] %||% ""))
+      service_id <- trimws(as.character(row$service_id[[1]] %||% ""))
+      if (!nzchar(service_id)) service_id <- NA_character_
+      agency_role <- trimws(as.character(row$agency_role[[1]] %||% "Agency Staff"))
+      agency_roles <- trimws(as.character(row$agency_roles[[1]] %||% agency_role))
+      access_level <- trimws(as.character(row$access_level[[1]] %||% "Edit"))
+      app_role <- trimws(as.character(row$app_role[[1]] %||% "AgencyViewer"))
+      if (identical(access_level, "Submit")) app_role <- "AgencySubmitter"
+      budget_access <- logical_seed_value(row$budget_access[[1]])
+      adaptive_planning <- logical_seed_value(row$adaptive_planning[[1]])
+      performance_plan_access <- logical_seed_value(row$performance_plan_access[[1]])
+      if (!nzchar(email) || is.na(entity_id) || !nzchar(agency_id) || !nzchar(app_role)) next
+      entity_exists <- DBI::dbGetQuery(
+        connection,
+        "SELECT entity_id FROM reference.plan_entity WHERE entity_id = $1 AND active = true AND has_own_plan = true",
+        params = list(entity_id)
+      )
+      if (!nrow(entity_exists)) next
+      user <- DBI::dbGetQuery(
+        connection,
+        paste(
+          'INSERT INTO access."user" (email, full_name, auth_type, active)',
+          "VALUES ($1, $2, 'MicrosoftAD', true)",
+          'ON CONFLICT (email) DO UPDATE SET full_name = COALESCE(NULLIF(EXCLUDED.full_name, \'\'), access."user".full_name), active = true, updated_at = now()',
+          "RETURNING user_id"
+        ),
+        params = list(email, full_name)
+      )
+      user_id <- user$user_id[[1]]
+      DBI::dbExecute(
+        connection,
+        paste(
+          "INSERT INTO access.user_entity_access",
+          "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
+          "VALUES ($1, $2, $3::varchar(20), $4::varchar(20), $5::varchar(30), $6, $7::varchar(20), $8, $9, $10)",
+          "ON CONFLICT (user_id, entity_id) DO UPDATE SET",
+          "agency_id = EXCLUDED.agency_id, service_id = EXCLUDED.service_id, agency_role = EXCLUDED.agency_role,",
+          "agency_roles = EXCLUDED.agency_roles, access_level = EXCLUDED.access_level, budget_access = EXCLUDED.budget_access,",
+          "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access, updated_at = now()"
+        ),
+        params = list(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)
+      )
+      existing_role <- DBI::dbGetQuery(
+        connection,
+        "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) AND app_role = $3::varchar(30) ORDER BY user_role_id LIMIT 1",
+        params = list(user_id, agency_id, app_role)
+      )
+      if (nrow(existing_role)) {
+        DBI::dbExecute(
+          connection,
+          "UPDATE access.user_role SET budget_access = $2, adaptive_planning = $3, performance_plan_access = $4, updated_at = now() WHERE user_role_id = $1",
+          params = list(existing_role$user_role_id[[1]], budget_access, adaptive_planning, performance_plan_access)
+        )
+      } else {
+        DBI::dbExecute(
+          connection,
+          "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
+          params = list(user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)
+        )
+      }
+    }
+  })
+  invisible(TRUE)
+}
+
 ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
@@ -283,6 +374,7 @@ ensure_review_schema <- function(connection) {
       "ON CONFLICT (user_id, entity_id) DO NOTHING"
     )
   )
+  apply_user_entity_access_seed(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
