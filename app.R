@@ -6413,16 +6413,36 @@ server <- function(input, output, session) {
       showNotification("You do not have permission to change team roles.", type = "error", duration = 8)
       return()
     }
-    if (!can_grant_performance_role(current_user_app_roles(), current_user_agency_roles(), input$team_performance_role)) {
-      showNotification("You do not have permission to assign that performance role.", type = "error", duration = 8)
-      return()
-    }
     access_id <- current_team_access_id()
     if (is.null(access_id)) return()
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
     accounting_agency_id <- plan_accounting_agency_id(data, plan)
     service_id <- plan_team_primary_service_id(data, plan)
+    target_performance_role <- input$team_performance_role
+    performance_role_unchanged <- FALSE
+    if (!identical(access_id, "new")) {
+      access_row <- data$access_user_agency_access[
+        data$access_user_agency_access$access_id == suppressWarnings(as.integer(access_id)),
+        ,
+        drop = FALSE
+      ]
+      if (nrow(access_row)) {
+        current_role_rows <- data$access_user_role[
+          data$access_user_role$user_id == access_row$user_id[[1]] &
+            (is.na(data$access_user_role$agency_id) | data$access_user_role$agency_id == accounting_agency_id),
+          ,
+          drop = FALSE
+        ]
+        if (nrow(current_role_rows)) {
+          performance_role_unchanged <- identical(as.character(target_performance_role), as.character(current_role_rows$app_role[[1]]))
+        }
+      }
+    }
+    if (!performance_role_unchanged && !can_grant_performance_role(current_user_app_roles(), current_user_agency_roles(), target_performance_role)) {
+      showNotification("You do not have permission to assign that performance role.", type = "error", duration = 8)
+      return()
+    }
     result <- tryCatch(
       save_team_role_assignment(
         database,
@@ -6431,7 +6451,7 @@ server <- function(input, output, session) {
         input$team_full_name,
         input$team_email,
         input$team_agency_role,
-        input$team_performance_role,
+        target_performance_role,
         isTRUE(input$team_budget_access),
         isTRUE(input$team_adaptive_planning),
         isTRUE(input$team_performance_plan_access),
