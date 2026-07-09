@@ -737,6 +737,14 @@
   });
 
   document.addEventListener("click", function (event) {
+    if (!event.target.closest("#delete_risk") || !window.Shiny) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this risk?")) return;
+    window.Shiny.setInputValue("risk_delete_confirmed_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
     if (!event.target.closest("#save_team_role") || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
@@ -746,23 +754,27 @@
     if (event.key !== "Enter") return;
     var target = event.target;
     if (!target || !target.closest) return;
-    if (target.closest("#login_email, #login_password")) {
-      if (window.Shiny) {
-        event.preventDefault();
-        window.Shiny.setInputValue("login_email_continue", Date.now(), { priority: "event" });
+    var triggerShinyAction = function (id) {
+      var button = document.getElementById(id);
+      if (button && typeof button.click === "function") {
+        button.click();
+        return;
       }
+      if (window.Shiny) {
+        window.Shiny.setInputValue(id, Date.now(), { priority: "event" });
+      }
+    };
+    if (target.closest("#login_email, #login_password")) {
+      event.preventDefault();
+      triggerShinyAction("login_email_continue");
     }
     if (target.closest("#request_email")) {
-      if (window.Shiny) {
-        event.preventDefault();
-        window.Shiny.setInputValue("request_submit", Date.now(), { priority: "event" });
-      }
+      event.preventDefault();
+      triggerShinyAction("request_submit");
     }
     if (target.closest("#reset_password, #reset_confirm")) {
-      if (window.Shiny) {
-        event.preventDefault();
-        window.Shiny.setInputValue("reset_submit", Date.now(), { priority: "event" });
-      }
+      event.preventDefault();
+      triggerShinyAction("reset_submit");
     }
   });
 
@@ -1510,8 +1522,8 @@
       var removeButton = editor.querySelector(".remove-goal-button");
       if (number) number.textContent = "Goal " + (index + 1);
       if (removeButton) {
-        removeButton.disabled = goalCount <= 1;
-        removeButton.title = goalCount <= 1 ? "At least one goal must remain while editing" : "Remove goal";
+        removeButton.disabled = index === 0 || goalCount <= 1;
+        removeButton.title = index === 0 ? "The first goal is required to create additional goals" : (goalCount <= 1 ? "At least one goal must remain while editing" : "Remove goal");
       }
     });
   }
@@ -1973,6 +1985,7 @@
     var page = removeButton.closest(".goals-page");
     var editor = removeButton.closest(".goal-editor");
     if (!page || !editor || page.querySelectorAll(".goal-editor").length <= 1) return;
+    if (Array.from(page.querySelectorAll(".goal-editor")).indexOf(editor) === 0) return;
     pendingGoalDeletion = { page: page, editor: editor };
     var dialog = document.getElementById("delete_goal_dialog");
     if (dialog && dialog.showModal) dialog.showModal();

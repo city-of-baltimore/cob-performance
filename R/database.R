@@ -1,3 +1,7 @@
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x
+}
+
 load_env_file <- function(path = ".env") {
   if (!file.exists(path)) return(invisible(FALSE))
   lines <- readLines(path, warn = FALSE)
@@ -37,8 +41,308 @@ connect_app_database <- function() {
   )
 }
 
+logical_seed_value <- function(value) {
+  value <- tolower(trimws(as.character(value %||% "")))
+  value %in% c("true", "t", "1", "yes", "y")
+}
+
+performance_role_rank <- function(role) {
+  ranks <- c(
+    AgencyViewer = 10L,
+    AgencyWriter = 20L,
+    AgencyApprover = 30L,
+    AgencySubmitter = 40L,
+    BBMRReviewer = 50L,
+    OPIReviewer = 60L,
+    DeputyMayor = 70L,
+    CAOffice = 80L,
+    SystemAdmin = 90L
+  )
+  role <- trimws(as.character(role %||% ""))
+  value <- unname(ranks[role])
+  ifelse(is.na(value), 0L, as.integer(value))
+}
+
+highest_performance_role <- function(roles) {
+  roles <- unique(trimws(as.character(roles %||% character(0))))
+  roles <- roles[nzchar(roles)]
+  if (!length(roles)) return("AgencyViewer")
+  roles[which.max(performance_role_rank(roles))]
+}
+
+consolidate_user_performance_roles <- function(connection) {
+  duplicate_groups <- DBI::dbGetQuery(
+    connection,
+    "SELECT user_id FROM access.user_role GROUP BY user_id HAVING COUNT(*) > 1"
+  )
+  if (!nrow(duplicate_groups)) return(invisible(0L))
+
+  consolidated <- 0L
+  for (i in seq_len(nrow(duplicate_groups))) {
+    user_id <- duplicate_groups$user_id[[i]]
+    role_rows <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT user_role_id, app_role, budget_access, adaptive_planning, performance_plan_access",
+        "FROM access.user_role",
+        "WHERE user_id = $1",
+        "ORDER BY user_role_id"
+      ),
+      params = list(user_id)
+    )
+    if (nrow(role_rows) <= 1) next
+
+    selected_role <- highest_performance_role(role_rows$app_role)
+    selected_rows <- role_rows[role_rows$app_role == selected_role, , drop = FALSE]
+    keep_role_id <- if (nrow(selected_rows)) selected_rows$user_role_id[[1]] else role_rows$user_role_id[[1]]
+    budget_access <- any(role_rows$budget_access %in% TRUE, na.rm = TRUE)
+    adaptive_planning <- any(role_rows$adaptive_planning %in% TRUE, na.rm = TRUE)
+    performance_plan_access <- any(role_rows$performance_plan_access %in% TRUE, na.rm = TRUE)
+
+    DBI::dbExecute(
+      connection,
+      paste(
+        "UPDATE access.user_role",
+        "SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5, updated_at = now()",
+        "WHERE user_role_id = $1"
+      ),
+      params = list(keep_role_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
+    )
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+      params = list(user_id, keep_role_id)
+    )
+    consolidated <- consolidated + 1L
+  }
+  invisible(consolidated)
+}
+
+apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
+  if (!file.exists(path)) return(invisible(FALSE))
+  seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+  required <- c("email", "full_name", "agency_id", "agency_role", "agency_roles", "access_level", "app_role")
+  missing_columns <- setdiff(required, names(seed))
+  if (length(missing_columns)) {
+    warning("Skipping user entity access seed; missing columns: ", paste(missing_columns, collapse = ", "))
+    return(invisible(FALSE))
+  }
+  has_public_name <- "public_name" %in% names(seed)
+  has_entity_id <- "entity_id" %in% names(seed)
+  if (!has_public_name && !has_entity_id) {
+    warning("Skipping user entity access seed; missing public_name or entity_id")
+    return(invisible(FALSE))
+  }
+  seed <- seed[!is.na(seed$email) & nzchar(trimws(seed$email)), , drop = FALSE]
+  if (!nrow(seed)) return(invisible(TRUE))
+
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.\"user\"', 'user_id'), COALESCE((SELECT MAX(user_id) FROM access.\"user\"), 1), (SELECT COUNT(*) > 0 FROM access.\"user\"))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_entity_access', 'entity_access_id'), COALESCE((SELECT MAX(entity_access_id) FROM access.user_entity_access), 1), (SELECT COUNT(*) > 0 FROM access.user_entity_access))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_role', 'user_role_id'), COALESCE((SELECT MAX(user_role_id) FROM access.user_role), 1), (SELECT COUNT(*) > 0 FROM access.user_role))")
+    for (i in seq_len(nrow(seed))) {
+      row <- seed[i, , drop = FALSE]
+      email <- tolower(trimws(as.character(row$email[[1]] %||% "")))
+      full_name <- trimws(as.character(row$full_name[[1]] %||% ""))
+      public_name <- if (has_public_name) trimws(as.character(row$public_name[[1]] %||% "")) else ""
+      entity_id <- if (has_entity_id) suppressWarnings(as.integer(row$entity_id[[1]] %||% NA_integer_)) else NA_integer_
+      agency_id <- trimws(as.character(row$agency_id[[1]] %||% ""))
+      service_id <- trimws(as.character(row$service_id[[1]] %||% ""))
+      if (!nzchar(service_id)) service_id <- NA_character_
+      agency_role <- trimws(as.character(row$agency_role[[1]] %||% "Agency Staff"))
+      agency_roles <- trimws(as.character(row$agency_roles[[1]] %||% agency_role))
+      access_level <- trimws(as.character(row$access_level[[1]] %||% "Edit"))
+      app_role <- trimws(as.character(row$app_role[[1]] %||% "AgencyViewer"))
+      if (identical(access_level, "Submit")) app_role <- "AgencySubmitter"
+      budget_access <- logical_seed_value(row$budget_access[[1]])
+      adaptive_planning <- logical_seed_value(row$adaptive_planning[[1]])
+      performance_plan_access <- logical_seed_value(row$performance_plan_access[[1]])
+      if (!nzchar(email) || !nzchar(agency_id) || !nzchar(app_role)) next
+      entity_exists <- if (nzchar(public_name)) {
+        DBI::dbGetQuery(
+          connection,
+          "SELECT entity_id FROM reference.plan_entity WHERE public_name = $1 AND active = true AND has_own_plan = true ORDER BY entity_id LIMIT 1",
+          params = list(public_name)
+        )
+      } else if (!is.na(entity_id)) {
+        DBI::dbGetQuery(
+          connection,
+          "SELECT entity_id FROM reference.plan_entity WHERE entity_id = $1 AND active = true AND has_own_plan = true",
+          params = list(entity_id)
+        )
+      } else {
+        data.frame()
+      }
+      if (!nrow(entity_exists)) next
+      entity_id <- entity_exists$entity_id[[1]]
+      user <- DBI::dbGetQuery(
+        connection,
+        paste(
+          'INSERT INTO access."user" (email, full_name, auth_type, active)',
+          "VALUES ($1, $2, 'MicrosoftAD', true)",
+          'ON CONFLICT (email) DO UPDATE SET full_name = COALESCE(NULLIF(EXCLUDED.full_name, \'\'), access."user".full_name), active = true, updated_at = now()',
+          "RETURNING user_id"
+        ),
+        params = list(email, full_name)
+      )
+      user_id <- user$user_id[[1]]
+      DBI::dbExecute(
+        connection,
+        paste(
+          "INSERT INTO access.user_entity_access",
+          "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
+          "VALUES ($1, $2, $3::varchar(20), $4::varchar(20), $5::varchar(30), $6, $7::varchar(20), $8, $9, $10)",
+          "ON CONFLICT (user_id, entity_id) DO UPDATE SET",
+          "agency_id = EXCLUDED.agency_id, service_id = EXCLUDED.service_id, agency_role = EXCLUDED.agency_role,",
+          "agency_roles = EXCLUDED.agency_roles, access_level = EXCLUDED.access_level, budget_access = EXCLUDED.budget_access,",
+          "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access, updated_at = now()"
+        ),
+        params = list(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)
+      )
+      existing_roles <- DBI::dbGetQuery(
+        connection,
+        paste(
+          "SELECT user_role_id, app_role, budget_access, adaptive_planning, performance_plan_access",
+          "FROM access.user_role",
+          "WHERE user_id = $1",
+          "ORDER BY user_role_id"
+        ),
+        params = list(user_id)
+      )
+      selected_role <- highest_performance_role(c(existing_roles$app_role, app_role))
+      budget_access <- isTRUE(budget_access) || any(existing_roles$budget_access %in% TRUE, na.rm = TRUE)
+      adaptive_planning <- isTRUE(adaptive_planning) || any(existing_roles$adaptive_planning %in% TRUE, na.rm = TRUE)
+      performance_plan_access <- isTRUE(performance_plan_access) || any(existing_roles$performance_plan_access %in% TRUE, na.rm = TRUE)
+      if (nrow(existing_roles)) {
+        selected_rows <- existing_roles[existing_roles$app_role == selected_role, , drop = FALSE]
+        keep_role_id <- if (nrow(selected_rows)) selected_rows$user_role_id[[1]] else existing_roles$user_role_id[[1]]
+        DBI::dbExecute(
+          connection,
+          "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5, updated_at = now() WHERE user_role_id = $1",
+          params = list(keep_role_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
+        )
+        DBI::dbExecute(
+          connection,
+          "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+          params = list(user_id, keep_role_id)
+        )
+      } else {
+        DBI::dbExecute(
+          connection,
+          "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+          params = list(user_id, selected_role, budget_access, adaptive_planning, performance_plan_access)
+        )
+      }
+    }
+    consolidate_user_performance_roles(connection)
+  })
+  invisible(TRUE)
+}
+
 ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
+  DBI::dbExecute(
+    connection,
+    "UPDATE reference.agency SET submit_plan = true WHERE agency_id = 'AGC4317'"
+  )
+  DBI::dbExecute(connection, "ALTER TABLE reference.plan_entity DROP CONSTRAINT IF EXISTS plan_entity_entity_type_check")
+  DBI::dbExecute(
+    connection,
+    "ALTER TABLE reference.plan_entity ADD CONSTRAINT plan_entity_entity_type_check CHECK (entity_type IN ('Agency', 'MayoraltyOffice', 'QuasiAgency', 'Other'))"
+  )
+  DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('reference.plan_entity', 'entity_id'), COALESCE((SELECT MAX(entity_id) FROM reference.plan_entity), 1), (SELECT COUNT(*) > 0 FROM reference.plan_entity))")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO reference.plan_entity (parent_agency_id, public_name, entity_type, has_own_plan, active)",
+      "SELECT agency_id, COALESCE(NULLIF(public_name, ''), agency_name), 'Agency', true, COALESCE(active, true)",
+      "FROM reference.agency",
+      "WHERE COALESCE(active, true) AND COALESCE(submit_plan, true)",
+      "ON CONFLICT (parent_agency_id, public_name) DO NOTHING"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE reference.plan_entity pe",
+      "SET active = true, has_own_plan = true",
+      "FROM reference.agency a",
+      "WHERE pe.parent_agency_id = a.agency_id",
+      "AND pe.entity_type = 'Agency'",
+      "AND pe.public_name = COALESCE(NULLIF(a.public_name, ''), a.agency_name)",
+      "AND COALESCE(a.active, true)",
+      "AND COALESCE(a.submit_plan, true)"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE reference.plan_entity pe",
+      "SET active = false, has_own_plan = false",
+      "FROM reference.agency a",
+      "WHERE pe.parent_agency_id = a.agency_id",
+      "AND pe.entity_type = 'Agency'",
+      "AND NOT COALESCE(a.submit_plan, true)"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO reference.plan_entity (parent_agency_id, public_name, entity_type, has_own_plan, active)",
+      "VALUES ('AGC4301', 'Mayor''s Office', 'Other', false, true)",
+      "ON CONFLICT (parent_agency_id, public_name) DO UPDATE SET",
+      "entity_type = 'Other', has_own_plan = false, active = true"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE OR REPLACE VIEW reference.entity_service_crosswalk AS",
+      "SELECT",
+      "  pe.entity_id,",
+      "  pe.public_name,",
+      "  pe.entity_type,",
+      "  pe.has_own_plan,",
+      "  pe.active AS entity_active,",
+      "  a.agency_id,",
+      "  a.agency_name,",
+      "  a.public_name AS agency_public_name,",
+      "  a.submit_plan AS agency_submits_plan,",
+      "  s.service_id,",
+      "  s.service_name,",
+      "  s.service_type,",
+      "  s.active AS service_active,",
+      "  pes.is_primary",
+      "FROM reference.plan_entity pe",
+      "JOIN reference.agency a ON a.agency_id = pe.parent_agency_id",
+      "LEFT JOIN reference.plan_entity_service pes ON pes.entity_id = pe.entity_id",
+      "LEFT JOIN reference.service s ON s.service_id = pes.service_id"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS access.user_entity_access (",
+      "entity_access_id serial PRIMARY KEY,",
+      "user_id integer NOT NULL REFERENCES access.\"user\"(user_id) ON DELETE CASCADE,",
+      "entity_id integer NOT NULL REFERENCES reference.plan_entity(entity_id) ON DELETE CASCADE,",
+      "agency_id varchar(20) REFERENCES reference.agency(agency_id),",
+      "service_id varchar(20) REFERENCES reference.service(service_id),",
+      "agency_role varchar(30),",
+      "agency_roles text,",
+      "access_level varchar(20),",
+      "budget_access boolean NOT NULL DEFAULT false,",
+      "performance_plan_access boolean NOT NULL DEFAULT true,",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer REFERENCES access.\"user\"(user_id),",
+      "UNIQUE (user_id, entity_id)",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "ALTER TABLE access.user_entity_access ADD COLUMN IF NOT EXISTS adaptive_planning boolean NOT NULL DEFAULT false")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_entity ON access.user_entity_access(entity_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_user ON access.user_entity_access(user_id)")
   DBI::dbExecute(
     connection,
     paste(
@@ -103,6 +407,85 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "DELETE FROM access.user_entity_access uea",
+      "USING workflow.entity_role_assignment era",
+      "WHERE uea.entity_id = era.entity_id",
+      "AND uea.user_id IN (era.reviewer_user_id, era.deputy_mayor_user_id, era.ca_office_user_id)",
+      "AND uea.user_id IS DISTINCT FROM era.submitter_user_id"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO access.user_entity_access",
+      "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
+      "SELECT DISTINCT source.user_id, source.entity_id, source.agency_id, source.service_id, source.agency_role, source.agency_roles,",
+      "source.access_level, source.budget_access, source.adaptive_planning, source.performance_plan_access",
+      "FROM (",
+      "  SELECT era.submitter_user_id AS user_id, era.entity_id, era.agency_id, NULL::varchar(20) AS service_id,",
+      "    'Agency Staff'::varchar(30) AS agency_role, 'Agency Staff'::text AS agency_roles,",
+      "    'Submit'::varchar(20) AS access_level, false AS budget_access, false AS adaptive_planning, true AS performance_plan_access",
+      "  FROM workflow.entity_role_assignment era",
+      "  WHERE era.submitter_user_id IS NOT NULL AND era.entity_id IS NOT NULL",
+      "  UNION ALL",
+      "  SELECT uaa.user_id, pes.entity_id, uaa.agency_id, uaa.service_id, uaa.agency_role,",
+      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+      "  FROM access.user_agency_access uaa",
+      "  JOIN reference.plan_entity_service pes ON pes.service_id = uaa.service_id",
+      "  JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
+      "  JOIN (",
+      "    SELECT pes2.service_id, COUNT(DISTINCT pe2.entity_id)::integer AS entity_count",
+      "    FROM reference.plan_entity_service pes2",
+      "    JOIN reference.plan_entity pe2 ON pe2.entity_id = pes2.entity_id",
+      "    WHERE pe2.active AND pe2.has_own_plan",
+      "    GROUP BY pes2.service_id",
+      "  ) counts ON counts.service_id = uaa.service_id AND counts.entity_count = 1",
+      "  WHERE pe.active AND pe.has_own_plan AND uaa.service_id IS NOT NULL",
+      "  UNION ALL",
+      "  SELECT uaa.user_id, pe.entity_id, uaa.agency_id, NULL::varchar(20) AS service_id, uaa.agency_role,",
+      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+      "  FROM access.user_agency_access uaa",
+      "  JOIN reference.plan_entity pe ON pe.parent_agency_id = uaa.agency_id AND pe.entity_type = 'Agency'",
+      "  WHERE (uaa.service_id IS NULL OR trim(uaa.service_id) = '')",
+      "    AND pe.active AND pe.has_own_plan",
+      "    AND NOT EXISTS (",
+      "      SELECT 1",
+      "      FROM access.user_entity_access existing",
+      "      JOIN reference.plan_entity existing_entity ON existing_entity.entity_id = existing.entity_id",
+      "      WHERE existing.user_id = uaa.user_id",
+      "        AND existing_entity.parent_agency_id = uaa.agency_id",
+      "        AND existing_entity.entity_type <> 'Agency'",
+      "    )",
+      "    AND NOT EXISTS (",
+      "      SELECT 1",
+      "      FROM access.user_agency_access specific_uaa",
+      "      JOIN reference.plan_entity_service specific_pes ON specific_pes.service_id = specific_uaa.service_id",
+      "      JOIN reference.plan_entity specific_entity ON specific_entity.entity_id = specific_pes.entity_id",
+      "      JOIN (",
+      "        SELECT pes3.service_id, COUNT(DISTINCT pe3.entity_id)::integer AS entity_count",
+      "        FROM reference.plan_entity_service pes3",
+      "        JOIN reference.plan_entity pe3 ON pe3.entity_id = pes3.entity_id",
+      "        WHERE pe3.active AND pe3.has_own_plan",
+      "        GROUP BY pes3.service_id",
+      "      ) specific_counts ON specific_counts.service_id = specific_uaa.service_id AND specific_counts.entity_count = 1",
+      "      WHERE specific_uaa.user_id = uaa.user_id",
+      "        AND specific_uaa.agency_id = uaa.agency_id",
+      "        AND specific_uaa.service_id IS NOT NULL",
+      "        AND specific_entity.parent_agency_id = uaa.agency_id",
+      "        AND specific_entity.entity_type <> 'Agency'",
+      "    )",
+      ") source",
+      "JOIN access.\"user\" u ON u.user_id = source.user_id AND u.active",
+      "WHERE source.user_id IS NOT NULL",
+      "ON CONFLICT (user_id, entity_id) DO NOTHING"
+    )
+  )
+  apply_user_entity_access_seed(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
@@ -170,6 +553,9 @@ load_app_data <- function(connection) {
       "SELECT plan_service_id, plan_id, service_id, sort_order FROM performance.plan_service"
     ),
     reference_plan_entity = query(
+      "SELECT entity_id, parent_agency_id, public_name, entity_type, has_own_plan, active FROM reference.plan_entity WHERE active AND has_own_plan ORDER BY public_name"
+    ),
+    reference_access_entity = query(
       "SELECT entity_id, parent_agency_id, public_name, entity_type, has_own_plan, active FROM reference.plan_entity WHERE active ORDER BY public_name"
     ),
     reference_plan_entity_service = query(
@@ -312,6 +698,18 @@ load_app_data <- function(connection) {
         "uaa.access_level, uaa.budget_access, uaa.performance_plan_access",
         "FROM access.user_agency_access uaa JOIN access.\"user\" u ON u.user_id = uaa.user_id",
         "WHERE u.active ORDER BY uaa.agency_id, u.full_name"
+      )
+    ),
+    access_user_entity_access = query(
+      paste(
+        "SELECT uea.entity_access_id, ('entity:' || uea.entity_access_id::text) AS access_id,",
+        "u.user_id, uea.entity_id, pe.public_name, pe.entity_type, uea.agency_id, uea.service_id,",
+        "u.full_name, u.email, uea.agency_role, COALESCE(NULLIF(uea.agency_roles, ''), uea.agency_role) AS agency_roles,",
+        "uea.access_level, uea.budget_access, uea.adaptive_planning, uea.performance_plan_access",
+        "FROM access.user_entity_access uea",
+        "JOIN access.\"user\" u ON u.user_id = uea.user_id",
+        "JOIN reference.plan_entity pe ON pe.entity_id = uea.entity_id",
+        "WHERE u.active AND pe.active AND pe.has_own_plan ORDER BY pe.public_name, u.full_name"
       )
     ),
     access_user_role = query(
@@ -784,6 +1182,16 @@ approve_plan_review <- function(connection, plan_id, reviewer_id = NULL, next_st
       "UPDATE planning.agency_plan SET plan_status = $2, assigned_reviewer = COALESCE(assigned_reviewer, $3), updated_at = now() WHERE plan_id = $1",
       params = list(plan_id, next_status, reviewer_id)
     )
+    if (next_status %in% c("DeputyMayorReview", "CAReview", "Approved")) {
+      opi_stamp <- DBI::dbGetQuery(
+        connection,
+        "SELECT COUNT(*)::integer AS n FROM workflow.plan_approval_stamp WHERE plan_id = $1 AND approval_stage = 'OPIApproval'",
+        params = list(plan_id)
+      )$n[[1]]
+      if (opi_stamp < 1L) {
+        stop("OPI approval is required before routing this plan to Deputy Mayor, CA Office, or publishing.")
+      }
+    }
     DBI::dbExecute(
       connection,
       paste(
@@ -867,14 +1275,29 @@ approve_plan_gate <- function(connection, plan_id, approved_by = NULL) {
   invisible(plan_id)
 }
 
+opi_approval_user_allowed <- function(connection, user_id) {
+  user_id <- if (is.null(user_id) || is.na(user_id)) NA_integer_ else as.integer(user_id)
+  if (is.na(user_id)) return(FALSE)
+  approver <- DBI::dbGetQuery(
+    connection,
+    'SELECT lower(trim(email)) AS email FROM access."user" WHERE user_id = $1 AND active = true',
+    params = list(user_id)
+  )
+  nrow(approver) &&
+    approver$email[[1]] %in% c("melanie.lada@baltimorecity.gov", "danny.heller@baltimorecity.gov")
+}
+
 add_plan_approval_stamp <- function(connection, plan_id, approval_stage, added_by = NULL, approved_by = NULL, notes = NULL) {
   plan_id <- as.integer(plan_id)
   added_by <- if (is.null(added_by) || is.na(added_by)) NA_integer_ else as.integer(added_by)
   approved_by <- if (is.null(approved_by) || is.na(approved_by)) added_by else as.integer(approved_by)
   approval_stage <- as.character(approval_stage %||% "")
-  valid_stages <- c("Reviewer", "DeputyMayor", "CAOffice")
+  valid_stages <- c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice")
   if (is.na(plan_id)) stop("Plan is required.")
   if (!approval_stage %in% valid_stages) stop("Choose a valid approval stage.")
+  if (identical(approval_stage, "OPIApproval") && !opi_approval_user_allowed(connection, added_by)) {
+    stop("Only Melanie Lada or Danny Heller can add the OPI approval stamp.")
+  }
   DBI::dbWithTransaction(connection, {
     plan <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
     if (!nrow(plan)) stop("Plan not found.")
@@ -908,9 +1331,12 @@ remove_plan_approval_stamp <- function(connection, plan_id, approval_stage, remo
   plan_id <- as.integer(plan_id)
   removed_by <- if (is.null(removed_by) || is.na(removed_by)) NA_integer_ else as.integer(removed_by)
   approval_stage <- as.character(approval_stage %||% "")
-  valid_stages <- c("Reviewer", "DeputyMayor", "CAOffice")
+  valid_stages <- c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice")
   if (is.na(plan_id)) stop("Plan is required.")
   if (!approval_stage %in% valid_stages) stop("Choose a valid approval stage.")
+  if (identical(approval_stage, "OPIApproval") && !opi_approval_user_allowed(connection, removed_by)) {
+    stop("Only Melanie Lada or Danny Heller can remove the OPI approval stamp.")
+  }
   DBI::dbWithTransaction(connection, {
     plan <- DBI::dbGetQuery(
       connection,
@@ -929,7 +1355,8 @@ remove_plan_approval_stamp <- function(connection, plan_id, approval_stage, remo
     if (!nrow(stamp_count) || stamp_count$stamp_count[[1]] < 1) stop("No approval stamp exists for this stage.")
     stages_to_remove <- switch(
       approval_stage,
-      Reviewer = c("Reviewer", "DeputyMayor", "CAOffice"),
+      Reviewer = c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"),
+      OPIApproval = c("OPIApproval", "DeputyMayor", "CAOffice"),
       DeputyMayor = c("DeputyMayor", "CAOffice"),
       CAOffice = c("CAOffice")
     )
@@ -942,6 +1369,7 @@ remove_plan_approval_stamp <- function(connection, plan_id, approval_stage, remo
     target_status <- switch(
       approval_stage,
       Reviewer = if (plan$plan_status[[1]] %in% c("DeputyMayorReview", "CAReview", "Approved")) "UnderReview" else plan$plan_status[[1]],
+      OPIApproval = if (plan$plan_status[[1]] %in% c("DeputyMayorReview", "CAReview", "Approved")) "UnderReview" else plan$plan_status[[1]],
       DeputyMayor = if (plan$plan_status[[1]] %in% c("CAReview", "Approved")) "DeputyMayorReview" else plan$plan_status[[1]],
       CAOffice = if (identical(plan$plan_status[[1]], "Approved")) "CAReview" else plan$plan_status[[1]]
     )
@@ -995,8 +1423,8 @@ route_plan_from_publishing_queue <- function(connection, plan_id, routed_by = NU
     )
     stages_to_clear <- switch(
       next_status,
-      Returned = c("Reviewer", "DeputyMayor", "CAOffice"),
-      UnderReview = c("Reviewer", "DeputyMayor", "CAOffice"),
+      Returned = c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"),
+      UnderReview = c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"),
       DeputyMayorReview = c("DeputyMayor", "CAOffice"),
       CAReview = c("CAOffice"),
       character(0)
@@ -1110,20 +1538,122 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
     )
     existing_role <- DBI::dbGetQuery(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20) ORDER BY user_role_id LIMIT 1",
-      params = list(user_id, agency_id)
+      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
+      params = list(user_id)
     )
     if (nrow(existing_role)) {
       DBI::dbExecute(
         connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
         params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+        params = list(user_id, existing_role$user_role_id[[1]])
       )
     } else {
       DBI::dbExecute(
         connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), $3::varchar(20), $4, $5, $6)",
-        params = list(user_id, performance_role, agency_id, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+    }
+  })
+  invisible(TRUE)
+}
+
+save_entity_team_role_assignment <- function(connection, entity_access_id, entity_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
+  agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  is_new <- identical(as.character(entity_access_id), "new")
+  entity_access_id <- if (is_new) NA_integer_ else as.integer(entity_access_id)
+  entity_id <- as.integer(entity_id)
+  agency_id <- trimws(as.character(agency_id %||% ""))
+  service_id <- trimws(as.character(service_id %||% ""))
+  if (!nzchar(service_id)) service_id <- NA_character_
+  full_name <- trimws(as.character(full_name %||% ""))
+  email <- tolower(trimws(as.character(email %||% "")))
+  agency_roles <- if (is.null(agency_role) || length(agency_role) == 0) "" else agency_role
+  agency_roles <- unique(trimws(as.character(agency_roles)))
+  agency_roles <- agency_roles[nzchar(agency_roles)]
+  agency_role <- if (length(agency_roles)) agency_roles[[1]] else ""
+  agency_roles_value <- paste(agency_roles, collapse = "||")
+  performance_role <- trimws(as.character(performance_role %||% ""))
+  if (is.na(entity_id)) stop("Entity assignment is required.")
+  if (!nzchar(agency_id)) stop("Agency assignment is required.")
+  if (!nzchar(full_name)) stop("Person name is required.")
+  if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) stop("A valid email is required.")
+  if (!length(agency_roles) || any(!agency_roles %in% agency_role_values)) stop("Choose valid agency roles.")
+  if (!performance_role %in% performance_role_values) stop("Choose a valid performance role.")
+
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.\"user\"', 'user_id'), COALESCE((SELECT MAX(user_id) FROM access.\"user\"), 1), (SELECT COUNT(*) > 0 FROM access.\"user\"))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_entity_access', 'entity_access_id'), COALESCE((SELECT MAX(entity_access_id) FROM access.user_entity_access), 1), (SELECT COUNT(*) > 0 FROM access.user_entity_access))")
+    DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('access.user_role', 'user_role_id'), COALESCE((SELECT MAX(user_role_id) FROM access.user_role), 1), (SELECT COUNT(*) > 0 FROM access.user_role))")
+    if (is_new) {
+      user <- DBI::dbGetQuery(
+        connection,
+        paste(
+          'INSERT INTO access."user" (email, full_name, auth_type, active)',
+          "VALUES ($1, $2, 'MicrosoftAD', true)",
+          'ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name, active = true',
+          "RETURNING user_id"
+        ),
+        params = list(email, full_name)
+      )
+      user_id <- user$user_id[[1]]
+      access <- DBI::dbGetQuery(
+        connection,
+        "SELECT entity_access_id, user_id, entity_id, agency_id, service_id FROM access.user_entity_access WHERE user_id = $1 AND entity_id = $2 ORDER BY entity_access_id LIMIT 1",
+        params = list(user_id, entity_id)
+      )
+      if (nrow(access)) {
+        entity_access_id <- access$entity_access_id[[1]]
+      } else {
+        access <- DBI::dbGetQuery(
+          connection,
+          "INSERT INTO access.user_entity_access (user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2, $3::varchar(20), $4::varchar(20), $5::varchar(30), $6, CASE WHEN $5::text = 'Agency Staff' THEN 'ReadOnly' WHEN $5::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, $7, $8, $9) RETURNING entity_access_id, user_id, entity_id, agency_id, service_id",
+          params = list(user_id, entity_id, agency_id, service_id, agency_role, agency_roles_value, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+        )
+        entity_access_id <- access$entity_access_id[[1]]
+      }
+    } else {
+      access <- DBI::dbGetQuery(connection, "SELECT entity_access_id, user_id, entity_id, agency_id, service_id FROM access.user_entity_access WHERE entity_access_id = $1", params = list(entity_access_id))
+      if (!nrow(access)) stop("Team entity access row not found.")
+      user_id <- access$user_id[[1]]
+    }
+    DBI::dbExecute(
+      connection,
+      'UPDATE access."user" SET full_name = $2, email = $3, updated_at = now() WHERE user_id = $1',
+      params = list(user_id, full_name, email)
+    )
+    DBI::dbExecute(
+      connection,
+      "UPDATE access.user_entity_access SET agency_id = $2::varchar(20), service_id = $3::varchar(20), agency_role = $4::varchar(30), agency_roles = $5, access_level = CASE WHEN $4::text = 'Agency Staff' THEN 'ReadOnly' WHEN $4::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, budget_access = $6, adaptive_planning = $7, performance_plan_access = $8, updated_at = now() WHERE entity_access_id = $1",
+      params = list(entity_access_id, agency_id, service_id, agency_role, agency_roles_value, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+    )
+    existing_role <- DBI::dbGetQuery(
+      connection,
+      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
+      params = list(user_id)
+    )
+    if (nrow(existing_role)) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
+        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
+      )
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
+        params = list(user_id, existing_role$user_role_id[[1]])
+      )
+    } else {
+      DBI::dbExecute(
+        connection,
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
       )
     }
   })
@@ -1176,6 +1706,52 @@ delete_team_role_assignment <- function(connection, access_id, acting_user_id = 
   invisible(TRUE)
 }
 
+delete_entity_team_role_assignment <- function(connection, entity_access_id, acting_user_id = NULL) {
+  entity_access_id <- as.integer(entity_access_id)
+  acting_user_id <- suppressWarnings(as.integer(acting_user_id %||% NA_integer_))
+  access <- DBI::dbGetQuery(
+    connection,
+    "SELECT entity_access_id, user_id, entity_id, agency_id FROM access.user_entity_access WHERE entity_access_id = $1",
+    params = list(entity_access_id)
+  )
+  if (!nrow(access)) stop("Team entity access row not found.")
+  if (!is.na(acting_user_id) && access$user_id[[1]] == acting_user_id) {
+    stop("You cannot delete your own team access row.")
+  }
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(
+      connection,
+      "DELETE FROM access.user_entity_access WHERE entity_access_id = $1",
+      params = list(entity_access_id)
+    )
+    remaining_access_for_agency <- DBI::dbGetQuery(
+      connection,
+      "SELECT COUNT(*)::integer AS n FROM access.user_entity_access WHERE user_id = $1 AND agency_id = $2",
+      params = list(access$user_id[[1]], access$agency_id[[1]])
+    )$n[[1]]
+    if (remaining_access_for_agency == 0L) {
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM access.user_role WHERE user_id = $1 AND agency_id IS NOT DISTINCT FROM $2::varchar(20)",
+        params = list(access$user_id[[1]], access$agency_id[[1]])
+      )
+    }
+    remaining_access <- DBI::dbGetQuery(
+      connection,
+      "SELECT (SELECT COUNT(*) FROM access.user_entity_access WHERE user_id = $1) + (SELECT COUNT(*) FROM access.user_agency_access WHERE user_id = $1) + (SELECT COUNT(*) FROM access.user_role WHERE user_id = $1) AS n",
+      params = list(access$user_id[[1]])
+    )$n[[1]]
+    if (remaining_access == 0) {
+      DBI::dbExecute(
+        connection,
+        'UPDATE access."user" SET active = false, updated_at = now() WHERE user_id = $1',
+        params = list(access$user_id[[1]])
+      )
+    }
+  })
+  invisible(TRUE)
+}
+
 risk_type_values <- c(
   "procurement", "federal funding", "state funding", "city funding",
   "technology", "environmental", "staffing", "legislation", "cross-agency inputs", "other"
@@ -1203,6 +1779,19 @@ save_service_risk <- function(connection, risk_id, plan_id, risk_type, descripti
   )
   if (changed != 1) stop("Risk not found for this plan")
   as.integer(risk_id)
+}
+
+delete_service_risk <- function(connection, risk_id, plan_id) {
+  risk_id <- suppressWarnings(as.integer(risk_id))
+  plan_id <- suppressWarnings(as.integer(plan_id))
+  if (is.na(risk_id) || is.na(plan_id)) stop("Risk not found.")
+  changed <- DBI::dbExecute(
+    connection,
+    "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
+    params = list(risk_id, plan_id)
+  )
+  if (changed != 1) stop("Risk not found for this plan.")
+  invisible(TRUE)
 }
 
 get_section_draft <- function(connection, plan_id, section_key) {
@@ -1519,8 +2108,8 @@ return_plan_from_approval_gate <- function(connection, plan_id, returned_by = NU
     }
     stages_to_remove <- switch(
       next_status,
-      Returned = c("Reviewer", "DeputyMayor", "CAOffice"),
-      UnderReview = c("Reviewer", "DeputyMayor", "CAOffice"),
+      Returned = c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"),
+      UnderReview = c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"),
       DeputyMayorReview = c("DeputyMayor", "CAOffice")
     )
     stage_placeholders <- paste0("$", seq_along(stages_to_remove) + 1L, collapse = ", ")
