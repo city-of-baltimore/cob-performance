@@ -30,6 +30,8 @@ services:
       # Email delivery — populated from .env in the repo root (gitignored).
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      ORF_SENDGRID_API_KEY: ${ORF_SENDGRID_API_KEY:-}
+      ORF_DEFAULT_FROM_EMAIL: ${ORF_DEFAULT_FROM_EMAIL:-}
     ports:
       - "3838:3838"
     depends_on:
