@@ -365,6 +365,14 @@
     if (chip) chip.textContent = values.length + " " + (values.length === 1 ? "Metric" : "Metrics");
   }
 
+  function csvValueSet(value) {
+    return new Set(String(value || "").split(",").map(function (item) {
+      return item.trim();
+    }).filter(function (item) {
+      return item !== "";
+    }));
+  }
+
   function disableLockedBuilderControls(page) {
     if (!page || page.getAttribute("data-plan-locked") !== "true") return;
     page.querySelectorAll("input, textarea, select, button").forEach(function (control) {
@@ -1056,27 +1064,39 @@
 
   function updateAllKpiAvailability(page) {
     if (!page) return;
-    var allSelects = Array.from(page.querySelectorAll(".kpi-select-row select"));
-    var selectedValues = allSelects.map(function (select) { return select.value; }).filter(function (value) { return value !== ""; });
-    allSelects.forEach(function (select) {
-      Array.from(select.options).forEach(function (option) {
-        option.disabled = option.value !== "" && option.value !== select.value && selectedValues.indexOf(option.value) !== -1;
-      });
-    });
     page.querySelectorAll(".kpi-picker").forEach(function (picker) {
       var selectors = Array.from(picker.querySelectorAll(".kpi-select-row select"));
       if (selectors.length === 0) return;
       updateKpiPreview(selectors[0]);
-      var outsideValues = new Set(allSelects.filter(function (select) {
-        return !picker.contains(select) && select.value !== "";
-      }).map(function (select) { return select.value; }));
-      var measureCount = selectors[0].options.length - 1;
-      var availableCount = measureCount - outsideValues.size;
+      var container = picker.querySelector(".kpi-selectors");
+      var isService = Boolean(container && container.getAttribute("data-service-id"));
+      var outsideValues = isService ? csvValueSet(container.getAttribute("data-service-disabled-metrics")) : new Set();
+      if (isService) {
+        page.querySelectorAll(".service-editor").forEach(function (editor) {
+          if (editor.contains(picker)) return;
+          selectedMetricsFromEditor(editor).forEach(function (value) { outsideValues.add(value); });
+        });
+      }
+      selectors.forEach(function (select) {
+        var pickerValues = selectors.map(function (innerSelect) { return innerSelect.value; }).filter(function (value) {
+          return value !== "";
+        });
+        Array.from(select.options).forEach(function (option) {
+          if (option.value === "" || option.value === select.value) {
+            option.disabled = false;
+            return;
+          }
+          option.disabled = pickerValues.indexOf(option.value) !== -1 || outsideValues.has(option.value);
+        });
+      });
+      var optionValues = Array.from(selectors[0].options).map(function (option) { return option.value; }).filter(function (value) { return value !== ""; });
+      var unavailableOptionCount = optionValues.filter(function (value) { return outsideValues.has(value); }).length;
+      var measureCount = optionValues.length;
+      var availableCount = measureCount - unavailableOptionCount;
       var addButton = picker.querySelector(".add-kpi-button");
       if (addButton) {
         var disabledReason = "";
         var selectedCount = selectors.filter(function (select) { return select.value !== ""; }).length;
-        var isService = Boolean(picker.querySelector(".kpi-selectors[data-service-id]"));
         if (selectedCount >= MAX_MEASURES_PER_BLOCK) {
           disabledReason = "cap";
         } else if (selectors.some(function (select) { return select.value === ""; })) {

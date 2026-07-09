@@ -5,7 +5,11 @@ library(RPostgres)
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
 
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x)) y else x
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) return(y)
+  missing <- tryCatch(all(is.na(x)), error = function(error) FALSE)
+  if (isTRUE(missing)) y else x
+}
 
 
 pages <- list(
@@ -601,6 +605,7 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   }
   selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
   selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
+  other_service_metric_ids <- service_metric_ids_for_other_services(db, plan, service_id)
   metric_selector_rows <- lapply(seq_along(selected_metrics), function(metric_index) {
     div(
       class = "kpi-select-row",
@@ -671,7 +676,12 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       p(class = "goal-field-instruction", "Choose from the agency's validated performance measures. Review the measure definition and five-year history before selecting it."),
       p(class = "goal-field-instruction", "Select the metric that best captures the quality, timeliness, efficiency, or outcomes of this service. Choose outcome or leading indicators where possible - avoid selecting metrics that only count activity or workload. A metric can also serve as a goal-level KPI; you may see the same measure appear in both places."),
       if (length(selected_metric_ids) > 5) div(class = "required-fields-note error-note", "This service has more than 5 metrics selected. Remove metrics until 5 or fewer remain before saving."),
-      div(class = "kpi-selectors service-metric-selectors", `data-service-id` = service_id, metric_selector_rows),
+      div(
+        class = "kpi-selectors service-metric-selectors",
+        `data-service-id` = service_id,
+        `data-service-disabled-metrics` = paste(other_service_metric_ids, collapse = ","),
+        metric_selector_rows
+      ),
       div(
         class = "goal-field-support",
         strong("Add another metric"),
@@ -753,11 +763,14 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
       }
     }
     linked_rows <- plan_measure_rows(db, plan, include_ineligible = include_ineligible)
-    if (include_ineligible && is.na(plan$entity_id[[1]]) && nrow(linked_rows)) {
+    if (is.na(plan$entity_id[[1]])) {
       agency_rows <- db$performance_performance_measure[db$performance_performance_measure$agency_id == agency_id, , drop = FALSE]
       linked_rows <- unique(rbind(linked_rows, agency_rows))
     }
     if (nrow(linked_rows) || !include_ineligible || !is.na(plan$entity_id[[1]])) {
+      if (!include_ineligible && nrow(linked_rows)) {
+        linked_rows <- eligible_plan_measures(linked_rows)
+      }
       return(linked_rows[order(linked_rows$title), , drop = FALSE])
     }
   }
@@ -798,10 +811,27 @@ service_metric_ids <- function(db, plan, service_id, measures = NULL, include_in
   }
   linked_ids <- linked_ids[!is.na(linked_ids)]
   if (!include_ineligible && length(linked_ids)) {
-    eligible_ids <- plan_measure_rows(db, plan, include_ineligible = FALSE)$measure_id
+    eligible_ids <- measure_library_rows(db, plan, include_ineligible = FALSE)$measure_id
     linked_ids <- linked_ids[linked_ids %in% eligible_ids]
   }
   linked_ids
+}
+
+service_metric_ids_for_other_services <- function(db, plan, service_id) {
+  if (is.null(plan) || !nrow(plan)) return(character(0))
+  services <- scorable_service_rows(plan_service_rows(db, plan))
+  other_service_ids <- setdiff(as.character(services$service_id), as.character(service_id))
+  if (!length(other_service_ids)) return(character(0))
+  services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
+  ids <- unlist(lapply(other_service_ids, function(other_service_id) {
+    draft_values <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[other_service_id]])) {
+      suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[other_service_id]])))
+    } else {
+      service_metric_ids(db, plan, other_service_id, include_ineligible = TRUE)
+    }
+    draft_values[!is.na(draft_values)]
+  }), use.names = FALSE)
+  unique(as.character(ids[!is.na(ids)]))
 }
 
 performance_planning_timeline <- function() {
@@ -3007,6 +3037,14 @@ validate_measure_selection_limit <- function(payload_json, section_key, limit = 
   }, logical(1))]
   if (length(over_limit)) {
     paste0("Each ", if (identical(section_key, "goals")) "goal" else "service", " can have no more than ", limit, " ", label, ". Please reduce selections before saving.")
+  } else if (identical(section_key, "services")) {
+    values <- as.character(unlist(selection_groups, use.names = FALSE))
+    values <- values[nzchar(values)]
+    if (any(duplicated(values))) {
+      "Each metric can only be assigned to one service. Remove duplicate service metric selections before saving."
+    } else {
+      NULL
+    }
   } else {
     NULL
   }
@@ -5112,26 +5150,59 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
 page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risk_criteria <- plan_review_criteria("plan_risks")
+  risk_rubric_row <- function(row) {
+    tags$tr(
+      tags$th(scope = "row", row$label),
+      tags$td(class = "rubric-points", row$weight),
+      tags$td(row$score1),
+      tags$td(row$score2),
+      tags$td(row$score3),
+      tags$td(class = "rubric-strong", row$score4)
+    )
+  }
   builder_page(
     performance_plan_title(db, plan, "Risks"),
     "Capture delivery risks, mitigations, and unresolved dependencies.",
-    surface(
-      "Risk register",
-      NULL,
-      div(
-        class = "app-table risk-register-table",
-        div(class = "table-row table-head risk-row", span("Type"), span("Risk")),
-        lapply(seq_len(nrow(risks)), function(i) {
-          tags$button(
-            type = "button",
-            class = "table-row risk-row risk-register-row",
-            `data-risk-id` = risks$risk_id[i],
-            span(risk_type_label(risks$risk_type[i])),
-            span(risks$description[i])
-          )
-        })
+    tagList(
+      surface(
+        "Risk register",
+        NULL,
+        div(
+          class = "app-table risk-register-table",
+          div(class = "table-row table-head risk-row", span("Type"), span("Risk")),
+          lapply(seq_len(nrow(risks)), function(i) {
+            tags$button(
+              type = "button",
+              class = "table-row risk-row risk-register-row",
+              `data-risk-id` = risks$risk_id[i],
+              span(risk_type_label(risks$risk_type[i])),
+              span(risks$description[i])
+            )
+          })
+        ),
+        actions = tags$button(type = "button", class = "civic-button primary", `data-new-risk` = "true", icon("plus"), "Add risk")
       ),
-      actions = tags$button(type = "button", class = "civic-button primary", `data-new-risk` = "true", icon("plus"), "Add risk")
+      surface(
+        "Risks scoring rubric",
+        "Use this scoring description to check whether risks are specific, operationally meaningful, and grounded in real delivery conditions.",
+        div(
+          class = "rubric-section-table-wrap",
+          tags$table(
+            class = "rubric-table goal-rubric-table",
+            tags$caption(class = "sr-only", "Risks scoring rubric"),
+            tags$thead(tags$tr(
+              tags$th(scope = "col", "Criterion"),
+              tags$th(scope = "col", "Max points", span(class = "rubric-header-note", "Weighted score")),
+              tags$th(scope = "col", "Score 1", span(class = "rubric-header-note", "Incomplete")),
+              tags$th(scope = "col", "Score 2", span(class = "rubric-header-note", "Developing")),
+              tags$th(scope = "col", "Score 3", span(class = "rubric-header-note", "Strong")),
+              tags$th(scope = "col", "Score 4", span(class = "rubric-header-note", "Exemplary"))
+            )),
+            tags$tbody(lapply(seq_len(nrow(risk_criteria)), function(i) risk_rubric_row(risk_criteria[i, , drop = FALSE])))
+          )
+        )
+      )
     ),
     plan_id = plan$plan_id,
     section_key = "risks",
@@ -5267,7 +5338,7 @@ ui <- tagList(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
-    tags$script(src = "app.js?v=20260708-9", defer = "defer")
+    tags$script(src = "app.js?v=20260709-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5964,6 +6035,48 @@ server <- function(input, output, session) {
     }
     NULL
   }
+  ensure_measure_current_entity_link <- function(measure_id, data, plan) {
+    if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
+    entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
+    if (!nrow(entity)) return(invisible(FALSE))
+    services <- plan_service_rows(data, plan)
+    services <- services[!is_administration_service(services), , drop = FALSE]
+    if (!nrow(services)) services <- plan_service_rows(data, plan)
+    if (!nrow(services)) return(invisible(FALSE))
+    primary_service_id <- services$service_id[[1]]
+    if ("is_primary" %in% names(services)) {
+      primary <- services[!is.na(services$is_primary) & services$is_primary, , drop = FALSE]
+      if (nrow(primary)) primary_service_id <- primary$service_id[[1]]
+    }
+    link_entity_type <- switch(
+      as.character(entity$entity_type[[1]]),
+      MayoraltyOffice = "mayoral service",
+      `mayoral service` = "mayoral service",
+      QuasiAgency = "quasi agency",
+      `quasi agency` = "quasi agency",
+      Other = "quasi agency",
+      "quasi agency"
+    )
+    DBI::dbExecute(
+      database,
+      paste(
+        "INSERT INTO performance.measure_entity_link",
+        "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        "ON CONFLICT (measure_id, agency_id, service_id, entity_type, entity_id)",
+        "DO UPDATE SET public_name = EXCLUDED.public_name, updated_at = now()"
+      ),
+      params = list(
+        as.integer(measure_id),
+        plan_accounting_agency_id(data, plan),
+        primary_service_id,
+        link_entity_type,
+        as.integer(entity$entity_id[[1]]),
+        as.character(entity$public_name[[1]])
+      )
+    )
+    invisible(TRUE)
+  }
   is_blank_value <- function(value) {
     is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
   }
@@ -6093,6 +6206,10 @@ server <- function(input, output, session) {
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
+    }
+    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, current_submitter_value())), error = function(error) error)
+    if (inherits(link_result, "error")) {
+      showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
     refresh_app_data()
     current_measure_id(as.character(result))
