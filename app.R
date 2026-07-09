@@ -883,7 +883,7 @@ role_capability_row <- function(label, detail, enabled = FALSE) {
   )
 }
 
-role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "", selected_agency = "", id_prefix = "", agency_input_id = "selected_agency", compact = FALSE) {
+role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "", selected_agency = "", id_prefix = "", agency_input_id = "role_preview_selected_agency", compact = FALSE) {
   app_role <- app_roles[[1]]
   agency_roles <- unique(as.character(agency_roles))
   agency_roles <- agency_roles[agency_roles %in% agency_role_choices]
@@ -893,9 +893,16 @@ role_preview_panel <- function(db, app_roles, agency_roles, selected_user_id = "
   if (!nzchar(selected_user_id) || !selected_user_id %in% unname(user_choices)) {
     selected_user_id <- default_role_preview_user_id(db)
   }
-  agency_choices <- agency_selector_choices(db)
-  if (!nzchar(selected_agency) || !selected_agency %in% unname(agency_choices)) {
-    selected_agency <- "agency:AGC2600"
+  agency_choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
+    agency_selector_choices(db)
+  } else {
+    user_submitter_choices(db, selected_user_id)
+  }
+  if (!length(agency_choices)) {
+    agency_choices <- setNames(character(0), character(0))
+    selected_agency <- ""
+  } else if (!nzchar(selected_agency) || !selected_agency %in% unname(agency_choices)) {
+    selected_agency <- unname(agency_choices)[[1]]
   }
   user_input_id <- paste0(id_prefix, "role_preview_user_id")
   app_role_input_id <- paste0(id_prefix, "role_preview_app_role")
@@ -5259,8 +5266,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-7"),
-    tags$script(src = "app.js?v=20260708-7", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
+    tags$script(src = "app.js?v=20260708-9", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5276,7 +5283,8 @@ ui <- tagList(
             div(class = "brand-product", "Beacon"),
             div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
           )
-        )
+        ),
+        uiOutput("header_context_selector")
       )
     ),
     div(
@@ -5327,7 +5335,6 @@ ui <- tagList(
           nav_item("role_preview", "Role preview", icon("user-shield"), item_class = "application-nav-item"),
           nav_item("bug_fix", "Bug/Fix", icon("bug"), item_class = "application-nav-item"),
           div(class = "nav-group-label performance-planning-nav-item", "Performance Planning"),
-          uiOutput("drawer_context_selector"),
           nav_item("plan_history", "View plan", icon("file-circle-check"), item_class = "performance-planning-nav-item nav-review-plan-highlight"),
           nav_item("overview", "Overview & vision", icon("eye"), item_class = "performance-planning-nav-item"),
           nav_item("goals", "Goals", icon("flag"), item_class = "performance-planning-nav-item"),
@@ -5367,7 +5374,6 @@ ui <- tagList(
       nav_item("role_preview", "Role preview", icon("user-shield"), item_class = "application-nav-item"),
       nav_item("bug_fix", "Bug/Fix", icon("bug"), item_class = "application-nav-item"),
       div(class = "nav-group-label performance-planning-nav-item", "Performance Planning"),
-      uiOutput("mobile_context_selector"),
       nav_item("plan_history", "View plan", icon("file-circle-check"), item_class = "performance-planning-nav-item nav-review-plan-highlight"),
       nav_item("overview", "Overview & vision", icon("eye"), item_class = "performance-planning-nav-item"),
       nav_item("goals", "Goals", icon("flag"), item_class = "performance-planning-nav-item"),
@@ -5540,11 +5546,11 @@ server <- function(input, output, session) {
     data
   }
   current_submitter_value <- function() {
-    selected <- input$selected_agency_nav %||% input$selected_agency_mobile %||% input$selected_agency
+    selected <- input$selected_agency %||% input$selected_agency_nav %||% input$selected_agency_mobile
     data <- app_data()
     app_roles <- current_user_app_roles()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
-    choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+    choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       agency_selector_choices(data)
     } else {
       user_submitter_choices(data, user_id)
@@ -5597,11 +5603,19 @@ server <- function(input, output, session) {
   current_user_submitter_choices <- function(data = app_data()) {
     app_roles <- current_user_app_roles()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
-    if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+    if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       agency_selector_choices(data)
     } else {
       user_submitter_choices(data, user_id)
     }
+  }
+  update_role_preview_agency_selector <- function(data = app_data(), selected = NULL) {
+    choices <- current_user_submitter_choices(data)
+    if (!length(choices)) return(invisible(FALSE))
+    if (is.null(selected) || !selected %in% unname(choices)) selected <- unname(choices)[[1]]
+    updateSelectInput(session, "role_preview_selected_agency", choices = choices, selected = selected)
+    update_submitter_selectors(data, selected)
+    invisible(TRUE)
   }
   update_submitter_selectors <- function(data = app_data(), selected = NULL) {
     choices <- current_user_submitter_choices(data)
@@ -5632,7 +5646,7 @@ server <- function(input, output, session) {
     }
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
-      update_submitter_selectors(data, submitter_value)
+      update_role_preview_agency_selector(data, submitter_value)
     }
     invisible(TRUE)
   }
@@ -5645,6 +5659,7 @@ server <- function(input, output, session) {
     selected_role <- input$role_preview_app_role
     if (!is.null(selected_role) && selected_role %in% performance_role_choices) {
       current_role_preview_app_role(selected_role)
+      update_role_preview_agency_selector(app_data())
     }
   }, ignoreInit = FALSE)
 
@@ -5659,6 +5674,13 @@ server <- function(input, output, session) {
     }
     if (all(selected_role %in% c("None", agency_role_choices))) current_role_preview_agency_role(setdiff(selected_role, "None"))
   }, ignoreInit = FALSE)
+
+  observeEvent(input$role_preview_selected_agency, {
+    selected <- input$role_preview_selected_agency
+    if (!is.null(selected) && nzchar(selected)) {
+      sync_selected_agency_inputs(selected)
+    }
+  }, ignoreInit = TRUE)
 
   current_user_can_manage_team <- function() {
     can_edit_roles(current_user_app_roles(), current_user_agency_roles())
@@ -5837,15 +5859,17 @@ server <- function(input, output, session) {
     }
   })
 
-  output$drawer_context_selector <- renderUI({
+  output$header_context_selector <- renderUI({
+    if (is.null(current_user()) || identical(current_page(), "login")) {
+      return(NULL)
+    }
     app_roles <- current_user_app_roles()
-    nav_roles <- unique(c(app_roles, current_role_preview_app_role(), input$role_preview_app_role))
-    if (uses_review_administration_mode(app_roles) && !has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer"))) {
+    if (uses_review_administration_mode(app_roles) && !has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       return(NULL)
     }
     data <- app_data()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
-    choices <- if (has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
+    choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       agency_selector_choices(data)
     } else {
       user_submitter_choices(data, user_id)
@@ -5854,10 +5878,9 @@ server <- function(input, output, session) {
       return(NULL)
     }
     div(
-      class = "drawer-context-selector",
-      div(class = "drawer-context-label", icon("building-columns"), span("Working plan")),
+      class = "header-agency-selector",
       selectInput(
-        "selected_agency_nav",
+        "selected_agency",
         label = NULL,
         choices = choices,
         selected = current_submitter_value(),
@@ -5881,36 +5904,6 @@ server <- function(input, output, session) {
 
   output$mobile_performance_reviewing_nav <- renderUI({
     review_nav_ui()
-  })
-
-  output$mobile_context_selector <- renderUI({
-    app_roles <- current_user_app_roles()
-    nav_roles <- unique(c(app_roles, current_role_preview_app_role(), input$role_preview_app_role))
-    if (uses_review_administration_mode(app_roles) && !has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer"))) {
-      return(NULL)
-    }
-    data <- app_data()
-    user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
-    choices <- if (has_any_role(nav_roles, c("SystemAdmin", "OPIReviewer")) || identical(current_workspace(), "admin")) {
-      agency_selector_choices(data)
-    } else {
-      user_submitter_choices(data, user_id)
-    }
-    if (length(choices) <= 1) {
-      return(NULL)
-    }
-    div(
-      class = "drawer-context-selector mobile-context-selector",
-      div(class = "drawer-context-label", icon("building-columns"), span("Working plan")),
-      selectInput(
-        "selected_agency_mobile",
-        label = NULL,
-        choices = choices,
-        selected = current_submitter_value(),
-        selectize = TRUE,
-        width = "100%"
-      )
-    )
   })
 
   observeEvent(input$team_scope_agency, {

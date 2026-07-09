@@ -172,6 +172,10 @@ input:focus-visible {
   gap: 1rem;
 }
 
+.header-inner > .shiny-html-output {
+  margin-left: auto;
+}
+
 .brand-lockup {
   display: flex;
   align-items: center;
@@ -254,6 +258,18 @@ input:focus-visible {
 .header-agency-selector {
   width: min(22rem, 34vw);
   margin-left: auto;
+}
+
+.header-agency-selector::before {
+  content: "Working plan";
+  display: block;
+  margin-bottom: 0.2rem;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .header-agency-selector .shiny-input-container,
@@ -2113,7 +2129,11 @@ body.auth-signed-in .nav-item[data-page="login"] {
 }
 
 .team-role-table .table-row {
-  grid-template-columns: minmax(12rem, 1.2fr) minmax(12rem, 1.1fr) minmax(10rem, 0.9fr) minmax(12rem, 1fr);
+  grid-template-columns: minmax(11rem, 1.05fr) minmax(12rem, 1fr) minmax(10rem, 0.9fr) minmax(14rem, 1.15fr);
+}
+
+.team-role-table .table-row > * {
+  min-width: 0;
 }
 
 .team-page-actions {
@@ -2146,8 +2166,11 @@ body.auth-signed-in .nav-item[data-page="login"] {
 .role-link-button {
   color: var(--lp-brand-primary);
   font-weight: 800;
+  overflow: hidden;
   text-align: left;
   text-decoration: underline;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .role-link-button.view-only {
@@ -4933,16 +4956,10 @@ body.desktop-nav-collapsed .app-footer {
     min-width: 0;
     width: auto;
     flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
   }
 
   .header-agency-selector::before {
-    content: "|";
-    flex: 0 0 auto;
-    color: rgba(255, 255, 255, 0.5);
-    font-weight: 600;
+    display: none;
   }
 
   .header-agency-selector select {

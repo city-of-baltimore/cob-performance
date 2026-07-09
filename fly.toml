@@ -5,7 +5,7 @@
 # (fly scale count 1) so page loads and websocket sessions hit the same
 # R process.
 
-app = "cob-performance"
+app = "baltimore-city-beacon"
 primary_region = "iad"
 
 [build]
