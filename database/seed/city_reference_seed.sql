@@ -32,7 +32,7 @@ VALUES
     ('AGC4314', 'M-R Conditional Purchase Agreements', NULL, 'City Administrator — Faith Leach (Finance)', false, false, true),
     ('AGC4315', 'M-R TIF Debt Service', NULL, 'City Administrator — Faith Leach (Finance)', false, false, true),
     ('AGC4316', 'M-R Health and Welfare Grants', 'Health & Welfare Grants (Family League & Legal Aid )', 'Dr. Letitia Dzirasa — Deputy Mayor, Health & Human Services', false, true, true),
-    ('AGC4317', 'M-R Consumer Protection and Business Licensing', 'Department of Consumer Protection and Business Licensing', 'Shamiah Kerney — Deputy City Administrator', false, false, true),
+    ('AGC4317', 'M-R Consumer Protection and Business Licensing', 'Department of Consumer Protection and Business Licensing', 'Shamiah Kerney — Deputy City Administrator', true, false, true),
     ('AGC4321', 'M-R Educational Grants', 'Educational Grants (Family League and others)', 'Dr. Letitia Dzirasa — Deputy Mayor, Health & Human Services', false, true, true),
     ('AGC4326', 'M-R Civic Promotion', 'Civic Promotion (Visit Baltimore / Live Baltimore / Heritage Area / Lexington Market)', 'Chief of Staff — John David Merrill', false, true, true),
     ('AGC4341', 'M-R Office of the Labor Commissioner', 'Office of the Labor Commissioner', 'Shamiah Kerney — Deputy City Administrator', true, false, true),
@@ -337,6 +337,7 @@ ON CONFLICT (service_id) DO UPDATE SET
 
 INSERT INTO reference.plan_entity (parent_agency_id, public_name, entity_type, has_own_plan, active)
 VALUES
+    ('AGC4301', 'Mayor''s Office', 'Other', false, true),
     ('AGC4301', 'Mayor''s Office of Performance and Innovation', 'MayoraltyOffice', true, true),
     ('AGC4301', 'Mayor''s Office of African American Male Engagement', 'MayoraltyOffice', true, true),
     ('AGC4301', 'Mayor''s Office of LGBTQ Affairs', 'MayoraltyOffice', true, true),

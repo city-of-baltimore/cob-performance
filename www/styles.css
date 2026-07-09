@@ -1676,7 +1676,7 @@ body.auth-signed-in .nav-item[data-page="login"] {
 
 .approval-stamp-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: 0.75rem;
 }
 
@@ -3375,6 +3375,14 @@ body.auth-signed-in .nav-item[data-page="login"] {
   grid-column: 1 / -1;
 }
 
+.team-access-note.full-width {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  margin: -0.15rem 0 0;
+}
+
 .measure-field textarea {
   min-height: 5.25rem;
   resize: vertical;
@@ -4173,6 +4181,18 @@ body:has(.sticky-save-bar) .floating-feedback-button {
   line-height: 1.1;
   padding: 0 1.15rem;
   white-space: nowrap;
+}
+
+.login-access-request-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.login-access-request-grid .shiny-input-container,
+.login-access-request-grid .form-group {
+  margin-bottom: 0 !important;
 }
 
 .login-panel .login-email-panel .shiny-input-container,

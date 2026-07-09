@@ -435,3 +435,33 @@ auth_send_reset_email <- function(email, link, first_time = FALSE) {
     footer_note = "If you did not request this Beacon account email, you can ignore it."
   )
 }
+
+auth_access_alert_email <- function() {
+  configured <- trimws(Sys.getenv("BEACON_ACCESS_ALERT_EMAIL", ""))
+  if (nzchar(configured)) configured else "melanie.lada@baltimorecity.gov"
+}
+
+auth_send_unknown_email_alert <- function(attempted_email, context = "sign in", requested_entity = "", requested_agency_role = "") {
+  attempted_email <- trimws(as.character(attempted_email %||% ""))
+  if (!nzchar(attempted_email)) return(FALSE)
+  context <- trimws(as.character(context %||% "sign in"))
+  requested_entity <- trimws(as.character(requested_entity %||% ""))
+  requested_agency_role <- trimws(as.character(requested_agency_role %||% ""))
+  details <- c(
+    paste0("Attempted email: ", attempted_email),
+    paste0("Action: ", context),
+    paste0("Requested entity: ", if (nzchar(requested_entity)) requested_entity else "Not provided"),
+    paste0("Requested agency role/title: ", if (nzchar(requested_agency_role)) requested_agency_role else "Not provided"),
+    paste0("Timestamp: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
+  )
+  auth_send_app_email(
+    email = auth_access_alert_email(),
+    subject = "Beacon access request: unknown email",
+    preheader = paste0("Unknown email attempted Beacon ", context, "."),
+    eyebrow = "Access request",
+    title = "Unknown Beacon email address",
+    intro = "Someone tried to access Beacon with an email address that is not currently associated with an active user account.",
+    detail_lines = details,
+    footer_note = "Add the user in Beacon if this person should have access."
+  )
+}

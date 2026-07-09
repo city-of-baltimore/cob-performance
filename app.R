@@ -1096,6 +1096,28 @@ default_role_preview_user_id <- function(db) {
   as.character(matches$user_id[[1]])
 }
 
+user_email_for_id <- function(db, user_id) {
+  user_id <- suppressWarnings(as.integer(user_id %||% NA_integer_))
+  if (is.na(user_id)) return("")
+  user_rows <- rbind(
+    db$access_user[, intersect(c("user_id", "email"), names(db$access_user)), drop = FALSE],
+    db$access_user_role[, intersect(c("user_id", "email"), names(db$access_user_role)), drop = FALSE],
+    db$access_user_agency_access[, intersect(c("user_id", "email"), names(db$access_user_agency_access)), drop = FALSE],
+    db$access_user_entity_access[, intersect(c("user_id", "email"), names(db$access_user_entity_access)), drop = FALSE]
+  )
+  if (!nrow(user_rows) || !"email" %in% names(user_rows)) return("")
+  matches <- user_rows[user_rows$user_id == user_id & !is.na(user_rows$email), , drop = FALSE]
+  if (!nrow(matches)) return("")
+  tolower(trimws(as.character(matches$email[[1]])))
+}
+
+can_manage_opi_approval_stamp <- function(db, user_id) {
+  user_email_for_id(db, user_id) %in% c(
+    "melanie.lada@baltimorecity.gov",
+    "danny.heller@baltimorecity.gov"
+  )
+}
+
 nonblank_text <- function(value) {
   !is.null(value) && length(value) > 0 && !is.na(value) && nzchar(trimws(as.character(value)))
 }
@@ -1492,6 +1514,48 @@ login_view_request <- function(state) {
   )
 }
 
+login_entity_request_choices <- function(db) {
+  entity_table <- if (!is.null(db) && "reference_access_entity" %in% names(db)) {
+    db$reference_access_entity
+  } else if (!is.null(db) && "reference_plan_entity" %in% names(db)) {
+    db$reference_plan_entity
+  } else {
+    data.frame()
+  }
+  if (!nrow(entity_table)) {
+    return(c("Not sure" = ""))
+  }
+  rows <- entity_table
+  rows <- rows[order(tolower(rows$public_name)), , drop = FALSE]
+  c("Not sure" = "", stats::setNames(rows$public_name, rows$public_name))
+}
+
+login_view_access_request <- function(state, db = NULL) {
+  email <- trimws(as.character(state$email %||% ""))
+  tagList(
+    h1("Request Beacon access"),
+    p("That email is not connected to an active Beacon account. Tell us which entity and role you need so Melanie can review the request."),
+    login_notice(state$notice),
+    div(
+      class = "login-access-request-grid",
+      div(
+        class = "measure-field",
+        textInput("access_request_email", "Email address", value = email, placeholder = "name@baltimorecity.gov")
+      ),
+      div(
+        class = "measure-field",
+        selectInput("access_request_entity", "Agency, mayoral service, or quasi", choices = login_entity_request_choices(db), selected = state$requested_entity %||% "")
+      ),
+      div(
+        class = "measure-field",
+        selectInput("access_request_agency_role", "Agency role/title", choices = c("Not sure" = "", agency_role_choices), selected = state$requested_agency_role %||% "")
+      )
+    ),
+    actionButton("access_request_submit", "Send access request", class = "civic-button primary"),
+    div(class = "login-links", actionLink("goto_login", "Back to sign in"))
+  )
+}
+
 login_view_sent <- function(state) {
   tagList(
     h1("Check your email"),
@@ -1527,11 +1591,12 @@ login_view_reset_done <- function(state) {
   )
 }
 
-page_login <- function(state = list(view = "login")) {
+page_login <- function(state = list(view = "login"), db = NULL) {
   view <- if (is.null(state$view)) "login" else state$view
   body <- switch(
     view,
     request = login_view_request(state),
+    access_request = login_view_access_request(state, db),
     sent = login_view_sent(state),
     reset = login_view_reset(state),
     reset_done = login_view_reset_done(state),
@@ -1728,8 +1793,9 @@ can_approve_plan_gate_context <- function(db, plan, app_roles, user_id = NA_inte
 }
 
 can_manage_plan_stamp_context <- function(db, plan, stage, app_roles, user_id = NA_integer_) {
-  if (has_any_role(app_roles, "SystemAdmin")) return(TRUE)
   stage <- as.character(stage)
+  if (identical(stage, "OPIApproval")) return(can_manage_opi_approval_stamp(db, user_id))
+  if (has_any_role(app_roles, "SystemAdmin")) return(TRUE)
   if (identical(stage, "Reviewer")) return(has_any_role(app_roles, c("OPIReviewer", "BBMRReviewer")))
   if (identical(stage, "DeputyMayor")) {
     return((has_any_role(app_roles, "DeputyMayor") || has_any_role(app_roles, "CAOffice")) && user_name_matches_text(db, user_id, plan_deputy_mayor_label(db, plan)))
@@ -2481,8 +2547,41 @@ plan_team_service_ids <- function(db, plan) {
   unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
 }
 
+plan_team_unique_service_ids <- function(db, plan) {
+  service_ids <- plan_team_service_ids(db, plan)
+  if (!length(service_ids)) return(character(0))
+  links <- db$reference_plan_entity_service[
+    db$reference_plan_entity_service$service_id %in% service_ids,
+    ,
+    drop = FALSE
+  ]
+  entities <- db$reference_plan_entity[
+    !is.na(db$reference_plan_entity$active) & db$reference_plan_entity$active &
+      !is.na(db$reference_plan_entity$has_own_plan) & db$reference_plan_entity$has_own_plan,
+    ,
+    drop = FALSE
+  ]
+  links <- links[links$entity_id %in% entities$entity_id, , drop = FALSE]
+  if (!nrow(links)) return(service_ids)
+  counts <- table(as.character(links$service_id))
+  service_ids[as.integer(counts[service_ids]) <= 1]
+}
+
 plan_team_primary_service_id <- function(db, plan) {
   service_ids <- plan_team_service_ids(db, plan)
+  if (!length(service_ids)) return(NA_character_)
+  links <- db$reference_plan_entity_service[
+    db$reference_plan_entity_service$entity_id == plan$entity_id[[1]] &
+      db$reference_plan_entity_service$service_id %in% service_ids,
+    ,
+    drop = FALSE
+  ]
+  primary <- links$service_id[!is.na(links$is_primary) & links$is_primary]
+  if (length(primary)) primary[[1]] else service_ids[[1]]
+}
+
+plan_team_primary_access_service_id <- function(db, plan) {
+  service_ids <- plan_team_unique_service_ids(db, plan)
   if (!length(service_ids)) return(NA_character_)
   links <- db$reference_plan_entity_service[
     db$reference_plan_entity_service$entity_id == plan$entity_id[[1]] &
@@ -2504,6 +2603,26 @@ plan_team_public_name <- function(db, plan) {
     }
   }
   agency_name(db, plan_accounting_agency_id(db, plan))
+}
+
+agency_plan_entity_id <- function(db, agency_id) {
+  agency_id <- trimws(as.character(agency_id %||% ""))
+  if (!nzchar(agency_id) || !"reference_plan_entity" %in% names(db)) return(NA_integer_)
+  entity <- db$reference_plan_entity[
+    db$reference_plan_entity$parent_agency_id == agency_id &
+      db$reference_plan_entity$entity_type == "Agency" &
+      !is.na(db$reference_plan_entity$active) & db$reference_plan_entity$active,
+    ,
+    drop = FALSE
+  ]
+  if (!nrow(entity)) return(NA_integer_)
+  entity$entity_id[[1]]
+}
+
+plan_team_entity_context_id <- function(db, plan) {
+  if (is.null(plan) || !nrow(plan)) return(NA_integer_)
+  if (!is.na(plan$entity_id[[1]])) return(plan$entity_id[[1]])
+  agency_plan_entity_id(db, plan_accounting_agency_id(db, plan))
 }
 
 assignment_submitter_team_row <- function(db, plan, agency_id) {
@@ -2536,7 +2655,7 @@ assignment_submitter_team_row <- function(db, plan, agency_id) {
     access_id = NA_integer_,
     user_id = user_id,
     agency_id = agency_id,
-    service_id = plan_team_primary_service_id(db, plan),
+    service_id = plan_team_primary_access_service_id(db, plan),
     full_name = full_name,
     email = email,
     agency_role = "Agency Staff",
@@ -2549,32 +2668,44 @@ assignment_submitter_team_row <- function(db, plan, agency_id) {
   row[, names(db$access_user_agency_access), drop = FALSE]
 }
 
+is_entity_access_id <- function(access_id) {
+  startsWith(as.character(access_id %||% ""), "entity:")
+}
+
+entity_access_numeric_id <- function(access_id) {
+  suppressWarnings(as.integer(sub("^entity:", "", as.character(access_id %||% ""))))
+}
+
 team_rows_for_plan <- function(db, submitter_value) {
   plan <- current_plan(db, submitter_value)
   agency_id <- plan_accounting_agency_id(db, plan)
-  team <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
   if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) {
-    service_ids <- plan_team_service_ids(db, plan)
-    team <- team[!is.na(team$service_id) & team$service_id %in% service_ids, , drop = FALSE]
-    assignment_row <- assignment_submitter_team_row(db, plan, agency_id)
-    if (nrow(assignment_row)) {
-      already_listed <- FALSE
-      if (nrow(team) && !is.na(assignment_row$user_id[[1]])) {
-        already_listed <- any(!is.na(team$user_id) & team$user_id == assignment_row$user_id[[1]])
-      }
-      if (nrow(team) && !already_listed) {
-        assignment_name <- assignment_key(assignment_row$full_name[[1]])
-        team_names <- assignment_key(team$full_name)
-        assignment_email <- tolower(trimws(as.character(assignment_row$email[[1]] %||% "")))
-        team_emails <- tolower(trimws(as.character(team$email)))
-        team_emails[is.na(team_emails)] <- ""
-        already_listed <- (nzchar(assignment_name) && any(team_names == assignment_name)) ||
-          (nzchar(assignment_email) && any(team_emails == assignment_email))
-      }
-      if (!already_listed) team <- rbind(team, assignment_row)
+    if (!"access_user_entity_access" %in% names(db)) {
+      team <- db$access_user_agency_access[0, , drop = FALSE]
+    } else {
+      team <- db$access_user_entity_access[db$access_user_entity_access$entity_id == plan$entity_id[[1]], , drop = FALSE]
     }
   } else {
-    team <- team[is.na(team$service_id) | !nzchar(trimws(as.character(team$service_id))), , drop = FALSE]
+    agency_entity_id <- agency_plan_entity_id(db, agency_id)
+    if (!is.na(agency_entity_id) && "access_user_entity_access" %in% names(db)) {
+      team <- db$access_user_entity_access[db$access_user_entity_access$entity_id == agency_entity_id, , drop = FALSE]
+    } else {
+      team <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
+      team <- team[is.na(team$service_id) | !nzchar(trimws(as.character(team$service_id))), , drop = FALSE]
+    }
+  }
+  assignment <- plan_role_assignment(db, plan)
+  if (nrow(assignment) && "user_id" %in% names(team)) {
+    approver_ids <- unique(suppressWarnings(as.integer(c(
+      assignment$reviewer_user_id[[1]] %||% NA_integer_,
+      assignment$deputy_mayor_user_id[[1]] %||% NA_integer_,
+      assignment$ca_office_user_id[[1]] %||% NA_integer_
+    ))))
+    submitter_id <- suppressWarnings(as.integer(assignment$submitter_user_id[[1]] %||% NA_integer_))
+    approver_ids <- approver_ids[!is.na(approver_ids) & approver_ids != submitter_id]
+    if (length(approver_ids)) {
+      team <- team[!team$user_id %in% approver_ids, , drop = FALSE]
+    }
   }
   if (!nrow(team)) return(team)
   team$agency_role_display <- vapply(seq_len(nrow(team)), function(i) {
@@ -2601,12 +2732,15 @@ team_role_modal_ui <- function(db, submitter_value, access_id, can_edit = FALSE,
   accounting_agency_id <- plan_accounting_agency_id(db, plan)
   parent_agency_name <- agency_name(db, accounting_agency_id)
   public_name <- plan_team_public_name(db, plan)
-  current_service_id <- plan_team_primary_service_id(db, plan)
+  team_entity_id <- plan_team_entity_context_id(db, plan)
+  current_service_id <- plan_team_primary_access_service_id(db, plan)
   is_new <- identical(as.character(access_id), "new")
   access <- if (is_new) {
     data.frame(
       access_id = NA_integer_,
+      entity_access_id = NA_integer_,
       user_id = NA_integer_,
+      entity_id = team_entity_id,
       agency_id = accounting_agency_id,
       service_id = current_service_id,
       full_name = "",
@@ -2614,6 +2748,8 @@ team_role_modal_ui <- function(db, submitter_value, access_id, can_edit = FALSE,
       agency_role = "Agency Staff",
       stringsAsFactors = FALSE
     )
+  } else if (is_entity_access_id(access_id)) {
+    db$access_user_entity_access[db$access_user_entity_access$entity_access_id == entity_access_numeric_id(access_id), , drop = FALSE]
   } else {
     db$access_user_agency_access[db$access_user_agency_access$access_id == as.integer(access_id), , drop = FALSE]
   }
@@ -2650,6 +2786,7 @@ team_role_modal_ui <- function(db, submitter_value, access_id, can_edit = FALSE,
       div(class = "measure-field", textInput("team_email", "Email", value = access$email[[1]])),
       div(class = "measure-field", selectInput("team_agency_role", "Agency role", choices = agency_role_choices, selected = agency_roles, multiple = TRUE)),
       div(class = "measure-field", selectInput("team_performance_role", "Performance role", choices = role_choices, selected = performance_role, selectize = FALSE)),
+      div(class = "form-note team-access-note full-width", "Check which performance and budget apps/components this user needs access to."),
       div(class = "measure-field", checkboxInput("team_budget_access", "Budget access", value = if (nrow(role_row)) isTRUE(role_row$budget_access[[1]]) else FALSE)),
       div(class = "measure-field", checkboxInput("team_adaptive_planning", "Adaptive planning", value = if (nrow(role_row)) isTRUE(role_row$adaptive_planning[[1]]) else FALSE)),
       div(class = "measure-field", checkboxInput("team_performance_plan_access", "Performance plan access", value = if (nrow(role_row)) isTRUE(role_row$performance_plan_access[[1]]) else TRUE))
@@ -3339,6 +3476,7 @@ approval_stage_label <- function(stage) {
   switch(
     as.character(stage),
     Reviewer = "Reviewer",
+    OPIApproval = "OPI",
     DeputyMayor = "Deputy Mayor",
     CAOffice = "CA Office",
     format_status(stage)
@@ -3349,6 +3487,7 @@ approval_stage_stamp_label <- function(stage) {
   switch(
     as.character(stage),
     Reviewer = "Reviewer Approved",
+    OPIApproval = "OPI Approved",
     DeputyMayor = "Deputy Mayor Approved",
     CAOffice = "CA Office Approved",
     paste(approval_stage_label(stage), "Approved")
@@ -3387,12 +3526,13 @@ plan_workflow_history_panel <- function(db, plan_id, can_add_admin_stamps = FALS
     div(
       class = "approval-stamp-grid",
       stamp_card("Reviewer"),
+      stamp_card("OPIApproval"),
       stamp_card("DeputyMayor"),
       stamp_card("CAOffice")
     ),
     if (isTRUE(can_add_admin_stamps)) div(
       class = "admin-stamp-actions",
-      lapply(c("Reviewer", "DeputyMayor", "CAOffice"), function(stage) {
+      lapply(c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice"), function(stage) {
         has_stamp <- plan_has_approval_stamp(db, plan_id, stage)
         tags$button(
           type = "button",
@@ -5021,7 +5161,9 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                 ),
                 div(
                   class = "goal-editor-actions",
-                  tags$button(type = "button", class = "civic-button danger small remove-goal-button", icon("trash-can"), "Remove goal")
+                  if (i > 1) {
+                    tags$button(type = "button", class = "civic-button danger small remove-goal-button", icon("trash-can"), "Remove goal")
+                  }
                 )
               )
             )
@@ -5400,7 +5542,7 @@ ui <- tagList(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
-    tags$script(src = "app.js?v=20260709-2", defer = "defer")
+    tags$script(src = "app.js?v=20260709-3", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5607,6 +5749,17 @@ server <- function(input, output, session) {
   section_draft_cache <- new.env(parent = emptyenv())
 
   refresh_app_data <- function() app_data(load_app_data(database))
+
+  notify_unknown_login_email <- function(email, context = "sign in", requested_entity = "", requested_agency_role = "") {
+    sent <- auth_send_unknown_email_alert(email, context, requested_entity, requested_agency_role)
+    notice <- if (isTRUE(sent)) {
+      "No Beacon account is associated with that email address. Melanie Lada has been notified."
+    } else {
+      "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact performance@baltimorecity.gov."
+    }
+    showNotification(notice, type = "error", duration = 12)
+    notice
+  }
 
   complete_sign_in <- function(user, issue_session = TRUE) {
     current_user(user)
@@ -6403,7 +6556,7 @@ server <- function(input, output, session) {
   observeEvent(input$open_team_access_id, {
     request <- input$open_team_access_id
     access_id <- as.character(request$accessId)
-    if (!identical(access_id, "new") && is.na(suppressWarnings(as.integer(access_id)))) return()
+    if (!identical(access_id, "new") && !is_entity_access_id(access_id) && is.na(suppressWarnings(as.integer(access_id)))) return()
     current_team_access_id(access_id)
   }, ignoreInit = TRUE)
   observeEvent(input$close_team_role_modal, current_team_access_id(NULL), ignoreInit = TRUE)
@@ -6418,15 +6571,25 @@ server <- function(input, output, session) {
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
     accounting_agency_id <- plan_accounting_agency_id(data, plan)
-    service_id <- plan_team_primary_service_id(data, plan)
+    team_entity_id <- plan_team_entity_context_id(data, plan)
+    is_entity_context <- !is.na(team_entity_id)
+    service_id <- if (is_entity_context) plan_team_primary_access_service_id(data, plan) else plan_team_primary_service_id(data, plan)
     target_performance_role <- input$team_performance_role
     performance_role_unchanged <- FALSE
     if (!identical(access_id, "new")) {
-      access_row <- data$access_user_agency_access[
-        data$access_user_agency_access$access_id == suppressWarnings(as.integer(access_id)),
-        ,
-        drop = FALSE
-      ]
+      access_row <- if (is_entity_access_id(access_id) && "access_user_entity_access" %in% names(data)) {
+        data$access_user_entity_access[
+          data$access_user_entity_access$entity_access_id == entity_access_numeric_id(access_id),
+          ,
+          drop = FALSE
+        ]
+      } else {
+        data$access_user_agency_access[
+          data$access_user_agency_access$access_id == suppressWarnings(as.integer(access_id)),
+          ,
+          drop = FALSE
+        ]
+      }
       if (nrow(access_row)) {
         current_role_rows <- data$access_user_role[
           data$access_user_role$user_id == access_row$user_id[[1]] &
@@ -6443,22 +6606,38 @@ server <- function(input, output, session) {
       showNotification("You do not have permission to assign that performance role.", type = "error", duration = 8)
       return()
     }
-    result <- tryCatch(
-      save_team_role_assignment(
-        database,
-        access_id,
-        accounting_agency_id,
-        input$team_full_name,
-        input$team_email,
-        input$team_agency_role,
-        target_performance_role,
-        isTRUE(input$team_budget_access),
-        isTRUE(input$team_adaptive_planning),
-        isTRUE(input$team_performance_plan_access),
-        service_id
-      ),
-      error = function(error) error
-    )
+    result <- tryCatch({
+      if (is_entity_context) {
+        save_entity_team_role_assignment(
+          database,
+          if (is_entity_access_id(access_id)) entity_access_numeric_id(access_id) else "new",
+          team_entity_id,
+          accounting_agency_id,
+          input$team_full_name,
+          input$team_email,
+          input$team_agency_role,
+          target_performance_role,
+          isTRUE(input$team_budget_access),
+          isTRUE(input$team_adaptive_planning),
+          isTRUE(input$team_performance_plan_access),
+          service_id
+        )
+      } else {
+        save_team_role_assignment(
+          database,
+          access_id,
+          accounting_agency_id,
+          input$team_full_name,
+          input$team_email,
+          input$team_agency_role,
+          target_performance_role,
+          isTRUE(input$team_budget_access),
+          isTRUE(input$team_adaptive_planning),
+          isTRUE(input$team_performance_plan_access),
+          service_id
+        )
+      }
+    }, error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -6474,14 +6653,21 @@ server <- function(input, output, session) {
     }
     access_id <- current_team_access_id()
     if (is.null(access_id) || identical(access_id, "new")) return()
-    result <- tryCatch(
-      delete_team_role_assignment(
-        database,
-        access_id,
-        current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
-      ),
-      error = function(error) error
-    )
+    result <- tryCatch({
+      if (is_entity_access_id(access_id)) {
+        delete_entity_team_role_assignment(
+          database,
+          entity_access_numeric_id(access_id),
+          current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
+        )
+      } else {
+        delete_team_role_assignment(
+          database,
+          access_id,
+          current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
+        )
+      }
+    }, error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -6880,7 +7066,7 @@ server <- function(input, output, session) {
     plan_id <- suppressWarnings(as.integer(request$planId))
     stage <- as.character(request$stage %||% "")
     action <- as.character(request$action %||% "add")
-    if (is.na(plan_id) || !stage %in% c("Reviewer", "DeputyMayor", "CAOffice")) {
+    if (is.na(plan_id) || !stage %in% c("Reviewer", "OPIApproval", "DeputyMayor", "CAOffice")) {
       showNotification("Choose a valid approval stamp.", type = "error", duration = 8)
       return()
     }
@@ -7125,6 +7311,7 @@ server <- function(input, output, session) {
     email <- trimws(input$request_email %||% "")
     dev_link <- NULL
     delivery_failed <- FALSE
+    unknown_email <- FALSE
     if (nzchar(email)) {
       user <- auth_find_user(database, email)
       if (!is.null(user)) {
@@ -7137,7 +7324,19 @@ server <- function(input, output, session) {
         } else {
           delivery_failed <- !auth_send_reset_email(user$email[[1]], link, isTRUE(state$first_time))
         }
+      } else {
+        unknown_email <- TRUE
       }
+    }
+    if (unknown_email) {
+      auth_state(list(
+        view = "access_request",
+        email = email,
+        context = if (isTRUE(state$first_time)) "first-time password setup" else "password reset",
+        first_time = isTRUE(state$first_time),
+        notice = "That email is not connected to an active Beacon account. Add the requested entity and role/title below."
+      ))
+      return()
     }
     if (delivery_failed) {
       auth_state(list(
@@ -7150,6 +7349,27 @@ server <- function(input, output, session) {
     }
     auth_state(list(view = "sent", first_time = isTRUE(state$first_time), dev_link = dev_link))
   })
+
+  observeEvent(input$access_request_submit, {
+    state <- auth_state()
+    email <- trimws(input$access_request_email %||% state$email %||% "")
+    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
+      auth_state(modifyList(state, list(notice = "Enter a valid email address to request access.")))
+      return()
+    }
+    requested_entity <- trimws(input$access_request_entity %||% "")
+    requested_agency_role <- trimws(input$access_request_agency_role %||% "")
+    context <- trimws(state$context %||% "sign in")
+    notice <- notify_unknown_login_email(email, context, requested_entity, requested_agency_role)
+    auth_state(list(
+      view = "access_request",
+      email = email,
+      context = context,
+      requested_entity = requested_entity,
+      requested_agency_role = requested_agency_role,
+      notice = notice
+    ))
+  }, ignoreInit = TRUE)
 
   observeEvent(input$reset_submit, {
     state <- auth_state()
@@ -7218,6 +7438,17 @@ server <- function(input, output, session) {
       auth_state(list(view = "login", notice = paste("Too many failed attempts. Try again in", AUTH_LOCKOUT_MINUTES, "minutes.")))
       return()
     }
+    user <- auth_find_user(database, email)
+    if (is.null(user)) {
+      auth_note_failure(email)
+      auth_state(list(
+        view = "access_request",
+        email = email,
+        context = "sign in",
+        notice = "That email is not connected to an active Beacon account. Add the requested entity and role/title below."
+      ))
+      return()
+    }
     verified <- auth_verify_login(database, email, input$login_password %||% "")
     if (is.null(verified)) {
       auth_note_failure(email)
@@ -7244,7 +7475,7 @@ server <- function(input, output, session) {
 
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
-      return(page_login(auth_state()))
+      return(page_login(auth_state(), app_data()))
     }
     feedback_filter_values <- function(value) {
       if (is.null(value) || length(value) == 0) character(0) else as.character(value)
