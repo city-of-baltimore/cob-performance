@@ -1205,6 +1205,19 @@ save_service_risk <- function(connection, risk_id, plan_id, risk_type, descripti
   as.integer(risk_id)
 }
 
+delete_service_risk <- function(connection, risk_id, plan_id) {
+  risk_id <- suppressWarnings(as.integer(risk_id))
+  plan_id <- suppressWarnings(as.integer(plan_id))
+  if (is.na(risk_id) || is.na(plan_id)) stop("Risk not found.")
+  changed <- DBI::dbExecute(
+    connection,
+    "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
+    params = list(risk_id, plan_id)
+  )
+  if (changed != 1) stop("Risk not found for this plan.")
+  invisible(TRUE)
+}
+
 get_section_draft <- function(connection, plan_id, section_key) {
   rows <- DBI::dbGetQuery(
     connection,

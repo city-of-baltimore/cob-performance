@@ -737,6 +737,14 @@
   });
 
   document.addEventListener("click", function (event) {
+    if (!event.target.closest("#delete_risk") || !window.Shiny) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this risk?")) return;
+    window.Shiny.setInputValue("risk_delete_confirmed_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
     if (!event.target.closest("#save_team_role") || !window.Shiny) return;
     event.preventDefault();
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });

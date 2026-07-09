@@ -2506,14 +2506,64 @@ plan_team_public_name <- function(db, plan) {
   agency_name(db, plan_accounting_agency_id(db, plan))
 }
 
+assignment_submitter_team_row <- function(db, plan, agency_id) {
+  assignment <- plan_role_assignment(db, plan)
+  if (!nrow(assignment)) return(db$access_user_agency_access[0, , drop = FALSE])
+
+  submitter_name <- trimws(as.character(assignment$submitter[[1]] %||% ""))
+  submitter_user_id <- suppressWarnings(as.integer(assignment$submitter_user_id[[1]] %||% NA_integer_))
+  users <- db$access_user[0, , drop = FALSE]
+  if (!is.na(submitter_user_id)) {
+    users <- db$access_user[db$access_user$user_id == submitter_user_id, , drop = FALSE]
+  }
+  if (!nrow(users) && nzchar(submitter_name)) {
+    user_key <- assignment_key(db$access_user$full_name)
+    users <- db$access_user[user_key == assignment_key(submitter_name), , drop = FALSE]
+  }
+
+  if (nrow(users)) {
+    user_id <- users$user_id[[1]]
+    full_name <- users$full_name[[1]]
+    email <- users$email[[1]]
+  } else {
+    user_id <- NA_integer_
+    full_name <- submitter_name
+    email <- ""
+  }
+  if (!nzchar(trimws(full_name %||% ""))) return(db$access_user_agency_access[0, , drop = FALSE])
+
+  row <- data.frame(
+    access_id = NA_integer_,
+    user_id = user_id,
+    agency_id = agency_id,
+    service_id = plan_team_primary_service_id(db, plan),
+    full_name = full_name,
+    email = email,
+    agency_role = "Agency Staff",
+    agency_roles = "Agency Staff",
+    access_level = "Submit",
+    budget_access = FALSE,
+    performance_plan_access = TRUE,
+    stringsAsFactors = FALSE
+  )
+  row[, names(db$access_user_agency_access), drop = FALSE]
+}
+
 team_rows_for_plan <- function(db, submitter_value) {
   plan <- current_plan(db, submitter_value)
   agency_id <- plan_accounting_agency_id(db, plan)
   team <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
-  if (!nrow(team)) return(team)
   if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) {
     service_ids <- plan_team_service_ids(db, plan)
     team <- team[!is.na(team$service_id) & team$service_id %in% service_ids, , drop = FALSE]
+    assignment_row <- assignment_submitter_team_row(db, plan, agency_id)
+    if (nrow(assignment_row)) {
+      already_listed <- FALSE
+      if (nrow(team) && !is.na(assignment_row$user_id[[1]])) {
+        already_listed <- any(!is.na(team$user_id) & team$user_id == assignment_row$user_id[[1]])
+      }
+      if (!already_listed) team <- rbind(team, assignment_row)
+    }
   } else {
     team <- team[is.na(team$service_id) | !nzchar(trimws(as.character(team$service_id))), , drop = FALSE]
   }
@@ -2717,16 +2767,17 @@ page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_c
         class = "app-table team-role-table",
         div(class = "table-row table-head", span("Person"), span("Public name"), span("Agency role"), span("Performance role")),
         lapply(seq_len(nrow(team)), function(i) {
+          has_access_row <- !is.na(team$access_id[i])
           div(
-            class = "table-row team-role-row",
-            role = "button",
-            tabindex = "0",
-            `data-team-access-id` = team$access_id[i],
+            class = paste("table-row team-role-row", if (!has_access_row) "assignment-only" else ""),
+            role = if (has_access_row) "button" else NULL,
+            tabindex = if (has_access_row) "0" else NULL,
+            `data-team-access-id` = if (has_access_row) team$access_id[i] else NULL,
             span(team$full_name[i]),
             span(team$public_name[i]),
             span(team$agency_role_display[i]),
             span(
-              class = paste("role-link-button", if (!can_manage_team) "view-only" else ""),
+              class = paste("role-link-button", if (!can_manage_team || !has_access_row) "view-only" else ""),
               team$performance_role[i]
             )
           )
@@ -5260,7 +5311,9 @@ risk_modal_ui <- function(db, agency_id, risk_id = NULL) {
       ),
       div(
         class = "measure-modal-actions",
-        div(),
+        div(
+          if (!is_new) tags$button(id = "delete_risk", type = "button", class = "civic-button danger", icon("trash-can"), "Delete risk")
+        ),
         div(
           class = "measure-submit-group",
           div(tags$button(id = "save_risk", type = "button", class = "civic-button primary", "Save risk"))
@@ -5338,7 +5391,7 @@ ui <- tagList(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
-    tags$script(src = "app.js?v=20260709-1", defer = "defer")
+    tags$script(src = "app.js?v=20260709-2", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5469,7 +5522,7 @@ ui <- tagList(
               tags$img(class = "footer-brand-mark", src = "baltimore-city-logo.png", alt = "City of Baltimore logo"),
               div(tags$strong("Beacon"), span("Baltimore City Performance & Budgeting"))
             ),
-            tags$a(class = "footer-city-link", href = "https://baltimorecity.gov/", target = "_blank", rel = "noopener", "Baltimorecity.gov", icon("arrow-up-right-from-square"))
+            tags$a(class = "footer-city-link", href = "https://www.baltimorecity.gov/", target = "_blank", rel = "noopener", "BaltimoreCity.gov", icon("arrow-up-right-from-square"))
           ),
           div(
             class = "footer-column",
@@ -5482,7 +5535,7 @@ ui <- tagList(
           div(
             class = "footer-column",
             tags$h2("Resources"),
-            tags$a(class = "footer-link", href = "https://baltimorecity.gov/", target = "_blank", rel = "noopener", "Baltimorecity.gov", icon("arrow-up-right-from-square")),
+            tags$a(class = "footer-link", href = "https://www.baltimorecity.gov/", target = "_blank", rel = "noopener", "BaltimoreCity.gov", icon("arrow-up-right-from-square")),
             tags$a(class = "footer-link", href = "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-05/2026%20Mayor%27s%20Action%20Plan_0.pdf", target = "_blank", rel = "noopener", "Mayor's Action Plan", icon("arrow-up-right-from-square"))
           ),
           div(
@@ -5497,8 +5550,8 @@ ui <- tagList(
           span("Copyright 2026 Baltimore City Government. All rights reserved."),
           div(
             class = "footer-policy-links",
-            tags$a(href = "https://baltimorecity.gov/privacy", target = "_blank", rel = "noopener", "Privacy Policy"),
-            tags$a(href = "https://baltimorecity.gov/accessibility", target = "_blank", rel = "noopener", "Accessibility")
+            tags$a(href = "https://www.baltimorecity.gov/privacy", target = "_blank", rel = "noopener", "Privacy Policy"),
+            tags$a(href = "https://www.baltimorecity.gov/accessibility", target = "_blank", rel = "noopener", "Accessibility")
           )
         )
       )
@@ -6430,6 +6483,28 @@ server <- function(input, output, session) {
     showNotification("Risk saved.", type = "message")
   }, ignoreInit = TRUE)
 
+  observeEvent(input$risk_delete_confirmed_request, {
+    if (!current_user_can_edit_plan()) {
+      showNotification("You do not have permission to edit this plan.", type = "error", duration = 8)
+      return()
+    }
+    data <- app_data()
+    plan <- current_plan(data, current_submitter_value())
+    risk_id <- current_risk_id()
+    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
+    result <- tryCatch(
+      delete_service_risk(database, risk_id, plan$plan_id[[1]]),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_risk_id(NULL)
+    showNotification("Risk deleted.", type = "message")
+  }, ignoreInit = TRUE)
+
   observeEvent(input$duplicate_plan_from, {
     if (!current_user_can_edit_plan()) {
       showNotification("You do not have permission to update this plan draft.", type = "error", duration = 8)
@@ -7020,6 +7095,7 @@ server <- function(input, output, session) {
     state <- auth_state()
     email <- trimws(input$request_email %||% "")
     dev_link <- NULL
+    delivery_failed <- FALSE
     if (nzchar(email)) {
       user <- auth_find_user(database, email)
       if (!is.null(user)) {
@@ -7030,9 +7106,18 @@ server <- function(input, output, session) {
           # send real mail to seeded (real) employee addresses.
           dev_link <- link
         } else {
-          auth_send_reset_email(user$email[[1]], link, isTRUE(state$first_time))
+          delivery_failed <- !auth_send_reset_email(user$email[[1]], link, isTRUE(state$first_time))
         }
       }
+    }
+    if (delivery_failed) {
+      auth_state(list(
+        view = "request",
+        first_time = isTRUE(state$first_time),
+        notice = "The account exists, but Beacon could not send the email. Ask a system admin to verify SendGrid settings."
+      ))
+      showNotification("Email could not be sent. Check SendGrid settings.", type = "error", duration = 10)
+      return()
     }
     auth_state(list(view = "sent", first_time = isTRUE(state$first_time), dev_link = dev_link))
   })
