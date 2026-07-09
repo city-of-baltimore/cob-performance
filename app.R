@@ -2562,6 +2562,15 @@ team_rows_for_plan <- function(db, submitter_value) {
       if (nrow(team) && !is.na(assignment_row$user_id[[1]])) {
         already_listed <- any(!is.na(team$user_id) & team$user_id == assignment_row$user_id[[1]])
       }
+      if (nrow(team) && !already_listed) {
+        assignment_name <- assignment_key(assignment_row$full_name[[1]])
+        team_names <- assignment_key(team$full_name)
+        assignment_email <- tolower(trimws(as.character(assignment_row$email[[1]] %||% "")))
+        team_emails <- tolower(trimws(as.character(team$email)))
+        team_emails[is.na(team_emails)] <- ""
+        already_listed <- (nzchar(assignment_name) && any(team_names == assignment_name)) ||
+          (nzchar(assignment_email) && any(team_emails == assignment_email))
+      }
       if (!already_listed) team <- rbind(team, assignment_row)
     }
   } else {
