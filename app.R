@@ -3883,6 +3883,10 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   plan <- db$planning_agency_plan[db$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
   if (!nrow(plan)) stop("Plan not found")
   agency <- db$reference_agency[db$reference_agency$agency_id == plan_accounting_agency_id(db, plan), , drop = FALSE]
+  payload_preview <- plan_uses_draft_payload(plan)
+  overview_draft <- if (payload_preview) section_draft_payload(db, plan_id, "overview") else NULL
+  goals_draft <- if (payload_preview) section_draft_payload(db, plan_id, "goals") else NULL
+  services_draft <- if (payload_preview) section_draft_payload(db, plan_id, "services") else NULL
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan_id, , drop = FALSE]
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
@@ -3893,29 +3897,84 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   scorable_plan_service_ids <- services$plan_service_id[services$service_id %in% scorable_service_rows(service_rows)$service_id]
   review_bits$scores <- filter_review_scores_to_scorable_services(review_bits$scores, scorable_plan_service_ids)
   current_fy <- max(db$planning_agency_plan$fiscal_year, na.rm = TRUE)
+  overview_text <- if (nrow(overview)) overview$overview[[1]] else ""
+  vision_text <- if (nrow(overview)) overview$vision[[1]] else ""
+  web_address <- if (nrow(overview)) overview$web_address[[1]] else ""
+  overview_text <- draft_value(overview_draft, "agency_summary", overview_text)
+  vision_text <- draft_value(overview_draft, "agency_vision", vision_text)
+  web_address <- draft_value(overview_draft, "agency_website", web_address)
+  saved_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) {
+    as.character(unlist(goals_draft$goalIds))
+  } else {
+    as.character(goals$agency_goal_id)
+  }
+  saved_goal_ids <- saved_goal_ids[nzchar(saved_goal_ids)]
 
-  goal_payload <- lapply(seq_len(nrow(goals)), function(i) {
-    goal_id <- goals$agency_goal_id[i]
-    linked_initiatives <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goal_id, , drop = FALSE]
-    initiative_rows <- db$performance_initiative[db$performance_initiative$initiative_id %in% linked_initiatives$initiative_id, , drop = FALSE]
-    linked_kpis <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goal_id, , drop = FALSE]
+  goal_payload <- lapply(seq_along(saved_goal_ids), function(i) {
+    goal_key <- saved_goal_ids[[i]]
+    goal_row <- goals[as.character(goals$agency_goal_id) == goal_key, , drop = FALSE]
+    goal_id <- if (nrow(goal_row)) goal_row$agency_goal_id[[1]] else suppressWarnings(as.integer(goal_key))
+    linked_initiatives <- if (nrow(goal_row)) {
+      db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goal_row$agency_goal_id[[1]], , drop = FALSE]
+    } else {
+      data.frame()
+    }
+    initiative_rows <- if (nrow(linked_initiatives)) {
+      db$performance_initiative[db$performance_initiative$initiative_id %in% linked_initiatives$initiative_id, , drop = FALSE]
+    } else {
+      data.frame(title = character())
+    }
+    linked_kpis <- if (nrow(goal_row)) {
+      db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goal_row$agency_goal_id[[1]], , drop = FALSE]
+    } else {
+      data.frame(measure_id = integer())
+    }
+    goal_statement <- draft_value(goals_draft, paste0("goal_statement_", goal_key), if (nrow(goal_row)) goal_row$title[[1]] else "Untitled goal")
+    initiative_titles <- if (!is.null(goals_draft) && !is.null(goals_draft$initiatives[[goal_key]])) {
+      as.character(unlist(goals_draft$initiatives[[goal_key]]))
+    } else {
+      initiative_rows$title
+    }
+    initiative_titles <- initiative_titles[nzchar(trimws(initiative_titles))]
+    kpi_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$kpis[[goal_key]])) {
+      suppressWarnings(as.integer(unlist(goals_draft$kpis[[goal_key]])))
+    } else {
+      linked_kpis$measure_id
+    }
+    kpi_ids <- kpi_ids[!is.na(kpi_ids)]
+    alignment_code <- draft_value(goals_draft, paste0("goal_alignment_", goal_key), if (nrow(goal_row)) goal_row$alignment_code[[1]] else "")
+    alignment_row <- db$reference_pillar_goal[db$reference_pillar_goal$goal_code == alignment_code, , drop = FALSE]
+    alignment <- if (nrow(alignment_row)) {
+      paste(alignment_row$goal_code[[1]], alignment_row$goal_title[[1]])
+    } else if (nrow(goal_row)) {
+      goal_row$alignment[[1]]
+    } else {
+      ""
+    }
     list(
-      title = goals$title[i],
-      initiatives = as.list(initiative_rows$title),
-      kpis = Filter(Negate(is.null), lapply(linked_kpis$measure_id, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
-      alignment = if (nzchar(goals$alignment[i])) goals$alignment[i] else NULL,
-      review_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("goal"), "goal", goal_id) else list()
+      title = goal_statement,
+      initiatives = as.list(initiative_titles),
+      kpis = Filter(Negate(is.null), lapply(kpi_ids, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
+      alignment = if (nzchar(alignment)) alignment else NULL,
+      review_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("goal"), "goal", goal_id %||% -i) else list()
     )
   })
 
   service_payload <- lapply(seq_len(nrow(service_rows)), function(i) {
-    metric_ids <- service_metric_ids(db, plan, service_rows$service_id[i], include_ineligible = TRUE)
+    service_id <- service_rows$service_id[i]
+    metric_ids <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
+      suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
+    } else {
+      service_metric_ids(db, plan, service_id, include_ineligible = TRUE)
+    }
+    metric_ids <- metric_ids[!is.na(metric_ids)]
     plan_service <- services[services$service_id == service_rows$service_id[i], , drop = FALSE]
     plan_service_id <- if (nrow(plan_service)) plan_service$plan_service_id[[1]] else NA_integer_
     service_is_admin <- is_administration_service(service_rows[i, , drop = FALSE])
+    description <- draft_value(services_draft, paste0("service_description_", service_id), service_rows$service_description[i])
     list(
       name = service_rows$service_name[i],
-      description = service_rows$service_description[i],
+      description = description,
       service_type = service_rows$service_type[i],
       scoring_exempt = isTRUE(service_is_admin),
       metrics = if (service_is_admin) list() else Filter(Negate(is.null), lapply(metric_ids, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
@@ -3929,7 +3988,7 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
     agency_contact = agency_director_contact(db, plan),
-    overview = if (nrow(overview)) list(overview = overview$overview[[1]], vision = overview$vision[[1]], web_address = overview$web_address[[1]]) else list(),
+    overview = if (nrow(overview) || !is.null(overview_draft)) list(overview = overview_text, vision = vision_text, web_address = web_address) else list(),
     overview_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_) else list(),
     include_review = isTRUE(include_review),
     review = if (isTRUE(include_review)) list(
