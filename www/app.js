@@ -730,12 +730,31 @@
       }, { priority: "event" });
     }
     if (exportButton) {
-      window.Shiny.setInputValue("export_plan_request", {
+      var exportPayload = {
         planId: Number(exportButton.getAttribute("data-export-plan")),
         exportType: exportButton.getAttribute("data-export-type"),
         includeReview: exportButton.getAttribute("data-include-review") !== "false",
         nonce: Date.now()
-      }, { priority: "event" });
+      };
+      var builderPage = currentBuilderPage();
+      if (
+        builderPage &&
+        Number(builderPage.getAttribute("data-plan-id")) === exportPayload.planId &&
+        builderPage.getAttribute("data-section-key")
+      ) {
+        var goalsPage = builderPage.querySelector(".goals-page");
+        var draft = goalsPage ? collectGoalsDraft(goalsPage) : collectBuilderDraft(builderPage);
+        exportPayload.draftSectionKey = builderPage.getAttribute("data-section-key");
+        exportPayload.draftPayloadJson = JSON.stringify(draft);
+      }
+      if (!exportPayload.draftPayloadJson) {
+        var recoveryGoalsDraft = recoveryGoalsDraftForPlan(exportPayload.planId);
+        if (recoveryGoalsDraft) {
+          exportPayload.draftSectionKey = "goals";
+          exportPayload.draftPayloadJson = recoveryGoalsDraft;
+        }
+      }
+      window.Shiny.setInputValue("export_plan_request", exportPayload, { priority: "event" });
     }
   });
 
@@ -807,6 +826,9 @@
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
+      if (target.closest("#login_password")) {
+        window.setTimeout(submitLoginFromDom, 0);
+      }
       return;
     }
     if (target.closest("#request_email")) {
@@ -822,7 +844,7 @@
   document.addEventListener("keyup", function (event) {
     if (event.key !== "Enter") return;
     var target = event.target;
-    if (!target || !target.closest || !target.closest("#login_email, #login_password")) return;
+    if (!target || !target.closest || !target.closest("#login_email")) return;
     event.preventDefault();
     window.setTimeout(submitLoginFromDom, 0);
   });
@@ -1353,6 +1375,21 @@
 
   function goalsDraftKey(page) {
     return "cob-performance:goals-draft:v1:" + page.getAttribute("data-agency-id") + ":" + page.getAttribute("data-plan-id");
+  }
+
+  function recoveryGoalsDraftForPlan(planId) {
+    var suffix = ":" + String(planId);
+    try {
+      for (var index = 0; index < window.localStorage.length; index += 1) {
+        var key = window.localStorage.key(index);
+        if (key && key.indexOf("cob-performance:goals-draft:v1:") === 0 && key.slice(-suffix.length) === suffix) {
+          return window.localStorage.getItem(key);
+        }
+      }
+    } catch (error) {
+      return "";
+    }
+    return "";
   }
 
   function setGoalsSaveStatus(message) {

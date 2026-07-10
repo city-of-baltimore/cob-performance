@@ -3208,7 +3208,7 @@ section_draft_payload <- function(db, plan_id, section_key) {
   ]
   if (!nrow(drafts)) return(NULL)
   payload <- tryCatch(jsonlite::fromJSON(drafts$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
-  if (is.null(payload) || is.null(payload$values)) return(NULL)
+  if (is.null(payload) || !is.list(payload)) return(NULL)
   payload
 }
 
@@ -5605,7 +5605,7 @@ ui <- tagList(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
-    tags$script(src = "app.js?v=20260709-3", defer = "defer")
+    tags$script(src = "app.js?v=20260710-2", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5801,6 +5801,7 @@ server <- function(input, output, session) {
   current_review_return_page <- reactiveVal("reviewer_dashboard")
   current_export_plan_id <- reactiveVal(NULL)
   current_export_include_review <- reactiveVal(TRUE)
+  current_export_draft <- reactiveVal(NULL)
   current_workspace <- reactiveVal("admin")
   current_user_type <- reactiveVal("admin")
   current_team_access_id <- reactiveVal(NULL)
@@ -5892,16 +5893,19 @@ server <- function(input, output, session) {
     invisible(TRUE)
   }
 
-  update_cached_section_draft <- function(plan_id, section_key, payload_json, row) {
+  update_cached_section_draft <- function(plan_id, section_key, payload_json, row = NULL) {
     key <- paste(as.integer(plan_id), as.character(section_key), sep = "::")
+    draft_id <- if (!is.null(row) && "draft_id" %in% names(row)) row$draft_id[[1]] else NA_integer_
+    revision <- if (!is.null(row) && "revision" %in% names(row)) row$revision[[1]] else NA_integer_
+    updated_at <- if (!is.null(row) && "updated_at" %in% names(row)) row$updated_at[[1]] else Sys.time()
     section_draft_cache[[key]] <- data.frame(
-      draft_id = row$draft_id[[1]],
+      draft_id = draft_id,
       plan_id = as.integer(plan_id),
       section_key = as.character(section_key),
       payload = as.character(payload_json),
-      revision = row$revision[[1]],
+      revision = revision,
       updated_by = NA_integer_,
-      updated_at = row$updated_at[[1]],
+      updated_at = updated_at,
       stringsAsFactors = FALSE
     )
     invisible(TRUE)
@@ -7197,6 +7201,28 @@ server <- function(input, output, session) {
     export_type <- tolower(as.character(request$exportType))
     include_review <- isTRUE(request$includeReview)
     if (is.na(plan_id) || !export_type %in% c("pdf", "pptx")) return()
+    current_export_draft(NULL)
+    draft_section_key <- as.character(request$draftSectionKey %||% "")
+    draft_payload_json <- as.character(request$draftPayloadJson %||% "")
+    if (
+      nzchar(draft_section_key) &&
+        nzchar(draft_payload_json) &&
+        draft_section_key %in% c("overview", "goals", "services", "risks")
+    ) {
+      update_cached_section_draft(plan_id, draft_section_key, draft_payload_json)
+      current_export_draft(list(plan_id = plan_id, section_key = draft_section_key))
+      tryCatch({
+        data <- app_data()
+        plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+        if (nrow(plan) && plan_is_editable(plan) && current_user_can_edit_plan()) {
+          saved <- overwrite_section_draft(database, plan_id, draft_section_key, draft_payload_json)
+          update_cached_section_draft(plan_id, draft_section_key, draft_payload_json, saved[1, , drop = FALSE])
+          refresh_app_data()
+        }
+      }, error = function(error) {
+        showNotification(paste("Export will use the last saved draft:", conditionMessage(error)), type = "warning", duration = 8)
+      })
+    }
     current_export_plan_id(plan_id)
     current_export_include_review(include_review)
     session$sendCustomMessage("trigger-plan-download", list(type = export_type))
@@ -7228,7 +7254,12 @@ server <- function(input, output, session) {
     content = function(file) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
-      build_plan_export_file(app_data(), plan_id, file, "pdf", current_export_include_review())
+      data <- app_data()
+      export_draft <- current_export_draft()
+      if (!is.null(export_draft) && identical(as.integer(export_draft$plan_id), as.integer(plan_id))) {
+        data <- data_with_cached_section_draft(data, plan_id, export_draft$section_key)
+      }
+      build_plan_export_file(data, plan_id, file, "pdf", current_export_include_review())
       showNotification("PDF downloaded successfully.", type = "message")
     }
   )
@@ -7242,7 +7273,12 @@ server <- function(input, output, session) {
     content = function(file) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
-      build_plan_export_file(app_data(), plan_id, file, "pptx", current_export_include_review())
+      data <- app_data()
+      export_draft <- current_export_draft()
+      if (!is.null(export_draft) && identical(as.integer(export_draft$plan_id), as.integer(plan_id))) {
+        data <- data_with_cached_section_draft(data, plan_id, export_draft$section_key)
+      }
+      build_plan_export_file(data, plan_id, file, "pptx", current_export_include_review())
       showNotification("PowerPoint downloaded successfully.", type = "message")
     }
   )
