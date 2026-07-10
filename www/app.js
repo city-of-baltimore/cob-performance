@@ -17,6 +17,7 @@
   var authHandlersRegistered = false;
   var authRestorePending = false;
   var authRestoreAttempted = false;
+  var openServiceIds = new Set();
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -38,6 +39,7 @@
   }
 
   function navigateToPage(page) {
+    if (page !== "services") openServiceIds.clear();
     setActivePage(page);
     closeMobileNav();
     if (window.Shiny) {
@@ -414,6 +416,19 @@
       serviceId: serviceId,
       nonce: Date.now()
     }, { priority: "event" });
+  }
+
+  function restoreOpenServiceDrawers() {
+    var page = document.querySelector(".services-page");
+    if (!page || !openServiceIds.size) return;
+    page.querySelectorAll(".service-editor[data-service-id]").forEach(function (editor) {
+      var serviceId = editor.getAttribute("data-service-id") || "";
+      if (!openServiceIds.has(serviceId)) return;
+      editor.open = true;
+      var body = editor.querySelector(".service-editor-body");
+      if (body) body.setAttribute("aria-hidden", "false");
+      requestServiceBody(editor);
+    });
   }
 
   function applyFeedbackFilters() {
@@ -1293,10 +1308,9 @@
     var row = removeButton.closest(".kpi-select-row");
     if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(row);
     row.remove();
-    var remaining = picker.querySelector(".kpi-select-row select");
     var page = picker.closest(".goals-page, .services-page");
     updateServiceEditorMetricMetadata(removeButton.closest(".service-editor"));
-    if (remaining) updateAllKpiAvailability(page);
+    updateAllKpiAvailability(page);
     if (page && page.matches(".goals-page")) updateGoalRequirements(page);
     scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
   });
@@ -1544,11 +1558,18 @@
         var savedMetrics = (draft.serviceMetrics[serviceId] || []).filter(function (value) {
           return value !== "";
         });
-        if (savedMetrics.length === 0) return;
         while (container.querySelectorAll(".kpi-select-row").length > 1) {
           container.querySelector(".kpi-select-row:last-child").remove();
         }
         var firstSelect = container.querySelector("select");
+        if (!firstSelect) return;
+        if (savedMetrics.length === 0) {
+          firstSelect.value = "";
+          updateKpiPreview(firstSelect);
+          var editor = container.closest(".service-editor");
+          if (editor) editor.setAttribute("data-selected-metrics", "");
+          return;
+        }
         firstSelect.value = savedMetrics[0] || "";
         savedMetrics.slice(1).forEach(function (value) {
           addKpiSelector(picker, value);
@@ -1966,6 +1987,7 @@
     var page = document.querySelector(".services-page");
     if (!page || page.dataset.servicesInitialized === "true") return;
     page.dataset.servicesInitialized = "true";
+    restoreOpenServiceDrawers();
     page.querySelectorAll(".service-editor").forEach(function (editor) {
       var body = editor.querySelector(".service-editor-body");
       if (body) body.setAttribute("aria-hidden", editor.open ? "false" : "true");
@@ -1993,6 +2015,11 @@
       if (body) body.setAttribute("aria-hidden", event.target.open ? "false" : "true");
     }
     if (event.target.matches(".service-editor")) {
+      var serviceId = event.target.getAttribute("data-service-id") || "";
+      if (serviceId) {
+        if (event.target.open) openServiceIds.add(serviceId);
+        else openServiceIds.delete(serviceId);
+      }
       var serviceBody = event.target.querySelector(".service-editor-body");
       if (serviceBody) serviceBody.setAttribute("aria-hidden", event.target.open ? "false" : "true");
       var servicePage = event.target.closest(".services-page");

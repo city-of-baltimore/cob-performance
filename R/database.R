@@ -239,7 +239,30 @@ apply_user_entity_access_seed <- function(connection, path = file.path("database
   invisible(TRUE)
 }
 
+reset_identity_sequence <- function(connection, table_name, id_column) {
+  DBI::dbExecute(
+    connection,
+    paste0(
+      "SELECT setval(pg_get_serial_sequence($1, $2), ",
+      "COALESCE((SELECT MAX(", DBI::dbQuoteIdentifier(connection, id_column), ") FROM ", table_name, "), 1), ",
+      "(SELECT COUNT(*) > 0 FROM ", table_name, "))"
+    ),
+    params = list(table_name, id_column)
+  )
+  invisible(TRUE)
+}
+
+ensure_measure_identity_sequences <- function(connection) {
+  reset_identity_sequence(connection, "performance.performance_measure", "measure_id")
+  reset_identity_sequence(connection, "performance.measure_actuals", "actual_id")
+  reset_identity_sequence(connection, "performance.measure_entity_link", "link_id")
+  reset_identity_sequence(connection, "performance.pm_service_link", "link_id")
+  reset_identity_sequence(connection, "performance.pm_goal_link", "link_id")
+  invisible(TRUE)
+}
+
 ensure_review_schema <- function(connection) {
+  ensure_measure_identity_sequences(connection)
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
     connection,

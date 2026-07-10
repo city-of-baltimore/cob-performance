@@ -704,6 +704,8 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.na(plan$plan_id[[1]])) return(db$performance_performance_measure[0, , drop = FALSE])
   services <- plan_service_rows(db, plan)
   if (!nrow(services)) return(db$performance_performance_measure[0, , drop = FALSE])
+  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
+  measure_ids <- unique(link_table$measure_id[link_table$service_id %in% services$service_id])
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link
     if (!is.na(plan$entity_id[[1]])) {
@@ -717,11 +719,9 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
         drop = FALSE
       ]
     }
-    measure_ids <- unique(entity_links$measure_id)
-  } else {
-    link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-    measure_ids <- unique(link_table$measure_id[link_table$service_id %in% services$service_id])
+    measure_ids <- unique(c(measure_ids, entity_links$measure_id))
   }
+  measure_ids <- measure_ids[!is.na(measure_ids)]
   rows <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% measure_ids, , drop = FALSE]
   if (!include_ineligible && nrow(rows)) {
     approval_status <- ifelse(is.na(rows$approval_status), "", rows$approval_status)
@@ -791,6 +791,8 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
 }
 
 service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
+  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
+  linked_ids <- unique(link_table$measure_id[link_table$service_id == service_id])
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
     if (!is.null(plan) && nrow(plan)) {
@@ -804,10 +806,7 @@ service_metric_ids <- function(db, plan, service_id, measures = NULL, include_in
         ]
       }
     }
-    linked_ids <- unique(entity_links$measure_id)
-  } else {
-    link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-    linked_ids <- unique(link_table$measure_id[link_table$service_id == service_id])
+    linked_ids <- unique(c(linked_ids, entity_links$measure_id))
   }
   linked_ids <- linked_ids[!is.na(linked_ids)]
   if (!include_ineligible && length(linked_ids)) {
@@ -2421,12 +2420,17 @@ page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_ro
   complete_goal_count <- goal_readiness$complete_count
   aligned_goal_count <- goal_readiness$aligned_count
   minimum_goals <- goal_minimum_count(plan)
-  service_metric_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$service_id %in% scorable_services$service_id])
-  services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
   goal_measure_counts <- plan_goal_measure_counts(db, goals)
   service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
+  service_metric_service_ids <- service_measure_counts$service_id[service_measure_counts$measure_count > 0]
+  services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
   goals_over_measure_limit <- goal_measure_counts[goal_measure_counts$measure_count > 5, , drop = FALSE]
   services_over_measure_limit <- service_measure_counts[service_measure_counts$measure_count > 5, , drop = FALSE]
+  over_limit_service_names <- if (nrow(services_over_measure_limit)) {
+    scorable_services$service_name[match(services_over_measure_limit$service_id, scorable_services$service_id)]
+  } else {
+    character(0)
+  }
   overview_complete <- nonblank_text(overview_text) &&
     nonblank_text(vision_text) &&
     nonblank_text(web_address)
@@ -2449,7 +2453,9 @@ page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_ro
   service_detail <- if (submitter_is_mayoral_service(db, agency_id)) {
     "Not required for mayoral service plans"
   } else if (nrow(services_over_measure_limit)) {
-    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics")
+    listed_services <- paste(head(over_limit_service_names, 3), collapse = ", ")
+    more_services <- if (length(over_limit_service_names) > 3) paste("and", length(over_limit_service_names) - 3, "more") else ""
+    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics:", listed_services, more_services)
   } else if (!nrow(scorable_services)) {
     "No service metrics required for Administration services"
   } else if (services_complete) {
@@ -2993,12 +2999,24 @@ plan_goal_measure_counts <- function(db, goals) {
 
 plan_service_measure_counts <- function(db, plan, services) {
   if (is.null(services) || !nrow(services)) return(data.frame(plan_service_id = integer(), service_id = character(), measure_count = integer()))
+  services_draft <- if (!is.null(plan) && nrow(plan) && plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
   counts <- data.frame(
     plan_service_id = services$plan_service_id,
     service_id = services$service_id,
     # unname: vapply carries service_id names, and data.frame would adopt them
     # as row names, which errors if any are NA
-    measure_count = unname(vapply(services$service_id, function(service_id) length(unique(service_metric_ids(db, plan, service_id, include_ineligible = TRUE))), integer(1))),
+    measure_count = unname(vapply(services$service_id, function(service_id) {
+      draft_values <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
+        suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
+      } else {
+        NULL
+      }
+      if (!is.null(draft_values)) {
+        draft_values <- draft_values[!is.na(draft_values)]
+        return(length(unique(draft_values)))
+      }
+      length(unique(service_metric_ids(db, plan, service_id, include_ineligible = TRUE)))
+    }, integer(1))),
     stringsAsFactors = FALSE
   )
   counts
@@ -3008,7 +3026,22 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
   goal_ids <- if (is.null(goals) || !nrow(goals)) integer(0) else goals$agency_goal_id
   goal_measure_ids <- unique(db$performance_pm_goal_link$measure_id[db$performance_pm_goal_link$agency_goal_id %in% goal_ids])
   scorable_services <- scorable_service_rows(services)
-  service_measure_ids <- if (is.null(scorable_services) || !nrow(scorable_services)) integer(0) else unique(unlist(lapply(scorable_services$service_id, function(service_id) service_metric_ids(db, plan, service_id, include_ineligible = TRUE)), use.names = FALSE))
+  services_draft <- if (!is.null(plan) && nrow(plan) && plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
+  service_measure_ids <- if (is.null(scorable_services) || !nrow(scorable_services)) {
+    integer(0)
+  } else {
+    unique(unlist(lapply(scorable_services$service_id, function(service_id) {
+      draft_values <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[service_id]])) {
+        suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[service_id]])))
+      } else {
+        NULL
+      }
+      if (!is.null(draft_values)) {
+        return(draft_values[!is.na(draft_values)])
+      }
+      service_metric_ids(db, plan, service_id, include_ineligible = TRUE)
+    }), use.names = FALSE))
+  }
   unique(c(goal_measure_ids, service_measure_ids))
 }
 
@@ -3035,9 +3068,14 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
   service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
   goals_over_measure_limit <- goal_measure_counts[goal_measure_counts$measure_count > 5, , drop = FALSE]
   services_over_measure_limit <- service_measure_counts[service_measure_counts$measure_count > 5, , drop = FALSE]
-  service_metric_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$service_id %in% scorable_services$service_id])
+  service_metric_service_ids <- service_measure_counts$service_id[service_measure_counts$measure_count > 0]
   services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
   missing_service_names <- if (nrow(scorable_services)) scorable_services$service_name[!scorable_services$service_id %in% service_metric_service_ids] else character(0)
+  over_limit_service_names <- if (nrow(services_over_measure_limit)) {
+    scorable_services$service_name[match(services_over_measure_limit$service_id, scorable_services$service_id)]
+  } else {
+    character(0)
+  }
   overview_missing <- c(
     if (!nonblank_text(overview_text)) "overview",
     if (!nonblank_text(vision_text)) "vision",
@@ -3055,7 +3093,9 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
   service_detail <- if (submitter_is_mayoral_service(db, submitter_value)) {
     "Not required for mayoral service plans"
   } else if (nrow(services_over_measure_limit)) {
-    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics")
+    listed_services <- paste(head(over_limit_service_names, 3), collapse = ", ")
+    more_services <- if (length(over_limit_service_names) > 3) paste("and", length(over_limit_service_names) - 3, "more") else ""
+    paste(nrow(services_over_measure_limit), "service(s) over 5 metrics:", listed_services, more_services)
   } else if (!nrow(scorable_services)) {
     "No service metrics required for Administration services"
   } else if (services_complete) {
@@ -3225,33 +3265,10 @@ draft_value <- function(draft, field_id, fallback = "") {
 validate_measure_selection_limit <- function(payload_json, section_key, limit = 5L) {
   payload <- tryCatch(jsonlite::fromJSON(payload_json, simplifyVector = FALSE), error = function(error) NULL)
   if (is.null(payload)) return(NULL)
-  selection_groups <- list()
-  label <- "measure selections"
-  if (identical(section_key, "goals")) {
-    selection_groups <- payload$kpis %||% list()
-    label <- "KPIs"
-  } else if (identical(section_key, "services")) {
-    selection_groups <- payload$serviceMetrics %||% list()
-    label <- "metrics"
-  }
-  if (!length(selection_groups)) return(NULL)
-  over_limit <- names(selection_groups)[vapply(selection_groups, function(values) {
-    values <- as.character(unlist(values))
-    sum(nzchar(values)) > limit
-  }, logical(1))]
-  if (length(over_limit)) {
-    paste0("Each ", if (identical(section_key, "goals")) "goal" else "service", " can have no more than ", limit, " ", label, ". Please reduce selections before saving.")
-  } else if (identical(section_key, "services")) {
-    values <- as.character(unlist(selection_groups, use.names = FALSE))
-    values <- values[nzchar(values)]
-    if (any(duplicated(values))) {
-      "Each metric can only be assigned to one service. Remove duplicate service metric selections before saving."
-    } else {
-      NULL
-    }
-  } else {
-    NULL
-  }
+  # Autosave must accept in-progress drafts, including seeded plans that start
+  # over the metric/KPI cap. The page-level readiness checks surface those
+  # issues while still allowing users to remove their way back into compliance.
+  NULL
 }
 
 builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL) {
@@ -4765,7 +4782,11 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-form-grid",
             div(class = "measure-field full-width", textAreaInput("measure_context", measure_label("Context required for interpretation", "Note caveats, comparison limits, seasonality, policy changes, or other context needed to interpret the value responsibly."), rows = 2, value = value("context_required"))),
-            div(class = "measure-field checkbox-field", checkboxInput("measure_replicability", "Calculation is replicable", value = isTRUE(value("replicability", FALSE))), p(class = "field-inline-help", "A reviewer should be able to recreate the value from the formula and source data.")),
+            if (can_edit_scope) {
+              div(class = "measure-field checkbox-field", checkboxInput("measure_replicability", "Calculation is replicable", value = isTRUE(value("replicability", FALSE))), p(class = "field-inline-help", "Reviewer/admin field: a reviewer should be able to recreate the value from the formula and source data."))
+            } else {
+              div(class = "measure-scope-options scope-derived", div(class = "scope-derived-grid", span("Calculation is replicable"), strong(if (isTRUE(value("replicability", FALSE))) "Yes" else "Not yet validated")), p(class = "scope-admin-note", "This validation field is completed by OPI reviewers or system admins."))
+            },
             div(class = "measure-field", textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation"))),
             div(class = "measure-field full-width", textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used"))),
             div(class = "measure-field full-width", textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful"))),
@@ -6478,7 +6499,7 @@ server <- function(input, output, session) {
       format_type = input$measure_format,
       display_unit = if (nzchar(trimws(input$measure_unit))) input$measure_unit else NA_character_,
       context_required = input$measure_context,
-      replicability = isTRUE(input$measure_replicability),
+      replicability = if (current_user_can_manage_measure_admin_fields()) isTRUE(input$measure_replicability) else if (nrow(existing)) isTRUE(existing$replicability[[1]]) else FALSE,
       disaggregation = input$measure_disaggregation,
       data_location = input$measure_data_location,
       collection_method = input$measure_collection_method,
@@ -6523,7 +6544,7 @@ server <- function(input, output, session) {
     if (submit) {
       data <- app_data()
       plan <- current_plan(data, current_submitter_value())
-      target_fy <- plan$fiscal_year[[1]]
+      target_fy <- as.integer(plan$fiscal_year[[1]]) + 1L
       missing_fields <- validate_measure_submit_requirements(values, yearly_values, target_fy)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
@@ -7376,6 +7397,10 @@ server <- function(input, output, session) {
       result <- save_section_draft(database, plan_id, section_key, payload_json, revision)
       if (isTRUE(result$ok)) {
         update_cached_section_draft(plan_id, section_key, payload_json, result$row)
+        cached_data <- app_data()
+        if (!is.null(cached_data)) {
+          app_data(data_with_cached_section_draft(cached_data, plan_id, section_key))
+        }
         session$sendCustomMessage("shared-draft-result", list(
           ok = TRUE,
           planId = plan_id,
@@ -7658,7 +7683,7 @@ server <- function(input, output, session) {
     if (is.null(measure_id)) return(NULL)
     data <- ensure_app_data()
     plan <- current_plan(data, current_submitter_value())
-    target_fy <- if (is.null(plan) || !nrow(plan)) 2027 else plan$fiscal_year[[1]]
+    target_fy <- if (is.null(plan) || !nrow(plan)) 2028 else as.integer(plan$fiscal_year[[1]]) + 1L
     measure_modal_ui(data, current_agency_id(), if (identical(measure_id, "new")) NULL else as.integer(measure_id), current_user_can_manage_measure_admin_fields(), target_fy, current_user_can_submit_measure() || current_user_can_review_measures())
   })
 
