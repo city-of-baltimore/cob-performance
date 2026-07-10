@@ -505,7 +505,7 @@
   function sendFeedbackAdminUpdate(feedbackId, statusOverride) {
     var category = (document.getElementById("feedback_category_" + feedbackId) || {}).value || "Uncategorized";
     var priority = (document.getElementById("feedback_priority_" + feedbackId) || {}).value || "Unassigned";
-    var status = statusOverride || (document.getElementById("feedback_status_" + feedbackId) || {}).value || "Open";
+    var status = statusOverride || (document.getElementById("feedback_status_" + feedbackId) || {}).value || "New";
     var assignedAdminId = (document.getElementById("feedback_assigned_admin_" + feedbackId) || {}).value || "";
     if (!window.Shiny) return;
     window.Shiny.setInputValue("feedback_admin_update", {
@@ -615,6 +615,17 @@
       window.setTimeout(function () { clearReviewerPlanFiltersOnQueueRender(true); }, 500);
     }
     sendPage(targetPage);
+  });
+
+  document.addEventListener("change", function (event) {
+    var feedbackControl = event.target.closest(".feedback-admin-controls select");
+    if (feedbackControl) {
+      var feedbackCard = feedbackControl.closest("[data-feedback-row]");
+      if (feedbackCard) {
+        sendFeedbackAdminUpdate(feedbackCard.getAttribute("data-feedback-row"));
+      }
+      return;
+    }
   });
 
   document.addEventListener("input", function (event) {
@@ -785,6 +796,14 @@
     event.preventDefault();
     updateMeasureNumberFormat();
     window.Shiny.setInputValue(saveButton ? "measure_save_request" : "measure_submit_request", Date.now(), { priority: "event" });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#delete_measure") || !window.Shiny) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this measure? This removes its actuals, targets, service links, goal links, and review history.")) return;
+    window.Shiny.setInputValue("measure_delete_confirmed_request", Date.now(), { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {

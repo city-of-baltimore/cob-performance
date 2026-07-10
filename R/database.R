@@ -522,7 +522,7 @@ ensure_review_schema <- function(connection) {
       "page_url text,",
       "category varchar(30) NOT NULL DEFAULT 'Uncategorized',",
       "priority varchar(30) NOT NULL DEFAULT 'Unassigned',",
-      "status varchar(30) NOT NULL DEFAULT 'Open',",
+      "status varchar(30) NOT NULL DEFAULT 'New',",
       "assigned_admin_id integer REFERENCES access.\"user\"(user_id),",
       "created_at timestamptz NOT NULL DEFAULT now(),",
       "updated_at timestamptz NOT NULL DEFAULT now(),",
@@ -531,6 +531,7 @@ ensure_review_schema <- function(connection) {
     )
   )
   DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ADD COLUMN IF NOT EXISTS assigned_admin_id integer REFERENCES access.\"user\"(user_id)")
+  DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ALTER COLUMN status SET DEFAULT 'New'")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category)")
   invisible(TRUE)
 }
@@ -850,14 +851,14 @@ update_feedback_request <- function(connection, feedback_id, category, priority,
   if (is.na(feedback_id)) stop("Choose a valid feedback request.")
   valid_category <- c("Uncategorized", "Bug", "Feature")
   valid_priority <- c("Unassigned", "Low", "Medium", "High", "Urgent")
-  valid_status <- c("Open", "In Review", "Complete", "Archived")
+  valid_status <- c("New", "Open", "In Review", "Complete", "Archived")
   category <- as.character(category %||% "Uncategorized")
   priority <- as.character(priority %||% "Unassigned")
-  status <- as.character(status %||% "Open")
+  status <- as.character(status %||% "New")
   assigned_admin_id <- suppressWarnings(as.integer(assigned_admin_id %||% NA_integer_))
   if (!category %in% valid_category) category <- "Uncategorized"
   if (!priority %in% valid_priority) priority <- "Unassigned"
-  if (!status %in% valid_status) status <- "Open"
+  if (!status %in% valid_status) status <- "New"
   if (!is.na(assigned_admin_id)) {
     admin_rows <- DBI::dbGetQuery(
       connection,
@@ -960,6 +961,22 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
     }
     measure_id
   })
+}
+
+delete_measure_record <- function(connection, measure_id) {
+  measure_id <- suppressWarnings(as.integer(measure_id))
+  if (is.na(measure_id)) stop("Measure not found.")
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "DELETE FROM review.measure_review WHERE measure_id = $1", params = list(measure_id))
+    DBI::dbExecute(connection, "DELETE FROM performance.measure_actuals WHERE measure_id = $1", params = list(measure_id))
+    DBI::dbExecute(connection, "DELETE FROM performance.pm_goal_link WHERE measure_id = $1", params = list(measure_id))
+    DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE measure_id = $1", params = list(measure_id))
+    DBI::dbExecute(connection, "DELETE FROM performance.measure_entity_link WHERE measure_id = $1", params = list(measure_id))
+    DBI::dbExecute(connection, "DELETE FROM performance.pm_service_reassignment WHERE measure_id = $1", params = list(measure_id))
+    changed <- DBI::dbExecute(connection, "DELETE FROM performance.performance_measure WHERE measure_id = $1", params = list(measure_id))
+    if (changed != 1) stop("Measure not found.")
+  })
+  invisible(measure_id)
 }
 
 review_measure_record <- function(connection, measure_id, decision, feedback = "", reviewer_id = NULL) {

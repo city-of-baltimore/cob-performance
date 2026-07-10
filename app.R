@@ -14,7 +14,7 @@ source(file.path("R", "auth.R"), local = TRUE)
 
 pages <- list(
   login = "Login",
-  landing = "Cycle home",
+  landing = "Timeline",
   reviewer_dashboard = "Plan review",
   plan_review_detail = "Plan review detail",
   approval_queue = "Plan approval queue",
@@ -172,6 +172,10 @@ can_finalize_plans <- function(app_roles) {
 }
 
 can_view_application_admin <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
+can_delete_measures <- function(app_roles) {
   has_any_role(app_roles, "SystemAdmin")
 }
 
@@ -2150,7 +2154,8 @@ page_measure_review <- function(db) {
 
 feedback_category_choices <- c("Uncategorized", "Bug", "Feature")
 feedback_priority_choices <- c("Unassigned", "Low", "Medium", "High", "Urgent")
-feedback_status_choices <- c("Open", "In Review", "Complete", "Archived")
+feedback_status_choices <- c("New", "Open", "In Review", "Complete", "Archived")
+default_feedback_status_filter <- c("New", "Open", "In Review")
 
 feedback_system_admin_choices <- function(db) {
   if (!"access_user_role" %in% names(db) || !nrow(db$access_user_role)) return(c("Unassigned" = ""))
@@ -2254,7 +2259,6 @@ feedback_admin_card <- function(row, admin_choices) {
     ),
     div(
       class = "feedback-admin-actions",
-      tags$button(type = "button", class = "civic-button secondary", `data-feedback-save` = feedback_id, icon("floppy-disk"), "Save"),
       tags$button(type = "button", class = "civic-button secondary", `data-feedback-complete` = feedback_id, icon("check"), "Mark complete"),
       tags$button(type = "button", class = "civic-button secondary", `data-feedback-archive` = feedback_id, icon("box-archive"), "Archive"),
       tags$button(type = "button", class = "civic-button danger", `data-feedback-delete` = feedback_id, icon("trash"), "Delete")
@@ -2279,6 +2283,8 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
   category_filter <- category_filter[nzchar(category_filter)]
   priority_filter <- priority_filter[nzchar(priority_filter)]
   status_filter <- status_filter[nzchar(status_filter)]
+  if (!length(status_filter)) status_filter <- default_feedback_status_filter
+  status_filter <- status_filter[status_filter %in% feedback_status_choices]
   if (nrow(filtered_feedback) && nzchar(search)) {
     haystack <- tolower(paste(
       filtered_feedback$user_email,
@@ -2311,6 +2317,7 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
     ),
     div(
       class = "dashboard-grid reviewer-dashboard-grid",
+      metric_tile("New", feedback_status_count("New"), "Fresh requests"),
       metric_tile("Open", feedback_status_count("Open"), "Feedback needing triage"),
       metric_tile("In review", feedback_status_count("In Review"), "Being worked"),
       metric_tile("Complete", feedback_status_count("Complete"), "Closed requests", "success"),
@@ -4680,7 +4687,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -4848,7 +4855,11 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       ),
       div(
         class = "measure-modal-actions",
-        div(if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", icon("ban"), "Make inactive"), if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small")),
+        div(
+          if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", icon("trash-can"), "Delete measure"),
+          if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", icon("ban"), "Make inactive"),
+          if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small")
+        ),
         div(
           class = "measure-submit-group",
           p(class = "approval-workflow-note", "Submit for approval currently marks this measure pending. The system admin review panel will be added in a later workflow step."),
@@ -5688,8 +5699,8 @@ ui <- tagList(
             span(class = "nav-icon", `aria-hidden` = "true", icon("right-from-bracket")),
             span(class = "nav-label", "Sign out")
           ),
-          nav_item("landing", "Cycle home", icon("house")),
           nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
+          nav_item("landing", "Timeline", icon("calendar-days")),
           nav_item("team", "Team and roles", icon("users")),
           div(class = "nav-group-label performance-reviewing-nav-item", "Performance Reviewing"),
           uiOutput("performance_reviewing_nav"),
@@ -5727,8 +5738,8 @@ ui <- tagList(
         span(class = "nav-icon", `aria-hidden` = "true", icon("right-from-bracket")),
         span(class = "nav-label", "Sign out")
       ),
-      nav_item("landing", "Home", icon("house")),
       nav_item("strategic_plan", "Action plan", icon("clipboard-list"), item_class = "performance-planning-nav-item"),
+      nav_item("landing", "Timeline", icon("calendar-days")),
       nav_item("team", "Team and roles", icon("users")),
       div(class = "nav-group-label performance-reviewing-nav-item", "Performance Reviewing"),
       uiOutput("mobile_performance_reviewing_nav"),
@@ -5765,9 +5776,9 @@ ui <- tagList(
           div(
             class = "footer-column",
             tags$h2("Navigation"),
-            tags$button(type = "button", class = "footer-link", `data-page` = "landing", "Cycle Home"),
-            tags$button(type = "button", class = "footer-link", `data-page` = "plan_history", "View Plan"),
             tags$button(type = "button", class = "footer-link", `data-page` = "strategic_plan", "Action Plan"),
+            tags$button(type = "button", class = "footer-link", `data-page` = "landing", "Timeline"),
+            tags$button(type = "button", class = "footer-link", `data-page` = "plan_history", "View Plan"),
             tags$button(type = "button", class = "footer-link", `data-page` = "metrics", "Measures")
           ),
           div(
@@ -6584,7 +6595,7 @@ server <- function(input, output, session) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
     refresh_app_data()
-    current_measure_id(as.character(result))
+    current_measure_id(NULL)
     showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
   }
 
@@ -6595,6 +6606,22 @@ server <- function(input, output, session) {
   observeEvent(input$close_measure_modal, current_measure_id(NULL), ignoreInit = TRUE)
   observeEvent(input$measure_save_request, persist_measure(FALSE), ignoreInit = TRUE)
   observeEvent(input$measure_submit_request, persist_measure(TRUE), ignoreInit = TRUE)
+  observeEvent(input$measure_delete_confirmed_request, {
+    if (!can_delete_measures(current_user_app_roles())) {
+      showNotification("Only System Admins can delete measures.", type = "error", duration = 8)
+      return()
+    }
+    measure_id <- current_measure_id()
+    if (is.null(measure_id) || identical(measure_id, "new")) return()
+    result <- tryCatch(delete_measure_record(database, measure_id), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_measure_id(NULL)
+    showNotification("Measure deleted.", type = "message", duration = 6)
+  }, ignoreInit = TRUE)
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
   }, ignoreInit = TRUE)
@@ -6851,7 +6878,7 @@ server <- function(input, output, session) {
       return()
     }
     refresh_app_data()
-    current_risk_id(as.character(result))
+    current_risk_id(NULL)
     showNotification("Risk saved.", type = "message")
   }, ignoreInit = TRUE)
 
@@ -7684,7 +7711,15 @@ server <- function(input, output, session) {
     data <- ensure_app_data()
     plan <- current_plan(data, current_submitter_value())
     target_fy <- if (is.null(plan) || !nrow(plan)) 2028 else as.integer(plan$fiscal_year[[1]]) + 1L
-    measure_modal_ui(data, current_agency_id(), if (identical(measure_id, "new")) NULL else as.integer(measure_id), current_user_can_manage_measure_admin_fields(), target_fy, current_user_can_submit_measure() || current_user_can_review_measures())
+    measure_modal_ui(
+      data,
+      current_agency_id(),
+      if (identical(measure_id, "new")) NULL else as.integer(measure_id),
+      current_user_can_manage_measure_admin_fields(),
+      target_fy,
+      current_user_can_submit_measure() || current_user_can_review_measures(),
+      can_delete_measures(current_user_app_roles())
+    )
   })
 
   output$history_plan_modal <- renderUI({
