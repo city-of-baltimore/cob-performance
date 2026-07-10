@@ -7533,15 +7533,10 @@ server <- function(input, output, session) {
     handle_login_attempt(input$login_email, input$login_password)
   }, ignoreInit = TRUE)
 
-  initial_data <- isolate(app_data())
-  lapply(seq_along(initial_data$strategic_plan), function(index) {
-    local({
-      pillar_id <- initial_data$strategic_plan[[index]]$id
-      observeEvent(input[[paste0("open_pillar_", pillar_id)]], {
-        current_pillar_modal(pillar_id)
-      }, ignoreInit = TRUE)
-    })
-  })
+  observeEvent(input$open_pillar_request, {
+    pillar_id <- as.character(input$open_pillar_request$pillarId %||% "")
+    if (nzchar(pillar_id)) current_pillar_modal(pillar_id)
+  }, ignoreInit = TRUE)
 
   observeEvent(input$close_pillar_modal, {
     current_pillar_modal(NULL)
@@ -7549,7 +7544,9 @@ server <- function(input, output, session) {
 
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
-      return(page_login(auth_state(), app_data()))
+      state <- auth_state()
+      login_data <- if (identical(state$view %||% "login", "access_request")) app_data() else NULL
+      return(page_login(state, login_data))
     }
     feedback_filter_values <- function(value) {
       if (is.null(value) || length(value) == 0) character(0) else as.character(value)
