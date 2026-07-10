@@ -15,6 +15,8 @@
   var authHeartbeatTimer = null;
   var lastAuthHeartbeatAt = 0;
   var authHandlersRegistered = false;
+  var authRestorePending = false;
+  var authRestoreAttempted = false;
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -240,6 +242,7 @@
 
   function setAuthState(message) {
     var signedIn = Boolean(message && message.signedIn);
+    authRestorePending = false;
     document.body.classList.toggle("auth-signed-in", signedIn);
     document.body.classList.toggle("auth-signed-out", !signedIn);
     if (signedIn) {
@@ -251,10 +254,15 @@
     if (!window.Shiny) return;
     var token = storedAuthToken();
     if (!token) {
+      authRestorePending = false;
+      authRestoreAttempted = true;
       setAuthState({ signedIn: false });
       prefillLoginEmail();
       return;
     }
+    if (authRestorePending || authRestoreAttempted) return;
+    authRestorePending = true;
+    authRestoreAttempted = true;
     window.Shiny.setInputValue("auth_restore_session", {
       token: token,
       nonce: Date.now()
@@ -264,10 +272,7 @@
   }
 
   function scheduleStoredAuthRestore() {
-    window.setTimeout(requestStoredAuthRestore, 75);
-    window.setTimeout(function () {
-      if (!document.body.classList.contains("auth-signed-in")) requestStoredAuthRestore();
-    }, 750);
+    window.setTimeout(requestStoredAuthRestore, 50);
   }
 
   function sendAuthActivity() {
@@ -2204,7 +2209,9 @@
 
   document.addEventListener("shiny:connected", function () {
     registerShinyHandlers();
-    setActivePage("login");
+    if (!storedAuthToken()) {
+      setActivePage("login");
+    }
     scheduleStoredAuthRestore();
     schedulePageInitialization();
   });

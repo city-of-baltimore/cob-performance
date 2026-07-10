@@ -1555,7 +1555,10 @@ login_view_access_request <- function(state, db = NULL) {
         selectInput("access_request_agency_role", "Agency role/title", choices = c("Not sure" = "", agency_role_choices), selected = state$requested_agency_role %||% "")
       )
     ),
-    actionButton("access_request_submit", "Send access request", class = "civic-button primary"),
+    div(
+      class = "login-access-request-actions",
+      actionButton("access_request_submit", "Send access request", class = "civic-button primary")
+    ),
     div(class = "login-links", actionLink("goto_login", "Back to sign in"))
   )
 }
@@ -5604,8 +5607,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260708-9"),
-    tags$script(src = "app.js?v=20260710-2", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260710-1"),
+    tags$script(src = "app.js?v=20260710-3", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -5787,9 +5790,12 @@ ui <- tagList(
 
 server <- function(input, output, session) {
   database <- connect_app_database()
-  ensure_review_schema(database)
+  if (!isTRUE(getOption("beacon.review_schema_checked", FALSE))) {
+    ensure_review_schema(database)
+    options(beacon.review_schema_checked = TRUE)
+  }
   session$onSessionEnded(function() DBI::dbDisconnect(database))
-  app_data <- reactiveVal(load_app_data(database))
+  app_data <- reactiveVal(NULL)
   current_user <- reactiveVal(NULL)
   auth_state <- reactiveVal(list(view = "login"))
   current_page <- reactiveVal("login")
@@ -5810,9 +5816,68 @@ server <- function(input, output, session) {
   current_role_preview_agency_role <- reactiveVal(c("Admin"))
   feedback_modal_open <- reactiveVal(FALSE)
   service_open_flags <- new.env(parent = emptyenv())
+  service_body_outputs_registered <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
 
-  refresh_app_data <- function() app_data(load_app_data(database))
+  register_service_body_outputs <- function(data) {
+    if (is.null(data) || !"reference_service" %in% names(data) || !nrow(data$reference_service)) {
+      return(invisible(FALSE))
+    }
+    service_ids <- data$reference_service$service_id
+    for (service_id in service_ids) {
+      service_id_key <- as.character(service_id)
+      if (!exists(service_id_key, envir = service_open_flags, inherits = FALSE)) {
+        service_open_flags[[service_id_key]] <- reactiveVal(FALSE)
+      }
+      if (exists(service_id_key, envir = service_body_outputs_registered, inherits = FALSE)) {
+        next
+      }
+      service_body_outputs_registered[[service_id_key]] <- TRUE
+      local({
+        service_id_local <- service_id
+        service_open_flag <- service_open_flags[[as.character(service_id_local)]]
+        output[[service_body_output_id(service_id_local)]] <- renderUI({
+          if (!identical(current_page(), "services") || !isTRUE(service_open_flag())) {
+            return(div(class = "service-lazy-placeholder", "Loading..."))
+          }
+          data <- ensure_app_data()
+          plan <- current_plan(data, current_submitter_value())
+          data <- data_with_cached_section_draft(data, plan$plan_id[[1]], "services")
+          service_rows <- plan_service_rows(data, plan)
+          service_row <- service_rows[service_rows$service_id == service_id_local, , drop = FALSE]
+          if (!nrow(service_row)) return(NULL)
+          measures <- eligible_plan_measures(measure_library_rows(data, plan, include_ineligible = FALSE))
+          metric_choices <- setNames(measures$measure_id, measures$title)
+          service_editor_body_ui(
+            data,
+            plan,
+            service_row[1, , drop = FALSE],
+            measures = measures,
+            metric_choices = metric_choices,
+            locked = !plan_is_editable(plan) || !current_user_can_edit_plan()
+          )
+        })
+      })
+    }
+    invisible(TRUE)
+  }
+
+  ensure_app_data <- function() {
+    data <- app_data()
+    if (is.null(data)) {
+      data <- load_app_data(database)
+      app_data(data)
+      register_service_body_outputs(data)
+    }
+    data
+  }
+
+  refresh_app_data <- function() {
+    data <- load_app_data(database)
+    app_data(data)
+    register_service_body_outputs(data)
+    invisible(data)
+  }
 
   notify_unknown_login_email <- function(email, context = "sign in", requested_entity = "", requested_agency_role = "") {
     sent <- auth_send_unknown_email_alert(email, context, requested_entity, requested_agency_role)
@@ -5827,7 +5892,7 @@ server <- function(input, output, session) {
   complete_sign_in <- function(user, issue_session = TRUE) {
     current_user(user)
     auth_state(list(view = "login"))
-    data <- app_data()
+    data <- ensure_app_data()
     email <- tolower(trimws(user$email[[1]] %||% ""))
     user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
     if (!nrow(user_rows)) {
@@ -5932,7 +5997,7 @@ server <- function(input, output, session) {
   }
   current_submitter_value <- function() {
     selected <- input$selected_agency %||% input$selected_agency_nav %||% input$selected_agency_mobile
-    data <- app_data()
+    data <- ensure_app_data()
     app_roles <- current_user_app_roles()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
     choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
@@ -5945,7 +6010,7 @@ server <- function(input, output, session) {
     if (is.null(selected) || !selected %in% valid_values) valid_values[[1]] else selected
   }
   current_agency_id <- function() {
-    data <- app_data()
+    data <- ensure_app_data()
     plan <- current_plan(data, current_submitter_value())
     agency_id <- plan_accounting_agency_id(data, plan)
     if (is.na(agency_id) || !agency_id %in% data$reference_agency$agency_id) "AGC2600" else agency_id
@@ -5985,7 +6050,8 @@ server <- function(input, output, session) {
       character(0)
     )
   }
-  current_user_submitter_choices <- function(data = app_data()) {
+  current_user_submitter_choices <- function(data = NULL) {
+    if (is.null(data)) data <- ensure_app_data()
     app_roles <- current_user_app_roles()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
     if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
@@ -5994,7 +6060,8 @@ server <- function(input, output, session) {
       user_submitter_choices(data, user_id)
     }
   }
-  update_role_preview_agency_selector <- function(data = app_data(), selected = NULL) {
+  update_role_preview_agency_selector <- function(data = NULL, selected = NULL) {
+    if (is.null(data)) data <- ensure_app_data()
     choices <- current_user_submitter_choices(data)
     if (!length(choices)) return(invisible(FALSE))
     if (is.null(selected) || !selected %in% unname(choices)) selected <- unname(choices)[[1]]
@@ -6002,7 +6069,8 @@ server <- function(input, output, session) {
     update_submitter_selectors(data, selected)
     invisible(TRUE)
   }
-  update_submitter_selectors <- function(data = app_data(), selected = NULL) {
+  update_submitter_selectors <- function(data = NULL, selected = NULL) {
+    if (is.null(data)) data <- ensure_app_data()
     choices <- current_user_submitter_choices(data)
     if (!length(choices)) return(invisible(FALSE))
     if (is.null(selected) || !selected %in% unname(choices)) selected <- unname(choices)[[1]]
@@ -6016,7 +6084,7 @@ server <- function(input, output, session) {
     user_id <- user_id %||% ""
     if (!nzchar(user_id)) return(invisible(FALSE))
     current_role_preview_user_id(user_id)
-    data <- app_data()
+    data <- ensure_app_data()
     defaults <- matched_user_role_defaults(data, user_id)
     current_role_preview_app_role(defaults$app_role)
     current_role_preview_agency_role(defaults$agency_roles)
@@ -6160,38 +6228,6 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
-  initial_service_ids <- isolate(app_data())$reference_service$service_id
-  for (service_id in initial_service_ids) {
-    service_open_flags[[as.character(service_id)]] <- reactiveVal(FALSE)
-  }
-  lapply(initial_service_ids, function(service_id) {
-    local({
-      service_id_local <- service_id
-      service_open_flag <- service_open_flags[[as.character(service_id_local)]]
-      output[[service_body_output_id(service_id_local)]] <- renderUI({
-        if (!identical(current_page(), "services") || !isTRUE(service_open_flag())) {
-          return(div(class = "service-lazy-placeholder", "Loading..."))
-        }
-        data <- app_data()
-        plan <- current_plan(data, current_submitter_value())
-        data <- data_with_cached_section_draft(data, plan$plan_id[[1]], "services")
-        service_rows <- plan_service_rows(data, plan)
-        service_row <- service_rows[service_rows$service_id == service_id_local, , drop = FALSE]
-        if (!nrow(service_row)) return(NULL)
-        measures <- eligible_plan_measures(measure_library_rows(data, plan, include_ineligible = FALSE))
-        metric_choices <- setNames(measures$measure_id, measures$title)
-        service_editor_body_ui(
-          data,
-          plan,
-          service_row[1, , drop = FALSE],
-          measures = measures,
-          metric_choices = metric_choices,
-          locked = !plan_is_editable(plan) || !current_user_can_edit_plan()
-        )
-      })
-    })
-  })
-
   observe({
     if (is.null(current_user())) {
       session$sendCustomMessage("set-auth-state", list(signedIn = FALSE))
@@ -6252,7 +6288,7 @@ server <- function(input, output, session) {
     if (uses_review_administration_mode(app_roles) && !has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       return(NULL)
     }
-    data <- app_data()
+    data <- ensure_app_data()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
     choices <- if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
       agency_selector_choices(data)
@@ -6276,7 +6312,8 @@ server <- function(input, output, session) {
   })
 
   review_nav_ui <- function() {
-    data <- app_data()
+    if (is.null(current_user())) return(NULL)
+    data <- ensure_app_data()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_
     app_roles <- current_user_app_roles()
     approval_first <- has_any_role(app_roles, c("DeputyMayor", "CAOffice")) || user_is_portfolio_approver(data, user_id)
@@ -7581,7 +7618,7 @@ server <- function(input, output, session) {
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
       state <- auth_state()
-      login_data <- if (identical(state$view %||% "login", "access_request")) app_data() else NULL
+      login_data <- if (identical(state$view %||% "login", "access_request")) ensure_app_data() else NULL
       return(page_login(state, login_data))
     }
     feedback_filter_values <- function(value) {
@@ -7589,7 +7626,7 @@ server <- function(input, output, session) {
     }
     page_ui(
       current_page(),
-      app_data(),
+      ensure_app_data(),
       current_submitter_value(),
       input$measure_status_filter %||% "All except deprecated",
       current_user_can_manage_team(),
@@ -7613,13 +7650,13 @@ server <- function(input, output, session) {
     if (is.null(pillar_id)) {
       return(NULL)
     }
-    pillar_modal(pillar_id, app_data())
+    pillar_modal(pillar_id, ensure_app_data())
   })
 
   output$measure_modal <- renderUI({
     measure_id <- current_measure_id()
     if (is.null(measure_id)) return(NULL)
-    data <- app_data()
+    data <- ensure_app_data()
     plan <- current_plan(data, current_submitter_value())
     target_fy <- if (is.null(plan) || !nrow(plan)) 2027 else plan$fiscal_year[[1]]
     measure_modal_ui(data, current_agency_id(), if (identical(measure_id, "new")) NULL else as.integer(measure_id), current_user_can_manage_measure_admin_fields(), target_fy, current_user_can_submit_measure() || current_user_can_review_measures())
@@ -7630,7 +7667,7 @@ server <- function(input, output, session) {
     if (!identical(current_page(), "plan_history")) return(NULL)
     plan_id <- current_history_plan_id()
     if (is.null(plan_id)) return(NULL)
-    data <- app_data()
+    data <- ensure_app_data()
     plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == as.integer(plan_id), , drop = FALSE]
     history_plan_modal(
       data,
@@ -7648,13 +7685,13 @@ server <- function(input, output, session) {
   output$risk_modal <- renderUI({
     risk_id <- current_risk_id()
     if (is.null(risk_id)) return(NULL)
-    risk_modal_ui(app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else as.integer(risk_id))
+    risk_modal_ui(ensure_app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else as.integer(risk_id))
   })
   output$team_role_modal <- renderUI({
     access_id <- current_team_access_id()
     if (is.null(access_id)) return(NULL)
     team_role_modal_ui(
-      app_data(),
+      ensure_app_data(),
       current_submitter_value(),
       access_id,
       current_user_can_manage_team(),
