@@ -15,7 +15,6 @@
   var authHeartbeatTimer = null;
   var lastAuthHeartbeatAt = 0;
   var authHandlersRegistered = false;
-  var loginSubmitInFlight = false;
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -323,7 +322,7 @@
   }
 
   function submitLoginFromDom() {
-    if (!window.Shiny || loginSubmitInFlight) return;
+    if (!window.Shiny) return;
     var emailInput = document.getElementById("login_email");
     var passwordInput = document.getElementById("login_password");
     var email = emailInput ? emailInput.value : "";
@@ -333,10 +332,6 @@
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    loginSubmitInFlight = true;
-    window.setTimeout(function () {
-      loginSubmitInFlight = false;
-    }, 900);
     window.Shiny.setInputValue("login_submit_request", {
       email: email,
       password: password,
@@ -777,7 +772,21 @@
     if (!event.target.closest("#login_email_continue")) return;
     event.preventDefault();
     event.stopPropagation();
+    event.stopImmediatePropagation();
     submitLoginFromDom();
+  }, true);
+
+  document.addEventListener("click", function (event) {
+    var pillarButton = event.target.closest("[id^='open_pillar_']");
+    if (!pillarButton || !window.Shiny) return;
+    var pillarId = pillarButton.id.replace(/^open_pillar_/, "");
+    if (!pillarId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.Shiny.setInputValue("open_pillar_request", {
+      pillarId: pillarId,
+      nonce: Date.now()
+    }, { priority: "event" });
   }, true);
 
   document.addEventListener("keydown", function (event) {
@@ -796,7 +805,8 @@
     };
     if (target.closest("#login_email, #login_password")) {
       event.preventDefault();
-      submitLoginFromDom();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
     if (target.closest("#request_email")) {
@@ -807,6 +817,14 @@
       event.preventDefault();
       triggerShinyAction("reset_submit");
     }
+  });
+
+  document.addEventListener("keyup", function (event) {
+    if (event.key !== "Enter") return;
+    var target = event.target;
+    if (!target || !target.closest || !target.closest("#login_email, #login_password")) return;
+    event.preventDefault();
+    window.setTimeout(submitLoginFromDom, 0);
   });
 
   document.addEventListener("click", function (event) {
