@@ -15,6 +15,7 @@
   var authHeartbeatTimer = null;
   var lastAuthHeartbeatAt = 0;
   var authHandlersRegistered = false;
+  var loginSubmitInFlight = false;
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -319,6 +320,28 @@
     input.value = email;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function submitLoginFromDom() {
+    if (!window.Shiny || loginSubmitInFlight) return;
+    var emailInput = document.getElementById("login_email");
+    var passwordInput = document.getElementById("login_password");
+    var email = emailInput ? emailInput.value : "";
+    var password = passwordInput ? passwordInput.value : "";
+    [emailInput, passwordInput].forEach(function (input) {
+      if (!input) return;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    loginSubmitInFlight = true;
+    window.setTimeout(function () {
+      loginSubmitInFlight = false;
+    }, 900);
+    window.Shiny.setInputValue("login_submit_request", {
+      email: email,
+      password: password,
+      nonce: Date.now()
+    }, { priority: "event" });
   }
 
   function registerShinyHandlers() {
@@ -750,6 +773,13 @@
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
   });
 
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#login_email_continue")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    submitLoginFromDom();
+  }, true);
+
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Enter") return;
     var target = event.target;
@@ -766,7 +796,8 @@
     };
     if (target.closest("#login_email, #login_password")) {
       event.preventDefault();
-      triggerShinyAction("login_email_continue");
+      submitLoginFromDom();
+      return;
     }
     if (target.closest("#request_email")) {
       event.preventDefault();

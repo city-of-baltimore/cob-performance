@@ -1474,11 +1474,15 @@ login_notice <- function(notice, tone = "warning") {
   div(class = "chip-row login-notice", status_chip(notice, tone))
 }
 
+login_notice_from_state <- function(state, default_tone = "warning") {
+  login_notice(state$notice, state$notice_tone %||% default_tone)
+}
+
 login_view_login <- function(state) {
   tagList(
     h1("Sign in to continue"),
     p("Sign in with your work email. Accounts are provisioned by the performance team; use “First time here” below to set your password."),
-    login_notice(state$notice),
+    login_notice_from_state(state),
     div(
       class = "login-email-panel",
       div(
@@ -1504,7 +1508,7 @@ login_view_request <- function(state) {
       "Enter the work email your account was provisioned with.",
       "We will send a one-time link for choosing", if (first_time) "your password." else "a new password."
     )),
-    login_notice(state$notice),
+    login_notice_from_state(state),
     div(
       class = "measure-field login-email-field",
       textInput("request_email", "Work email", placeholder = "name@baltimorecity.gov")
@@ -1535,7 +1539,7 @@ login_view_access_request <- function(state, db = NULL) {
   tagList(
     h1("Request Beacon access"),
     p("That email is not connected to an active Beacon account. Tell us which entity and role you need so Melanie can review the request."),
-    login_notice(state$notice),
+    login_notice_from_state(state),
     div(
       class = "login-access-request-grid",
       div(
@@ -5816,8 +5820,7 @@ server <- function(input, output, session) {
     } else {
       "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact performance@baltimorecity.gov."
     }
-    showNotification(notice, type = "error", duration = 12)
-    notice
+    list(notice = notice, sent = isTRUE(sent))
   }
 
   complete_sign_in <- function(user, issue_session = TRUE) {
@@ -5854,6 +5857,39 @@ server <- function(input, output, session) {
     session$sendCustomMessage("set-auth-state", list(signedIn = TRUE, email = user$email[[1]]))
     session$sendCustomMessage("set-page", next_page)
     TRUE
+  }
+
+  handle_login_attempt <- function(email, password) {
+    email <- tolower(trimws(email %||% ""))
+    password <- as.character(password %||% "")
+    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
+      auth_state(list(view = "login", notice = "Enter a valid email address to continue."))
+      return(invisible(FALSE))
+    }
+    if (auth_attempt_blocked(email)) {
+      auth_state(list(view = "login", notice = paste("Too many failed attempts. Try again in", AUTH_LOCKOUT_MINUTES, "minutes.")))
+      return(invisible(FALSE))
+    }
+    user <- auth_find_user(database, email)
+    if (is.null(user)) {
+      auth_note_failure(email)
+      auth_state(list(
+        view = "access_request",
+        email = email,
+        context = "sign in",
+        notice = "That email is not connected to an active Beacon account. Add the requested entity and role/title below."
+      ))
+      return(invisible(FALSE))
+    }
+    verified <- auth_verify_login(database, email, password)
+    if (is.null(verified)) {
+      auth_note_failure(email)
+      auth_state(list(view = "login", notice = "Sign-in failed. Check your email and password, or use “First time here” if you have not set a password yet."))
+      return(invisible(FALSE))
+    }
+    auth_clear_failures(email)
+    complete_sign_in(verified, issue_session = TRUE)
+    invisible(TRUE)
   }
 
   update_cached_section_draft <- function(plan_id, section_key, payload_json, row) {
@@ -7419,14 +7455,15 @@ server <- function(input, output, session) {
     requested_entity <- trimws(input$access_request_entity %||% "")
     requested_agency_role <- trimws(input$access_request_agency_role %||% "")
     context <- trimws(state$context %||% "sign in")
-    notice <- notify_unknown_login_email(email, context, requested_entity, requested_agency_role)
+    alert <- notify_unknown_login_email(email, context, requested_entity, requested_agency_role)
     auth_state(list(
       view = "access_request",
       email = email,
       context = context,
       requested_entity = requested_entity,
       requested_agency_role = requested_agency_role,
-      notice = notice
+      notice = alert$notice,
+      notice_tone = if (isTRUE(alert$sent)) "success" else "error"
     ))
   }, ignoreInit = TRUE)
 
@@ -7487,35 +7524,13 @@ server <- function(input, output, session) {
     session$sendCustomMessage("set-page", "login")
   }, ignoreInit = TRUE)
 
+  observeEvent(input$login_submit_request, {
+    request <- input$login_submit_request
+    handle_login_attempt(request$email, request$password)
+  }, ignoreInit = TRUE)
+
   observeEvent(input$login_email_continue, {
-    email <- tolower(trimws(input$login_email %||% ""))
-    if (!nzchar(email) || !grepl("@", email, fixed = TRUE)) {
-      showNotification("Enter a valid email address to continue.", type = "error", duration = 8)
-      return()
-    }
-    if (auth_attempt_blocked(email)) {
-      auth_state(list(view = "login", notice = paste("Too many failed attempts. Try again in", AUTH_LOCKOUT_MINUTES, "minutes.")))
-      return()
-    }
-    user <- auth_find_user(database, email)
-    if (is.null(user)) {
-      auth_note_failure(email)
-      auth_state(list(
-        view = "access_request",
-        email = email,
-        context = "sign in",
-        notice = "That email is not connected to an active Beacon account. Add the requested entity and role/title below."
-      ))
-      return()
-    }
-    verified <- auth_verify_login(database, email, input$login_password %||% "")
-    if (is.null(verified)) {
-      auth_note_failure(email)
-      auth_state(list(view = "login", notice = "Sign-in failed. Check your email and password, or use “First time here” if you have not set a password yet."))
-      return()
-    }
-    auth_clear_failures(email)
-    complete_sign_in(verified, issue_session = TRUE)
+    handle_login_attempt(input$login_email, input$login_password)
   }, ignoreInit = TRUE)
 
   initial_data <- isolate(app_data())
