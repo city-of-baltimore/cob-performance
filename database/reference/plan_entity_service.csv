@@ -33,3 +33,5 @@ pes_id,entity_id,service_id,service_name,is_primary
 32,29,SRV0811,Waterfront Partnership,true
 33,30,SRV0446,Baltimore Children's and Youth Fund,true
 34,28,SRV0125,Mayor's Office of Government Relations,true
+35,31,SRV0917,Opioid Restitution Grants,true
+36,31,SRV0916,Opioid Restitution Administration,false

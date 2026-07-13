@@ -367,7 +367,8 @@ VALUES
     ('AGC4321', 'Maryland School of the Blind', 'QuasiAgency', true, true),
     ('AGC4301', 'Mayor''s Office of Government Relations', 'MayoraltyOffice', true, true),
     ('AGC3100', 'Waterfront Partnership', 'QuasiAgency', true, true),
-    ('AGC4321', 'Baltimore Children''s and Youth Fund', 'QuasiAgency', true, true)
+    ('AGC4321', 'Baltimore Children''s and Youth Fund', 'QuasiAgency', true, true),
+    ('AGC4392', 'Office of Recovery Programs', 'Agency', true, true)
 ON CONFLICT (parent_agency_id, public_name) DO UPDATE SET
     entity_type = EXCLUDED.entity_type, has_own_plan = EXCLUDED.has_own_plan, active = EXCLUDED.active;
 
@@ -407,7 +408,9 @@ FROM (VALUES
     ('AGC4321', 'Maryland School of the Blind', 'SRV0385', true),
     ('AGC3100', 'Waterfront Partnership', 'SRV0811', true),
     ('AGC4321', 'Baltimore Children''s and Youth Fund', 'SRV0446', true),
-    ('AGC4301', 'Mayor''s Office of Government Relations', 'SRV0125', true)
+    ('AGC4301', 'Mayor''s Office of Government Relations', 'SRV0125', true),
+    ('AGC4392', 'Office of Recovery Programs', 'SRV0917', true),
+    ('AGC4392', 'Office of Recovery Programs', 'SRV0916', false)
 ) AS seed(parent_agency_id, public_name, service_id, is_primary)
 JOIN reference.plan_entity pe ON pe.parent_agency_id = seed.parent_agency_id AND pe.public_name = seed.public_name
 ON CONFLICT (entity_id, service_id) DO UPDATE SET is_primary = EXCLUDED.is_primary;

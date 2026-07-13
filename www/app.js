@@ -1644,7 +1644,6 @@
     var goalsPage = page.querySelector(".goals-page");
     if (page.dataset.restoringDraft === "true" || goalsPage.dataset.restoringDraft === "true") return;
     updateGoalRequirements(goalsPage);
-    setGoalsSaveStatus("Unsaved changes. Autosaving...");
     var draft = collectGoalsDraft(goalsPage);
     window.localStorage.setItem(goalsDraftKey(goalsPage), JSON.stringify(draft));
     pendingGoalsQuietSave = {
@@ -1666,8 +1665,6 @@
     if (!pendingGoalsQuietSave || !window.Shiny || !window.Shiny.setInputValue) return false;
     var payload = Object.assign({}, pendingGoalsQuietSave, { nonce: Date.now() });
     pendingGoalsQuietSave = null;
-    setGoalsSaveStatus("Autosaving...");
-    beginBackgroundAutosave();
     window.Shiny.setInputValue("goals_draft_quiet_save", payload, { priority: "event" });
     return true;
   }
@@ -2118,7 +2115,6 @@
         updateAllKpiAvailability(goalsPage);
         window.localStorage.removeItem(goalsDraftKey(goalsPage));
       }
-      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
       return;
     }
     page.dataset.autosaveDirty = "true";
@@ -2312,7 +2308,7 @@
     addGoalEditor(page);
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    scheduleBuilderAutosave(page.closest(".builder-page-content"), 500);
+    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {
@@ -2343,7 +2339,7 @@
     editor.remove();
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    scheduleBuilderAutosave(page.closest(".builder-page-content"), 500);
+    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 500);
   });
 
   document.addEventListener("click", function (event) {

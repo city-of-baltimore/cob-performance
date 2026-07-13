@@ -547,17 +547,54 @@ plan_service_rows <- function(db, plan) {
   if (!nrow(service_rows)) return(service_rows)
   if (!is.na(plan$entity_id[[1]])) {
     pes <- db$reference_plan_entity_service[db$reference_plan_entity_service$entity_id == plan$entity_id[[1]], , drop = FALSE]
+    missing_entity_service_ids <- setdiff(pes$service_id, service_rows$service_id)
+    if (length(missing_entity_service_ids)) {
+      extra_services <- db$reference_service[db$reference_service$service_id %in% missing_entity_service_ids, , drop = FALSE]
+      if (nrow(extra_services)) {
+        extra_services$plan_service_id <- NA_integer_
+        extra_services$plan_id <- plan$plan_id[[1]]
+        extra_services$sort_order <- seq_len(nrow(extra_services)) + ifelse(nrow(service_rows), max(service_rows$sort_order, na.rm = TRUE), 0)
+        service_rows <- rbind(service_rows[, names(extra_services), drop = FALSE], extra_services)
+      }
+    }
     service_rows <- merge(service_rows, pes[, c("service_id", "is_primary"), drop = FALSE], by = "service_id", all.x = TRUE)
     service_rows$is_primary[is.na(service_rows$is_primary)] <- FALSE
     service_rows <- service_rows[service_rows$active, , drop = FALSE]
     service_rows <- service_rows[order(-as.integer(service_rows$is_primary), service_rows$sort_order, service_rows$service_name), , drop = FALSE]
   } else {
     entity_service_ids <- character(0)
+    self_entity_service_ids <- character(0)
     if ("reference_plan_entity_service" %in% names(db) && "reference_plan_entity" %in% names(db)) {
+      agency_public_name <- db$reference_agency$public_name[db$reference_agency$agency_id == plan$agency_id[[1]]]
+      agency_public_name <- agency_public_name[!is.na(agency_public_name) & nzchar(trimws(agency_public_name))]
+      self_entities <- db$reference_plan_entity[
+        db$reference_plan_entity$parent_agency_id == plan$agency_id[[1]] &
+          db$reference_plan_entity$active &
+          db$reference_plan_entity$has_own_plan &
+          db$reference_plan_entity$public_name %in% agency_public_name,
+        ,
+        drop = FALSE
+      ]
+      if (nrow(self_entities)) {
+        self_entity_service_ids <- unique(db$reference_plan_entity_service$service_id[
+          db$reference_plan_entity_service$entity_id %in% self_entities$entity_id
+        ])
+        missing_self_service_ids <- setdiff(self_entity_service_ids, service_rows$service_id)
+        if (length(missing_self_service_ids)) {
+          extra_services <- db$reference_service[db$reference_service$service_id %in% missing_self_service_ids, , drop = FALSE]
+          if (nrow(extra_services)) {
+            extra_services$plan_service_id <- NA_integer_
+            extra_services$plan_id <- plan$plan_id[[1]]
+            extra_services$sort_order <- seq_len(nrow(extra_services)) + ifelse(nrow(service_rows), max(service_rows$sort_order, na.rm = TRUE), 0)
+            service_rows <- rbind(service_rows[, names(extra_services), drop = FALSE], extra_services)
+          }
+        }
+      }
       child_entities <- db$reference_plan_entity[
         db$reference_plan_entity$parent_agency_id == plan$agency_id[[1]] &
           db$reference_plan_entity$has_own_plan &
-          db$reference_plan_entity$active,
+          db$reference_plan_entity$active &
+          !db$reference_plan_entity$entity_id %in% self_entities$entity_id,
         ,
         drop = FALSE
       ]
@@ -567,7 +604,12 @@ plan_service_rows <- function(db, plan) {
         ])
       }
     }
-    service_rows <- service_rows[service_rows$active & service_rows$service_type == "Performance", , drop = FALSE]
+    service_rows <- service_rows[
+      service_rows$active &
+        (service_rows$service_type == "Performance" | service_rows$service_id %in% self_entity_service_ids),
+      ,
+      drop = FALSE
+    ]
     service_rows <- service_rows[!service_rows$service_id %in% entity_service_ids, , drop = FALSE]
     service_rows <- service_rows[order(service_rows$service_name), , drop = FALSE]
   }
@@ -6407,6 +6449,12 @@ server <- function(input, output, session) {
     if (is.null(value) || length(value) == 0 || is.na(value) || identical(value, "")) return(if (integer) NA_integer_ else NA_real_)
     if (integer) as.integer(value) else as.numeric(value)
   }
+  plan_scalar_integer <- function(plan, field) {
+    if (is.null(plan) || !nrow(plan) || !field %in% names(plan) || !length(plan[[field]])) {
+      return(NA_integer_)
+    }
+    suppressWarnings(as.integer(plan[[field]][[1]]))
+  }
   input_bool <- function(value) {
     isTRUE(value) || identical(tolower(as.character(value %||% "")), "true")
   }
@@ -6528,12 +6576,13 @@ server <- function(input, output, session) {
     data <- app_data()
     agency_id <- current_agency_id()
     plan <- current_plan(data, current_submitter_value())
+    initial_cycle <- plan_scalar_integer(plan, "cycle_id")
     existing_id <- current_measure_id()
     existing <- if (is.null(existing_id) || identical(existing_id, "new")) data.frame() else data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
     values <- list(
       measure_id = if (nrow(existing)) existing$measure_id[[1]] else NULL,
       agency_id = agency_id,
-      initial_cycle = plan$cycle_id[[1]],
+      initial_cycle = initial_cycle,
       title = input$measure_title,
       measure_type = input$measure_type,
       description = input$measure_description,
@@ -6590,10 +6639,19 @@ server <- function(input, output, session) {
     }
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
+    if (length(values$initial_cycle) != 1 || is.na(values$initial_cycle)) {
+      showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before saving the measure.", type = "error", duration = 8)
+      return()
+    }
     if (submit) {
       data <- app_data()
       plan <- current_plan(data, current_submitter_value())
-      target_fy <- as.integer(plan$fiscal_year[[1]]) + 1L
+      plan_fiscal_year <- plan_scalar_integer(plan, "fiscal_year")
+      if (is.na(plan_fiscal_year)) {
+        showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
+        return()
+      }
+      target_fy <- plan_fiscal_year + 1L
       missing_fields <- validate_measure_submit_requirements(values, yearly_values, target_fy)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)

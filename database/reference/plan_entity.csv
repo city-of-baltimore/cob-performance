@@ -29,3 +29,4 @@ entity_id,parent_agency_id,public_name,entity_type,has_own_plan,active
 28,AGC4301,Mayor's Office of Government Relations,MayoraltyOffice,true,true
 29,AGC3100,Waterfront Partnership,QuasiAgency,true,true
 30,AGC4321,Baltimore Children's and Youth Fund,QuasiAgency,true,true
+31,AGC4392,Office of Recovery Programs,Agency,true,true
