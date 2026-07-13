@@ -1259,6 +1259,46 @@ approve_plan_review <- function(connection, plan_id, reviewer_id = NULL, next_st
   invisible(plan_id)
 }
 
+route_plan_from_review_admin <- function(connection, plan_id, routed_by = NULL, next_status = "UnderReview", route_note = NULL) {
+  plan_id <- as.integer(plan_id)
+  routed_by <- if (is.null(routed_by) || is.na(routed_by)) NA_integer_ else as.integer(routed_by)
+  next_status <- as.character(next_status %||% "UnderReview")
+  route_note <- trimws(as.character(route_note %||% ""))
+  valid_next_statuses <- c("Returned", "UnderReview", "DeputyMayorReview", "CAReview", "Approved")
+  if (is.na(plan_id)) stop("Plan is required.")
+  if (!next_status %in% valid_next_statuses) stop("Choose a valid route for this plan.")
+  DBI::dbWithTransaction(connection, {
+    plan <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_id, plan_status FROM planning.agency_plan WHERE plan_id = $1",
+      params = list(plan_id)
+    )
+    if (!nrow(plan)) stop("Plan not found.")
+    if (plan$plan_status[[1]] %in% c("Published", "Amended")) {
+      stop("Published plans cannot be routed from plan review.")
+    }
+    DBI::dbExecute(
+      connection,
+      "UPDATE planning.agency_plan SET plan_status = $2, updated_at = now(), modified_by = $3 WHERE plan_id = $1",
+      params = list(plan_id, next_status, routed_by)
+    )
+    history_note <- if (nzchar(route_note)) {
+      route_note
+    } else {
+      paste("System Admin routed plan to", next_status, "from plan review.")
+    }
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO workflow.plan_status_history (plan_id, changed_by, from_status, to_status, plan_phase, changed_at, notes)",
+        "VALUES ($1, $2, $3, $4, 'PerformancePlan', now(), $5)"
+      ),
+      params = list(plan_id, routed_by, plan$plan_status[[1]], next_status, history_note)
+    )
+  })
+  invisible(plan_id)
+}
+
 approve_plan_gate <- function(connection, plan_id, approved_by = NULL) {
   plan_id <- as.integer(plan_id)
   approved_by <- if (is.null(approved_by) || is.na(approved_by)) NA_integer_ else as.integer(approved_by)

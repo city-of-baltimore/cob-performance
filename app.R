@@ -620,7 +620,7 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
         selected = selected_metrics[metric_index],
         selectize = FALSE
       ),
-      if (metric_index > 1) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
+      if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
   history_years <- 2022:2026
@@ -3460,6 +3460,20 @@ plan_review_route_choices <- function(db = NULL, plan = NULL) {
   )
 }
 
+admin_plan_review_route_choices <- function(db = NULL, plan = NULL) {
+  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  reviewer_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Reviewer", plan_reviewer_label(db, plan)) else "Reviewer"
+  deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
+  ca_label <- if (!is.null(db) && !is.null(plan)) route_target_label("CA Office", plan_ca_office_label(db, plan)) else "CA Office"
+  c(
+    stats::setNames("Returned", submitter_label),
+    stats::setNames("UnderReview", reviewer_label),
+    stats::setNames("DeputyMayorReview", deputy_label),
+    stats::setNames("CAReview", ca_label),
+    "Ready for publish" = "Approved"
+  )
+}
+
 plan_review_default_route <- function(plan_status) {
   plan_status <- as.character(plan_status %||% "")
   if (identical(plan_status, "CAReview")) return("Approved")
@@ -4313,6 +4327,30 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
                 ),
                 tags$button(type = "button", id = "return_publishing_plan", class = "civic-button secondary small", `data-plan-id` = plan_id, icon("route"), "Return"),
                 tags$button(type = "button", id = "publish_plan", class = "civic-button primary small", `data-plan-id` = plan_id, icon("upload"), "Publish")
+              )
+            } else if (isTRUE(include_review) && can_assign_reviewer && !plan$plan_status[[1]] %in% c("Published", "Amended")) {
+              div(
+                class = "history-title-actions approval-action-panel review-approval-actions admin-review-route-actions",
+                div(
+                  class = "review-route-control",
+                  selectInput(
+                    "plan_review_next_status",
+                    "Route to",
+                    choices = admin_plan_review_route_choices(db, plan),
+                    selected = plan_review_default_route(plan$plan_status[[1]]),
+                    selectize = FALSE,
+                    width = "34rem"
+                  )
+                ),
+                tags$button(
+                  type = "button",
+                  id = "approve_plan_review",
+                  class = "civic-button small primary",
+                  `data-plan-review-id` = plan_id,
+                  `data-approval-action` = "route",
+                  icon("route"),
+                  "Route to"
+                )
               )
             } else if (isTRUE(include_review) && (can_route_review || can_assign_reviewer) && (
               plan$plan_status[[1]] %in% review_approvable_statuses() ||
@@ -5639,8 +5677,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260710-1"),
-    tags$script(src = "app.js?v=20260710-3", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260712-1"),
+    tags$script(src = "app.js?v=20260712-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -6527,7 +6565,7 @@ server <- function(input, output, session) {
       approval_status = if (nrow(existing)) existing$approval_status[[1]] else "Draft",
       submitted_for_approval_at = if (nrow(existing)) existing$submitted_for_approval_at[[1]] else as.POSIXct(NA)
     )
-    if (!current_user_is_system_admin()) {
+    if (!current_user_can_manage_measure_admin_fields()) {
       values <- derive_measure_scope(data, values)
     }
     values
@@ -7106,8 +7144,9 @@ server <- function(input, output, session) {
     } else {
       NA_integer_
     }
-    route_choices <- plan_review_route_choices(data, plan)
     next_status <- as.character(request$nextStatus %||% input$plan_review_next_status %||% "DeputyMayorReview")
+    admin_route <- current_user_can_assign_plan_reviewer()
+    route_choices <- if (isTRUE(admin_route)) admin_plan_review_route_choices(data, plan) else plan_review_route_choices(data, plan)
     if (!current_user_can_route_plan_reviews()) {
       next_status <- "DeputyMayorReview"
     }
@@ -7115,7 +7154,14 @@ server <- function(input, output, session) {
       showNotification("Choose a valid routing destination before approving.", type = "error", duration = 8)
       return()
     }
-    result <- tryCatch(approve_plan_review(database, plan_id, reviewer_id, next_status, routed_by = actor_id), error = function(error) error)
+    result <- tryCatch(
+      if (isTRUE(admin_route)) {
+        route_plan_from_review_admin(database, plan_id, routed_by = actor_id, next_status = next_status)
+      } else {
+        approve_plan_review(database, plan_id, reviewer_id, next_status, routed_by = actor_id)
+      },
+      error = function(error) error
+    )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -7124,7 +7170,13 @@ server <- function(input, output, session) {
     current_history_plan_id(plan_id)
     current_history_include_review(TRUE)
     route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
-    review_action_label <- if (identical(next_status, "Returned")) "Plan returned" else "Reviewer approval saved"
+    review_action_label <- if (isTRUE(admin_route)) {
+      "Plan routed"
+    } else if (identical(next_status, "Returned")) {
+      "Plan returned"
+    } else {
+      "Reviewer approval saved"
+    }
     showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
   }, ignoreInit = TRUE)
 
@@ -7498,6 +7550,101 @@ server <- function(input, output, session) {
     })
   }, ignoreInit = TRUE)
 
+  observeEvent(input$service_metrics_draft_save, {
+    request <- input$service_metrics_draft_save
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    section_key <- as.character(request$sectionKey %||% "services")
+    service_id <- as.character(request$serviceId %||% "")
+    metric_ids <- suppressWarnings(as.integer(unlist(request$metricIds %||% list())))
+    metric_ids <- metric_ids[!is.na(metric_ids)]
+    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id)) {
+      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "The service metrics save request was incomplete."))
+      return()
+    }
+    if (length(metric_ids) > 5L) {
+      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "A service can have no more than 5 metrics."))
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "You do not have permission to edit this plan."))
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "This plan is locked and cannot be edited."))
+        return()
+      }
+      existing <- get_section_draft(database, plan_id, "services")
+      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+      if (is.null(payload) || !is.list(payload)) payload <- list()
+      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
+      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
+      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
+      payload$serviceMetrics[service_id] <- list(as.list(metric_ids))
+      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      row <- saved[1, , drop = FALSE]
+      update_cached_section_draft(plan_id, "services", payload_json, row)
+      cached_data <- app_data()
+      if (!is.null(cached_data)) {
+        app_data(data_with_cached_section_draft(cached_data, plan_id, "services"))
+      }
+      session$sendCustomMessage("service-metrics-draft-result", list(
+        ok = TRUE,
+        planId = plan_id,
+        sectionKey = "services",
+        serviceId = service_id,
+        metricIds = as.list(metric_ids),
+        revision = row$revision[[1]],
+        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+      ))
+    }, error = function(error) {
+      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = conditionMessage(error)))
+    })
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$goals_draft_quiet_save, {
+    request <- input$goals_draft_quiet_save
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    section_key <- as.character(request$sectionKey %||% "goals")
+    payload_json <- as.character(request$payloadJson %||% "")
+    if (is.na(plan_id) || !identical(section_key, "goals") || !nzchar(payload_json)) {
+      session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "The goals save request was incomplete."))
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "You do not have permission to edit this plan."))
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "This plan is locked and cannot be edited."))
+        return()
+      }
+      payload <- tryCatch(jsonlite::fromJSON(payload_json, simplifyVector = FALSE), error = function(error) NULL)
+      if (is.null(payload) || !is.list(payload)) {
+        session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "The goals draft could not be read."))
+        return()
+      }
+      saved <- overwrite_section_draft(database, plan_id, "goals", payload_json)
+      row <- saved[1, , drop = FALSE]
+      update_cached_section_draft(plan_id, "goals", payload_json, row)
+      session$sendCustomMessage("goals-draft-result", list(
+        ok = TRUE,
+        planId = plan_id,
+        sectionKey = "goals",
+        revision = row$revision[[1]],
+        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+      ))
+    }, error = function(error) {
+      session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = conditionMessage(error)))
+    })
+  }, ignoreInit = TRUE)
+
   observeEvent(input$current_page, {
     if (is.null(current_user()) && !identical(input$current_page, "login")) {
       current_page("login")
@@ -7676,9 +7823,16 @@ server <- function(input, output, session) {
     feedback_filter_values <- function(value) {
       if (is.null(value) || length(value) == 0) character(0) else as.character(value)
     }
+    page_data <- ensure_app_data()
+    if (current_page() %in% c("overview", "goals", "services")) {
+      plan <- current_plan(page_data, current_submitter_value())
+      if (!is.null(plan) && nrow(plan)) {
+        page_data <- data_with_cached_section_draft(page_data, plan$plan_id[[1]], current_page())
+      }
+    }
     page_ui(
       current_page(),
-      ensure_app_data(),
+      page_data,
       current_submitter_value(),
       input$measure_status_filter %||% "All except deprecated",
       current_user_can_manage_team(),

@@ -54,6 +54,16 @@ body {
   line-height: 1.65;
 }
 
+body.background-autosave-active .recalculating,
+body.background-autosave-active .shiny-bound-output.recalculating {
+  opacity: 1 !important;
+  transition: none !important;
+}
+
+body.background-autosave-active .shiny-output-error {
+  opacity: 1 !important;
+}
+
 h1,
 h2,
 h3 {
