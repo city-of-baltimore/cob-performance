@@ -626,6 +626,13 @@ scorable_service_rows <- function(service_rows) {
   service_rows[!is_administration_service(service_rows), , drop = FALSE]
 }
 
+measure_preview_years <- function(current_fy = 2027) {
+  list(
+    actual_years = seq.int(current_fy - 5L, current_fy - 1L),
+    target_years = seq.int(current_fy - 1L, current_fy + 1L)
+  )
+}
+
 service_body_output_id <- function(service_id) {
   paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
 }
@@ -665,15 +672,17 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
-  history_years <- 2022:2026
+  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
+  actual_years <- preview_years$actual_years
+  target_years <- preview_years$target_years
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
     measure <- measures[measure_index, , drop = FALSE]
     history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-    actual_values <- vapply(history_years, function(year) {
+    actual_values <- vapply(actual_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
       if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
     }, character(1))
-    target_values <- vapply(history_years, function(year) {
+    target_values <- vapply(target_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
       if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
     }, character(1))
@@ -695,10 +704,13 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
         tags$table(
           class = "kpi-history-table",
           tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
-          tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", fy_label(year))))),
+          tags$thead(tags$tr(
+            tags$th(scope = "col", "Series"),
+            lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+          )),
           tags$tbody(
-            tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td)),
-            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td))
+            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
+            tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
           )
         )
       )
@@ -5129,7 +5141,9 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   pillar_goal_labels <- paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)
   alignment_choices <- c("Not aligned" = "", setNames(pillar_goal_codes, pillar_goal_labels))
   kpi_choices <- setNames(agency_measures$measure_id, agency_measures$title)
-  history_years <- 2022:2026
+  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
+  actual_years <- preview_years$actual_years
+  target_years <- preview_years$target_years
 
   goal_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4, class = NULL) {
     tags$tr(
@@ -5249,11 +5263,11 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
             kpi_previews <- lapply(seq_len(nrow(agency_measures)), function(measure_index) {
               measure <- agency_measures[measure_index, , drop = FALSE]
               history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-              actual_values <- vapply(history_years, function(year) {
+              actual_values <- vapply(actual_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
                 if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
               }, character(1))
-              target_values <- vapply(history_years, function(year) {
+              target_values <- vapply(target_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
                 if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
               }, character(1))
@@ -5276,10 +5290,13 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                   tags$table(
                     class = "kpi-history-table",
                     tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
-                    tags$thead(tags$tr(tags$th(scope = "col", "Series"), lapply(history_years, function(year) tags$th(scope = "col", fy_label(year))))),
+                    tags$thead(tags$tr(
+                      tags$th(scope = "col", "Series"),
+                      lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+                    )),
                     tags$tbody(
-                      tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td)),
-                      tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td))
+                      tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
+                      tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
                     )
                   )
                 )
@@ -7743,7 +7760,7 @@ server <- function(input, output, session) {
         token <- auth_issue_reset_token(database, user$user_id[[1]])
         link <- auth_reset_link(session, token)
         if (auth_dev_links_enabled()) {
-          # Dev mode shows the link and never emails — local demos must not
+          # Dev mode shows the link and never emails - local demos must not
           # send real mail to seeded (real) employee addresses.
           dev_link <- link
         } else {
