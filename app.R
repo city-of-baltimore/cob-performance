@@ -659,16 +659,29 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
   selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
   other_service_metric_ids <- service_metric_ids_for_other_services(db, plan, service_id)
+  service_metric_select <- function(metric_index, selected_value) {
+    selected_value <- as.character(selected_value %||% "")
+    select_id <- paste0("service_metric_", service_id, "_", metric_index)
+    tags$select(
+      id = select_id,
+      name = select_id,
+      class = "form-control service-metric-select",
+      tags$option(value = "", selected = if (!nzchar(selected_value)) "selected", "Select a metric"),
+      lapply(seq_along(metric_choices), function(choice_index) {
+        value <- as.character(metric_choices[[choice_index]])
+        label <- names(metric_choices)[[choice_index]]
+        tags$option(
+          value = value,
+          selected = if (identical(value, selected_value)) "selected",
+          label
+        )
+      })
+    )
+  }
   metric_selector_rows <- lapply(seq_along(selected_metrics), function(metric_index) {
     div(
       class = "kpi-select-row",
-      selectInput(
-        paste0("service_metric_", service_id, "_", metric_index),
-        label = NULL,
-        choices = c("Select a metric" = "", metric_choices),
-        selected = selected_metrics[metric_index],
-        selectize = FALSE
-      ),
+      service_metric_select(metric_index, selected_metrics[metric_index]),
       if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
@@ -5469,6 +5482,7 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   service_rows <- plan_service_rows(db, plan)
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
+  metric_choices <- setNames(measures$measure_id, measures$title)
   services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
   service_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4) {
     tags$tr(
@@ -5533,11 +5547,17 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
                 span(class = "status-chip tone-primary service-metric-count", if (service_is_admin) "Not scored" else paste(sum(nzchar(selected_metrics)), if (sum(nzchar(selected_metrics)) == 1) "Metric" else "Metrics"))
               )
             ),
-            uiOutput(
-              service_body_output_id(service_id),
-              container = div,
-              class = "goal-editor-body service-editor-body lazy-service-body",
-              `aria-hidden` = "true"
+            div(
+              class = "goal-editor-body service-editor-body",
+              `aria-hidden` = "true",
+              service_editor_body_ui(
+                db,
+                plan,
+                service_rows[i, , drop = FALSE],
+                measures = measures,
+                metric_choices = metric_choices,
+                locked = !plan_is_editable(plan) || !can_edit_plan
+              )
             )
           )
           })
@@ -7666,6 +7686,7 @@ server <- function(input, output, session) {
     plan_id <- suppressWarnings(as.integer(request$planId))
     section_key <- as.character(request$sectionKey %||% "services")
     service_id <- as.character(request$serviceId %||% "")
+    ui_version <- suppressWarnings(as.integer(request$uiVersion %||% NA_integer_))
     metric_ids <- suppressWarnings(as.integer(unlist(request$metricIds %||% list())))
     metric_ids <- metric_ids[!is.na(metric_ids)]
     if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id)) {
@@ -7698,16 +7719,13 @@ server <- function(input, output, session) {
       saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
       row <- saved[1, , drop = FALSE]
       update_cached_section_draft(plan_id, "services", payload_json, row)
-      cached_data <- app_data()
-      if (!is.null(cached_data)) {
-        app_data(data_with_cached_section_draft(cached_data, plan_id, "services"))
-      }
       session$sendCustomMessage("service-metrics-draft-result", list(
         ok = TRUE,
         planId = plan_id,
         sectionKey = "services",
         serviceId = service_id,
         metricIds = as.list(metric_ids),
+        uiVersion = ui_version,
         revision = row$revision[[1]],
         updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
       ))
@@ -7753,6 +7771,50 @@ server <- function(input, output, session) {
       ))
     }, error = function(error) {
       session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = conditionMessage(error)))
+    })
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$services_draft_quiet_save, {
+    request <- input$services_draft_quiet_save
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    section_key <- as.character(request$sectionKey %||% "services")
+    payload_json <- as.character(request$payloadJson %||% "")
+    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(payload_json)) {
+      session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "The services save request was incomplete."))
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "You do not have permission to edit this plan."))
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "This plan is locked and cannot be edited."))
+        return()
+      }
+      payload <- tryCatch(jsonlite::fromJSON(payload_json, simplifyVector = FALSE), error = function(error) NULL)
+      if (is.null(payload) || !is.list(payload)) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "The services draft could not be read."))
+        return()
+      }
+      if (!is.null(payload$values) && is.list(payload$values)) {
+        payload$values <- payload$values[!grepl("^service_metric_", names(payload$values))]
+        payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+      }
+      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      row <- saved[1, , drop = FALSE]
+      update_cached_section_draft(plan_id, "services", payload_json, row)
+      session$sendCustomMessage("services-draft-result", list(
+        ok = TRUE,
+        planId = plan_id,
+        sectionKey = "services",
+        revision = row$revision[[1]],
+        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+      ))
+    }, error = function(error) {
+      session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = conditionMessage(error)))
     })
   }, ignoreInit = TRUE)
 
