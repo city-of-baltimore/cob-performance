@@ -762,8 +762,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.na(plan$plan_id[[1]])) return(db$performance_performance_measure[0, , drop = FALSE])
   services <- plan_service_rows(db, plan)
   if (!nrow(services)) return(db$performance_performance_measure[0, , drop = FALSE])
-  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-  measure_ids <- unique(link_table$measure_id[link_table$service_id %in% services$service_id])
+  measure_ids <- legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link
     if (!is.na(plan$entity_id[[1]])) {
@@ -794,6 +793,35 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
     ]
   }
   rows[order(rows$title), , drop = FALSE]
+}
+
+legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE) {
+  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
+  if (is.null(link_table) || !nrow(link_table) || !length(service_ids)) return(integer(0))
+  link_rows <- link_table[as.character(link_table$service_id) %in% as.character(service_ids), , drop = FALSE]
+  if (!nrow(link_rows)) return(integer(0))
+  measure_ids <- unique(link_rows$measure_id)
+  measure_ids <- measure_ids[!is.na(measure_ids)]
+  if (!length(measure_ids) || is.null(plan) || !nrow(plan)) return(measure_ids)
+
+  measure_rows <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% measure_ids, , drop = FALSE]
+  if (!nrow(measure_rows)) return(integer(0))
+
+  accounting_agency_id <- plan_accounting_agency_id(db, plan)
+  keep_ids <- measure_rows$measure_id[measure_rows$agency_id == accounting_agency_id]
+
+  if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link) && !is.na(plan$entity_id[[1]])) {
+    scoped_links <- db$performance_measure_entity_link[
+      !is.na(db$performance_measure_entity_link$entity_id) &
+        db$performance_measure_entity_link$entity_id == plan$entity_id[[1]] &
+        as.character(db$performance_measure_entity_link$service_id) %in% as.character(service_ids),
+      ,
+      drop = FALSE
+    ]
+    keep_ids <- unique(c(keep_ids, scoped_links$measure_id))
+  }
+
+  unique(measure_ids[measure_ids %in% keep_ids])
 }
 
 measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
@@ -849,8 +877,7 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
 }
 
 service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
-  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-  linked_ids <- unique(link_table$measure_id[link_table$service_id == service_id])
+  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
     if (!is.null(plan) && nrow(plan)) {
@@ -946,8 +973,17 @@ timeline_all_items <- function(today = Sys.Date()) {
 }
 
 timeline_step_card <- function(row) {
+  status_class <- switch(
+    as.character(row$status[[1]]),
+    "Current" = "current-step",
+    "Current step" = "current-step",
+    "Last step" = "last-step",
+    "Next step" = "next-step",
+    "Following step" = "following-step",
+    tolower(gsub(" ", "-", row$status[[1]]))
+  )
   div(
-    class = paste("timeline-step-card", tolower(gsub(" ", "-", row$status[[1]]))),
+    class = paste("timeline-step-card", status_class),
     div(class = "eyebrow", row$status[[1]]),
     h3(row$milestone[[1]]),
     div(class = "timeline-date", row$date_label[[1]])

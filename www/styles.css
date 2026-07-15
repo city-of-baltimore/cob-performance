@@ -1040,6 +1040,7 @@ body.auth-signed-in .nav-item[data-page="login"] {
 }
 
 .timeline-step-card {
+  position: relative;
   display: grid;
   align-content: start;
   gap: 0.45rem;
@@ -1051,8 +1052,35 @@ body.auth-signed-in .nav-item[data-page="login"] {
 }
 
 .timeline-step-card.current-step {
-  border-color: rgba(89, 42, 122, 0.35);
-  background: rgba(89, 42, 122, 0.06);
+  border-color: rgba(89, 42, 122, 0.48);
+  background:
+    linear-gradient(135deg, rgba(89, 42, 122, 0.12), rgba(255, 255, 255, 0) 55%),
+    var(--lp-surface-default);
+  box-shadow: 0 12px 24px rgba(47, 26, 69, 0.08);
+}
+
+.timeline-step-card.current-step::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0.35rem;
+  border-radius: var(--lp-radius-card) 0 0 var(--lp-radius-card);
+  background: var(--lp-brand-primary);
+}
+
+.timeline-step-card.current-step::after {
+  content: "Current";
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(89, 42, 122, 0.12);
+  color: var(--lp-brand-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .timeline-step-card h3 {
@@ -1072,6 +1100,11 @@ body.auth-signed-in .nav-item[data-page="login"] {
 
 .timeline-step-card .eyebrow {
   font-weight: 650;
+}
+
+.timeline-step-card.current-step .eyebrow,
+.timeline-step-card.current-step .timeline-date {
+  color: var(--lp-brand-primary);
 }
 
 .timeline-guidance-link {
