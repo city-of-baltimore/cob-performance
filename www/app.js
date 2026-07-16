@@ -29,6 +29,7 @@
   var authRestorePending = false;
   var authRestoreAttempted = false;
   var openServiceIds = new Set();
+  var openGoalIds = new Set();
   var serviceMetricUiState = {};
   var serviceMetricUiVersion = {};
 
@@ -53,8 +54,10 @@
 
   function navigateToPage(page) {
     if (page !== "services") openServiceIds.clear();
+    if (page !== "goals") openGoalIds.clear();
     setActivePage(page);
     closeMobileNav();
+    window.scrollTo(0, 0);
     if (window.Shiny) {
       window.Shiny.setInputValue("current_page", page, { priority: "event" });
     }
@@ -538,6 +541,18 @@
       var body = editor.querySelector(".service-editor-body");
       if (body) body.setAttribute("aria-hidden", "false");
       requestServiceBody(editor);
+    });
+  }
+
+  function restoreOpenGoalDrawers() {
+    var page = document.querySelector(".goals-page");
+    if (!page || !openGoalIds.size) return;
+    page.querySelectorAll(".goal-editor[data-goal-id]").forEach(function (editor) {
+      var goalId = editor.getAttribute("data-goal-id") || "";
+      if (!openGoalIds.has(goalId)) return;
+      editor.open = true;
+      var body = editor.querySelector(".goal-editor-body");
+      if (body) body.setAttribute("aria-hidden", "false");
     });
   }
 
@@ -2369,6 +2384,7 @@
     if (!page || page.dataset.goalsInitialized === "true") return;
     page.dataset.goalsInitialized = "true";
     unbindDraftOnlyControls(page);
+    restoreOpenGoalDrawers();
     page.querySelectorAll(".goal-editor").forEach(function (editor) {
       var body = editor.querySelector(".goal-editor-body");
       if (body) body.setAttribute("aria-hidden", editor.open ? "false" : "true");
@@ -2427,6 +2443,11 @@
   document.addEventListener("toggle", function (event) {
     if (!event.target.matches) return;
     if (event.target.matches(".goal-editor")) {
+      var goalId = event.target.getAttribute("data-goal-id") || "";
+      if (goalId) {
+        if (event.target.open) openGoalIds.add(goalId);
+        else openGoalIds.delete(goalId);
+      }
       var body = event.target.querySelector(".goal-editor-body");
       if (body) body.setAttribute("aria-hidden", event.target.open ? "false" : "true");
     }
@@ -2464,6 +2485,7 @@
     var page = event.target.closest(".builder-page-content");
     var goalsPage = event.target.closest(".goals-page");
     if (!page || page.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
+    if (event.target.matches(".kpi-select-row select")) return;
     if (goalsPage && event.target.matches("textarea[id^='goal_statement_'], .initiative-inputs textarea")) {
       updateGoalRequirements(goalsPage);
       scheduleGoalsQuietAutosave(page, 1200);

@@ -5295,16 +5295,29 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
             }
             selected_measure <- if (nrow(measure_link) > 0) as.character(measure_link$measure_id) else character(0)
             initial_kpis <- if (length(selected_measure) > 0) selected_measure else ""
+            goal_kpi_select <- function(kpi_index, selected_value) {
+              selected_value <- as.character(selected_value %||% "")
+              select_id <- paste0("goal_kpi_", goal_id, "_", kpi_index)
+              tags$select(
+                id = select_id,
+                name = select_id,
+                class = "form-control goal-kpi-select",
+                tags$option(value = "", selected = if (!nzchar(selected_value)) "selected", "Select a performance measure"),
+                lapply(seq_along(kpi_choices), function(choice_index) {
+                  value <- as.character(kpi_choices[[choice_index]])
+                  label <- names(kpi_choices)[[choice_index]]
+                  tags$option(
+                    value = value,
+                    selected = if (identical(value, selected_value)) "selected",
+                    label
+                  )
+                })
+              )
+            }
             kpi_selector_rows <- lapply(seq_along(initial_kpis), function(kpi_index) {
               div(
                 class = "kpi-select-row",
-                selectInput(
-                  paste0("goal_kpi_", goal_id, "_", kpi_index),
-                  label = NULL,
-                  choices = c("Select a performance measure" = "", kpi_choices),
-                  selected = initial_kpis[kpi_index],
-                  selectize = FALSE
-                ),
+                goal_kpi_select(kpi_index, initial_kpis[kpi_index]),
                 if (kpi_index > 1) tags$button(type = "button", class = "kpi-remove-button", title = "Remove KPI", `aria-label` = "Remove KPI", icon("xmark"))
               )
             })
@@ -5793,7 +5806,7 @@ ui <- tagList(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "styles.css?v=20260712-1"),
-    tags$script(src = "app.js?v=20260712-1", defer = "defer")
+    tags$script(src = "app.js?v=20260716-3", defer = "defer")
   ),
   div(
     class = "app-shell",
