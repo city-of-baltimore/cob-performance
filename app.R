@@ -3310,6 +3310,21 @@ user_submitter_choices <- function(db, user_id) {
     values <- c(values, paste0("agency:", role_agency_ids))
   }
 
+  if ("access_user_entity_access" %in% names(db) && "reference_plan_entity" %in% names(db)) {
+    entity_access_rows <- db$access_user_entity_access[as.character(db$access_user_entity_access$user_id) == user_id, , drop = FALSE]
+    if (nrow(entity_access_rows)) {
+      entity_ids <- unique(entity_access_rows$entity_id[!is.na(entity_access_rows$entity_id)])
+      entities <- db$reference_plan_entity[
+        db$reference_plan_entity$entity_id %in% entity_ids &
+          db$reference_plan_entity$active &
+          db$reference_plan_entity$has_own_plan,
+        ,
+        drop = FALSE
+      ]
+      values <- c(values, paste0("entity:", entities$entity_id))
+    }
+  }
+
   assignments <- entity_role_assignment_rows(db)
   if (nrow(assignments)) {
     assignment_matches <- rep(FALSE, nrow(assignments))
