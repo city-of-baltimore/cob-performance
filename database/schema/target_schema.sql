@@ -947,13 +947,16 @@ CREATE INDEX IF NOT EXISTS idx_user_entity_access_user_id ON access.user_entity_
 CREATE INDEX IF NOT EXISTS idx_user_entity_access_entity_id ON access.user_entity_access(entity_id);
 CREATE INDEX IF NOT EXISTS idx_user_entity_access_agency_id ON access.user_entity_access(agency_id);
 CREATE INDEX IF NOT EXISTS idx_user_entity_access_service_id ON access.user_entity_access(service_id);
+CREATE INDEX IF NOT EXISTS idx_user_role_pillar_id ON access.user_role(pillar_id);
 
 CREATE INDEX IF NOT EXISTS idx_plan_cycle_status ON planning.plan_cycle(cycle_status);
+CREATE INDEX IF NOT EXISTS idx_plan_cycle_created_by ON planning.plan_cycle(created_by);
 CREATE INDEX IF NOT EXISTS idx_agency_plan_agency_id ON planning.agency_plan(agency_id);
 CREATE INDEX IF NOT EXISTS idx_agency_plan_entity_id ON planning.agency_plan(entity_id);
 CREATE INDEX IF NOT EXISTS idx_agency_plan_cycle_id ON planning.agency_plan(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_agency_plan_plan_status ON planning.agency_plan(plan_status);
 CREATE INDEX IF NOT EXISTS idx_agency_plan_budget_status ON planning.agency_plan(budget_status);
+CREATE INDEX IF NOT EXISTS idx_agency_plan_assigned_reviewer ON planning.agency_plan(assigned_reviewer);
 CREATE INDEX IF NOT EXISTS idx_plan_section_draft_plan_id ON planning.plan_section_draft(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_section_draft_updated_by ON planning.plan_section_draft(updated_by);
 
@@ -971,14 +974,24 @@ CREATE INDEX IF NOT EXISTS idx_performance_measure_initial_cycle ON performance.
 CREATE INDEX IF NOT EXISTS idx_performance_measure_pillar_id ON performance.performance_measure(pillar_id);
 CREATE INDEX IF NOT EXISTS idx_performance_measure_approval_status ON performance.performance_measure(approval_status);
 CREATE INDEX IF NOT EXISTS idx_performance_measure_active ON performance.performance_measure(active);
+CREATE INDEX IF NOT EXISTS idx_performance_measure_pillar_goal_id ON performance.performance_measure(pillar_goal_id);
+CREATE INDEX IF NOT EXISTS idx_plan_pillar_alignment_pillar_id ON performance.plan_pillar_alignment(pillar_id);
 CREATE INDEX IF NOT EXISTS idx_measure_actuals_measure_id ON performance.measure_actuals(measure_id);
+CREATE INDEX IF NOT EXISTS idx_measure_actuals_reported_by ON performance.measure_actuals(reported_by);
 CREATE INDEX IF NOT EXISTS idx_pm_goal_link_measure_id ON performance.pm_goal_link(measure_id);
 CREATE INDEX IF NOT EXISTS idx_pm_goal_link_agency_goal_id ON performance.pm_goal_link(agency_goal_id);
 CREATE INDEX IF NOT EXISTS idx_pm_service_link_measure_id ON performance.pm_service_link(measure_id);
 CREATE INDEX IF NOT EXISTS idx_pm_service_link_service_id ON performance.pm_service_link(service_id);
+CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_changed_by ON performance.pm_service_reassignment(changed_by);
+CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_cycle_id ON performance.pm_service_reassignment(cycle_id);
+CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_measure_id ON performance.pm_service_reassignment(measure_id);
+CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_new_service_id ON performance.pm_service_reassignment(new_service_id);
+CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_old_service_id ON performance.pm_service_reassignment(old_service_id);
 CREATE INDEX IF NOT EXISTS idx_plan_service_plan_id ON performance.plan_service(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_service_service_id ON performance.plan_service(service_id);
 CREATE INDEX IF NOT EXISTS idx_service_goal_link_plan_service_id ON performance.service_goal_link(plan_service_id);
+CREATE INDEX IF NOT EXISTS idx_service_goal_link_agency_goal_id ON performance.service_goal_link(agency_goal_id);
+CREATE INDEX IF NOT EXISTS idx_service_goal_link_initiative_id ON performance.service_goal_link(initiative_id);
 CREATE INDEX IF NOT EXISTS idx_service_risk_plan_id ON performance.service_risk(plan_id);
 CREATE INDEX IF NOT EXISTS idx_data_reporting_plan_id ON performance.data_reporting(plan_id);
 
@@ -992,28 +1005,39 @@ CREATE INDEX IF NOT EXISTS idx_cls_request_position_cls_id ON budget.cls_request
 CREATE INDEX IF NOT EXISTS idx_enhancement_plan_service_id ON budget.enhancement(plan_service_id);
 CREATE INDEX IF NOT EXISTS idx_enhancement_measure_enhancement_id ON budget.enhancement_measure(enhancement_id);
 CREATE INDEX IF NOT EXISTS idx_coa_request_plan_service_id ON budget.coa_request(plan_service_id);
+CREATE INDEX IF NOT EXISTS idx_coa_request_reviewed_by ON budget.coa_request(reviewed_by);
 
 CREATE INDEX IF NOT EXISTS idx_plan_review_plan_id ON review.plan_review(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_review_reviewer_id ON review.plan_review(reviewer_id);
 CREATE INDEX IF NOT EXISTS idx_section_score_review_id ON review.section_score(review_id);
 CREATE INDEX IF NOT EXISTS idx_section_feedback_review_id ON review.section_feedback(review_id);
+CREATE INDEX IF NOT EXISTS idx_measure_review_modified_by ON review.measure_review(modified_by);
 
 CREATE INDEX IF NOT EXISTS idx_approval_record_plan_id ON workflow.approval_record(plan_id);
 CREATE INDEX IF NOT EXISTS idx_approval_record_approver_id ON workflow.approval_record(approver_id);
 CREATE INDEX IF NOT EXISTS idx_plan_status_history_plan_id ON workflow.plan_status_history(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_status_history_changed_by ON workflow.plan_status_history(changed_by);
 CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_plan_stage ON workflow.plan_approval_stamp(plan_id, approval_stage, approved_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_added_by ON workflow.plan_approval_stamp(added_by);
+CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_approved_by ON workflow.plan_approval_stamp(approved_by);
 CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id);
 CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id);
+CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_reviewer_user_id ON workflow.entity_role_assignment(reviewer_user_id);
+CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_deputy_mayor_user_id ON workflow.entity_role_assignment(deputy_mayor_user_id);
+CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_ca_office_user_id ON workflow.entity_role_assignment(ca_office_user_id);
+CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_modified_by ON workflow.entity_role_assignment(modified_by);
 
 CREATE INDEX IF NOT EXISTS idx_plan_amendment_plan_id ON amendment.plan_amendment(plan_id);
+CREATE INDEX IF NOT EXISTS idx_plan_amendment_initiated_by ON amendment.plan_amendment(initiated_by);
 CREATE INDEX IF NOT EXISTS idx_amendment_unlock_amendment_id ON amendment.amendment_unlock(amendment_id);
 
 CREATE INDEX IF NOT EXISTS idx_slide_deck_export_plan_id ON output.slide_deck_export(plan_id);
+CREATE INDEX IF NOT EXISTS idx_slide_deck_export_generated_by ON output.slide_deck_export(generated_by);
 CREATE INDEX IF NOT EXISTS idx_notification_plan_id ON output.notification(plan_id);
 CREATE INDEX IF NOT EXISTS idx_notification_recipient_id ON output.notification(recipient_id);
 
 CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category);
+CREATE INDEX IF NOT EXISTS idx_feedback_request_assigned_admin_id ON application.feedback_request(assigned_admin_id);
 
 COMMIT;
