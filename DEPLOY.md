@@ -63,6 +63,22 @@ fly postgres attach cob-performance-db
 `attach` sets the `DATABASE_URL` secret automatically. The app's URL parser
 honors the `sslmode` query parameter Fly includes.
 
+`fly postgres create`'s default size (`shared-cpu-1x:256MB`) is too small for
+real concurrent use. On 2026-07-16 it caused a ~20-minute outage during a
+live training session: the Postgres VM hit its memory/IO limits under
+concurrent load, connections were dropped (`server closed the connection
+unexpectedly` in the app logs), and the app appeared to hang for active
+users. Size it up after creating it:
+
+```bash
+fly machine list -a cob-performance-db   # get the machine ID
+fly machine update <machine-id> -a cob-performance-db --vm-memory 1024
+```
+
+Current production sizing is `shared-cpu-1x:1024MB`. Re-evaluate if the app
+sees heavier concurrent use (e.g. many agencies working simultaneously
+during a submission deadline).
+
 ### 3. Load the schema and seeds
 
 ```bash
