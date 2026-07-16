@@ -533,6 +533,37 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ADD COLUMN IF NOT EXISTS assigned_admin_id integer REFERENCES access.\"user\"(user_id)")
   DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ALTER COLUMN status SET DEFAULT 'New'")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category)")
+
+  # Foreign-key columns with no covering index (found via a live pg_constraint
+  # audit). target_schema.sql only runs on a fresh database, so already-
+  # provisioned databases (local Docker, Fly Postgres) need these applied here.
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_agency_id ON access.user_entity_access(agency_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_service_id ON access.user_entity_access(service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_modified_by ON access.user_entity_access(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_role_pillar_id ON access.user_role(pillar_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_amendment_initiated_by ON amendment.plan_amendment(initiated_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_assigned_admin_id ON application.feedback_request(assigned_admin_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_coa_request_reviewed_by ON budget.coa_request(reviewed_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_slide_deck_export_generated_by ON output.slide_deck_export(generated_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_measure_actuals_reported_by ON performance.measure_actuals(reported_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_performance_measure_pillar_goal_id ON performance.performance_measure(pillar_goal_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_pillar_alignment_pillar_id ON performance.plan_pillar_alignment(pillar_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_changed_by ON performance.pm_service_reassignment(changed_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_cycle_id ON performance.pm_service_reassignment(cycle_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_measure_id ON performance.pm_service_reassignment(measure_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_new_service_id ON performance.pm_service_reassignment(new_service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_old_service_id ON performance.pm_service_reassignment(old_service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_service_goal_link_agency_goal_id ON performance.service_goal_link(agency_goal_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_service_goal_link_initiative_id ON performance.service_goal_link(initiative_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_agency_plan_assigned_reviewer ON planning.agency_plan(assigned_reviewer)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_cycle_created_by ON planning.plan_cycle(created_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_measure_review_modified_by ON review.measure_review(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_ca_office_user_id ON workflow.entity_role_assignment(ca_office_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_deputy_mayor_user_id ON workflow.entity_role_assignment(deputy_mayor_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_modified_by ON workflow.entity_role_assignment(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_reviewer_user_id ON workflow.entity_role_assignment(reviewer_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_added_by ON workflow.plan_approval_stamp(added_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_approved_by ON workflow.plan_approval_stamp(approved_by)")
   invisible(TRUE)
 }
 
