@@ -172,7 +172,8 @@ CREATE TABLE IF NOT EXISTS access.user_role (
     budget_access boolean NOT NULL DEFAULT false,
     adaptive_planning boolean NOT NULL DEFAULT false,
     performance_plan_access boolean NOT NULL DEFAULT false,
-    quasi boolean NOT NULL DEFAULT false
+    quasi boolean NOT NULL DEFAULT false,
+    UNIQUE (user_id)
 );
 
 CREATE TABLE IF NOT EXISTS access.user_agency_access (

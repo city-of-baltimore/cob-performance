@@ -564,6 +564,23 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_reviewer_user_id ON workflow.entity_role_assignment(reviewer_user_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_added_by ON workflow.plan_approval_stamp(added_by)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_approved_by ON workflow.plan_approval_stamp(approved_by)")
+  # Enforce one performance role per user. Every code path that writes
+  # access.user_role already checks for an existing row first (see
+  # save_team_role_assignment, save_entity_team_role_assignment,
+  # apply_user_entity_access_seed), so this should never fire in normal
+  # operation -- it's a safety net against a bad import or manual edit
+  # silently giving someone two conflicting roles.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "DO $$",
+      "BEGIN",
+      "  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_role_user_id_key') THEN",
+      "    ALTER TABLE access.user_role ADD CONSTRAINT user_role_user_id_key UNIQUE (user_id);",
+      "  END IF;",
+      "END $$;"
+    )
+  )
   invisible(TRUE)
 }
 
