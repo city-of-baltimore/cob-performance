@@ -3366,6 +3366,27 @@ user_submitter_choices <- function(db, user_id) {
     }
   }
 
+  # Some agencies (e.g. BCIT) have an agency-scoped plan (agency_id set,
+  # entity_id NULL) that is ALSO represented by a same-named "Agency"-type
+  # plan_entity row, and access can be granted through either form. Only the
+  # agency form appears in valid_values (agency_selector_choices() only lists
+  # "entity:" for plans whose own row has entity_id set), so an entity-form
+  # value for one of these dual-registered agencies would otherwise get
+  # silently dropped by the validity filter below even though it points at a
+  # real, valid plan. Canonicalize it back to the agency form first.
+  values <- vapply(values, function(value) {
+    if (startsWith(value, "entity:") && !value %in% valid_values) {
+      entity_id <- suppressWarnings(as.integer(sub("^entity:", "", value)))
+      if (!is.na(entity_id)) {
+        entity_row <- db$reference_plan_entity[db$reference_plan_entity$entity_id == entity_id, , drop = FALSE]
+        if (nrow(entity_row) && !is.na(entity_row$parent_agency_id[[1]])) {
+          canonical <- paste0("agency:", entity_row$parent_agency_id[[1]])
+          if (canonical %in% valid_values) return(canonical)
+        }
+      }
+    }
+    value
+  }, character(1))
   values <- unique(values[nzchar(values) & values %in% valid_values])
   valid_choices[valid_values %in% values]
 }
