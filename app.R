@@ -7231,7 +7231,15 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    # No refresh_app_data() here on purpose: this observer fires on every
+    # scoring-input change (auto-saved, debounced), not just a single manual
+    # save, and refresh_app_data() reloads the ENTIRE database before
+    # output$page fully re-renders -- visibly collapsing/scrolling the page
+    # after every criterion score. The updated total score is already sent to
+    # the client below, so no server re-render is needed for that feedback.
+    # Terminal workflow actions on this plan (approve/route/publish) already
+    # call refresh_app_data() on their own, so app_data() is guaranteed fresh
+    # by the time it actually gates a workflow decision.
     session$sendCustomMessage("plan-review-save-result", list(
       ok = TRUE,
       source = source,
@@ -7634,11 +7642,12 @@ server <- function(input, output, session) {
 
       result <- save_section_draft(database, plan_id, section_key, payload_json, revision)
       if (isTRUE(result$ok)) {
+        # Update the non-reactive draft cache only -- output$page already reads
+        # fresh draft content via data_with_cached_section_draft() on every
+        # render. Writing to app_data() here would force a full-page
+        # re-render on every autosave tick (matching the goals_draft_quiet_save
+        # / service_metrics_draft_save pattern, which never write to app_data()).
         update_cached_section_draft(plan_id, section_key, payload_json, result$row)
-        cached_data <- app_data()
-        if (!is.null(cached_data)) {
-          app_data(data_with_cached_section_draft(cached_data, plan_id, section_key))
-        }
         session$sendCustomMessage("shared-draft-result", list(
           ok = TRUE,
           planId = plan_id,
