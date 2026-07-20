@@ -2801,6 +2801,14 @@ entity_access_numeric_id <- function(access_id) {
 
 team_rows_for_plan <- function(db, submitter_value) {
   plan <- current_plan(db, submitter_value)
+  if (is.null(plan) || !nrow(plan)) {
+    # A NULL plan must short-circuit here: every downstream agency_id/entity_id
+    # comparison below is `== NA`, and R's `df[logical_with_NA, ]` indexing
+    # returns the WHOLE table back as all-NA rows (not zero rows) rather than
+    # erroring, so without this guard the team table renders as a wall of NA
+    # placeholder rows instead of nothing.
+    return(db$access_user_agency_access[0, , drop = FALSE])
+  }
   agency_id <- plan_accounting_agency_id(db, plan)
   if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) {
     if (!"access_user_entity_access" %in% names(db)) {
