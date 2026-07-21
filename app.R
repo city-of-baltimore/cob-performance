@@ -510,6 +510,16 @@ plan_accounting_agency_id <- function(db, plan) {
   if (nrow(entity)) entity$parent_agency_id[[1]] else NA_character_
 }
 
+plan_fiscal_analyst <- function(db, plan) {
+  agency_id <- plan_accounting_agency_id(db, plan)
+  if (is.na(agency_id) || !"reference_agency" %in% names(db) || !"fiscal_analyst" %in% names(db$reference_agency)) return(NA_character_)
+  agency <- db$reference_agency[db$reference_agency$agency_id == agency_id, , drop = FALSE]
+  if (!nrow(agency)) return(NA_character_)
+  value <- trimws(as.character(agency$fiscal_analyst[[1]] %||% ""))
+  if (!nzchar(value)) return(NA_character_)
+  value
+}
+
 plan_service_rows <- function(db, plan) {
   if (is.null(plan) || !nrow(plan)) return(db$reference_service[0, , drop = FALSE])
   if (is.na(plan$plan_id[[1]])) return(db$reference_service[0, , drop = FALSE])
@@ -3030,7 +3040,8 @@ page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_c
       plan_id = plan_id,
       section_key = "team",
       show_save = FALSE,
-      show_status = FALSE
+      show_status = FALSE,
+      fiscal_analyst = plan_fiscal_analyst(db, plan)
     ))
   }
   builder_page(
@@ -3064,7 +3075,8 @@ page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_c
     plan_id = plan_id,
     section_key = "team",
     show_save = FALSE,
-    show_status = FALSE
+    show_status = FALSE,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -3425,7 +3437,7 @@ validate_measure_selection_limit <- function(payload_json, section_key, limit = 
   NULL
 }
 
-builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL) {
+builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL, fiscal_analyst = NULL) {
   rubric_note <- "Rubric criteria are provided at the bottom of this page for reference."
   description <- if (section_key %in% c("overview", "goals", "services")) {
     paste(description, rubric_note)
@@ -3438,7 +3450,10 @@ builder_page <- function(title, description, body, plan_id, section_key, show_sa
       div(
         div(class = "eyebrow", "Performance plan builder"),
         h1(title),
-        p(description)
+        p(description),
+        if (!is.null(fiscal_analyst) && !is.na(fiscal_analyst) && nzchar(fiscal_analyst)) {
+          p(class = "fiscal-analyst-note", paste0("BBMR fiscal analyst: ", fiscal_analyst))
+        }
       ),
       div(
         class = "builder-header-actions",
@@ -4396,7 +4411,8 @@ page_plan_history <- function(db, agency_id, can_submit_plan = FALSE) {
     plan_id = plan$plan_id,
     section_key = "history",
     show_save = FALSE,
-    show_status = FALSE
+    show_status = FALSE,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -5134,7 +5150,8 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     plan_id = plan$plan_id,
     section_key = "measures",
     show_save = FALSE,
-    show_status = FALSE
+    show_status = FALSE,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -5211,7 +5228,8 @@ page_overview <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "overview",
-    locked = !plan_is_editable(plan) || !can_edit_plan
+    locked = !plan_is_editable(plan) || !can_edit_plan,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -5531,7 +5549,8 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "goals",
-    locked = !plan_is_editable(plan) || !can_edit_plan
+    locked = !plan_is_editable(plan) || !can_edit_plan,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -5653,7 +5672,8 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "services",
-    locked = !plan_is_editable(plan) || !can_edit_plan
+    locked = !plan_is_editable(plan) || !can_edit_plan,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 
@@ -5716,7 +5736,8 @@ page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "risks",
-    locked = !plan_is_editable(plan) || !can_edit_plan
+    locked = !plan_is_editable(plan) || !can_edit_plan,
+    fiscal_analyst = plan_fiscal_analyst(db, plan)
   )
 }
 

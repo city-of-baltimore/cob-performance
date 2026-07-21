@@ -862,6 +862,12 @@ body.builder-autosave-active #page {
   margin-top: 0.55rem;
 }
 
+.fiscal-analyst-note {
+  color: var(--lp-text-secondary);
+  font-size: 0.85rem;
+  margin-top: 0.35rem;
+}
+
 .builder-header-actions {
   display: flex;
   flex-direction: column;
