@@ -58,10 +58,15 @@ CREATE TABLE IF NOT EXISTS reference.agency (
     -- Whether the agency submits its own performance plan this cycle.
     submit_plan boolean NOT NULL DEFAULT true,
     is_quasi boolean NOT NULL DEFAULT false,
-    active boolean NOT NULL DEFAULT true
+    active boolean NOT NULL DEFAULT true,
+    -- BBMR budget analyst assigned to this agency's portfolio (from BBMR's
+    -- own analyst-assignment roster, not an app-managed role). Quasi-agencies
+    -- inherit their umbrella agency's analyst since they share its agency_id.
+    fiscal_analyst varchar(200)
 );
 
 ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS submit_plan boolean NOT NULL DEFAULT true;
+ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS fiscal_analyst varchar(200);
 
 CREATE TABLE IF NOT EXISTS reference.service (
     service_id varchar(20) PRIMARY KEY,

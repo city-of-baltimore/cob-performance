@@ -118,6 +118,26 @@ consolidate_user_performance_roles <- function(connection) {
   invisible(consolidated)
 }
 
+apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
+  if (!file.exists(path)) return(invisible(FALSE))
+  seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+  if (!all(c("agency_id", "analyst_name") %in% names(seed))) {
+    warning("Skipping agency fiscal analyst seed; missing agency_id/analyst_name columns")
+    return(invisible(FALSE))
+  }
+  for (i in seq_len(nrow(seed))) {
+    agency_id <- trimws(as.character(seed$agency_id[[i]] %||% ""))
+    analyst_name <- trimws(as.character(seed$analyst_name[[i]] %||% ""))
+    if (!nzchar(agency_id) || !nzchar(analyst_name)) next
+    DBI::dbExecute(
+      connection,
+      "UPDATE reference.agency SET fiscal_analyst = $2 WHERE agency_id = $1",
+      params = list(agency_id, analyst_name)
+    )
+  }
+  invisible(TRUE)
+}
+
 apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
   if (!file.exists(path)) return(invisible(FALSE))
   seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -263,6 +283,7 @@ ensure_measure_identity_sequences <- function(connection) {
 
 ensure_review_schema <- function(connection) {
   ensure_measure_identity_sequences(connection)
+  DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS fiscal_analyst varchar(200)")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
     connection,
@@ -509,6 +530,7 @@ ensure_review_schema <- function(connection) {
     )
   )
   apply_user_entity_access_seed(connection)
+  apply_agency_fiscal_analyst_seed(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
@@ -588,7 +610,7 @@ load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
     reference_agency = query(
-      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
+      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan, fiscal_analyst FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
     ),
     reference_pillar = query(
       "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"
