@@ -193,7 +193,6 @@ def pdf_score_table(scores, styles):
 def pdf_review_summary(review, styles):
     notes = as_list(review.get("notes"))
     rows = [
-        ("Reviewer", review.get("reviewer")),
         ("Overall score", review.get("score")),
     ]
     data = [[Paragraph(clean(label), styles["MetaLabel"]), Paragraph(clean(value), styles["MetaValue"])] for label, value in rows if value]
@@ -219,8 +218,12 @@ def pdf_meta_table(payload, review, styles):
     rows = [
         ("Status", payload.get("status")),
         ("Version", payload.get("version")),
-        ("Plan contact", payload.get("agency_contact")),
-        ("BBMR fiscal analyst", payload.get("fiscal_analyst")),
+        ("Plan Contact", payload.get("agency_contact")),
+        ("Submitter", payload.get("submitter")),
+        ("Fiscal Analyst", payload.get("fiscal_analyst")),
+        ("Performance Analyst", payload.get("performance_analyst")),
+        ("Deputy Mayor", payload.get("deputy_mayor")),
+        ("CA Office Approver", payload.get("ca_office")),
     ]
     data = []
     for label, value in rows:
@@ -422,15 +425,17 @@ def build_pptx(payload, output, template=None):
     slide = prs.slides.add_slide(layout)
     add_slide_title(slide, f"{raw(payload.get('agency_name', 'Agency'))} Performance Plan", fy_label(payload.get("fiscal_year")))
     add_textbox(slide, "Beacon | Baltimore City Performance & Budgeting", Inches(0.65), Inches(1.6), Inches(8.5), Inches(0.5), 26, True)
-    subtitle_parts = [
-        raw(payload.get("status")),
-        f"Version {raw(payload.get('version'))}",
-        raw(payload.get("agency_contact")),
+    add_textbox(slide, f"{raw(payload.get('status'))} | Version {raw(payload.get('version'))}", Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.35), 13, False, (63, 69, 74))
+    contact_rows = [
+        ("Plan Contact", payload.get("agency_contact")),
+        ("Submitter", payload.get("submitter")),
+        ("Fiscal Analyst", payload.get("fiscal_analyst")),
+        ("Performance Analyst", payload.get("performance_analyst")),
+        ("Deputy Mayor", payload.get("deputy_mayor")),
+        ("CA Office Approver", payload.get("ca_office")),
     ]
-    fiscal_analyst = payload.get("fiscal_analyst")
-    if fiscal_analyst and str(fiscal_analyst).strip() and str(fiscal_analyst).strip() != "Unassigned":
-        subtitle_parts.append(f"BBMR analyst: {raw(fiscal_analyst)}")
-    add_textbox(slide, " | ".join(subtitle_parts), Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.45), 13, False, (63, 69, 74))
+    contact_lines = [f"{label}: {raw(value)}" for label, value in contact_rows if value and str(value).strip()]
+    add_textbox(slide, "\n".join(contact_lines), Inches(0.68), Inches(2.6), Inches(8.4), Inches(2.0), 12, False, (63, 69, 74))
 
     slide = prs.slides.add_slide(layout)
     if payload.get("include_review", True):

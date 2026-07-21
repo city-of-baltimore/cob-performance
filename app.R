@@ -4199,12 +4199,15 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
     agency_contact = agency_director_contact(db, plan),
+    submitter = plan_submitter_label(db, plan),
     fiscal_analyst = plan_fiscal_analyst_label(db, plan),
+    performance_analyst = plan_reviewer_label(db, plan),
+    deputy_mayor = plan_deputy_mayor_label(db, plan),
+    ca_office = plan_ca_office_label(db, plan),
     overview = if (nrow(overview) || !is.null(overview_draft)) list(overview = overview_text, vision = vision_text, web_address = web_address) else list(),
     overview_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_) else list(),
     include_review = isTRUE(include_review),
     review = if (isTRUE(include_review)) list(
-      reviewer = plan_reviewer_label(db, plan),
       score = if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored",
       notes = as.list(review_notes_summary(review_bits))
     ) else list(),
