@@ -138,6 +138,33 @@ apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("datab
   invisible(TRUE)
 }
 
+apply_user_entity_access_seed_once <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
+  seed_name <- "user_entity_access_seed"
+  already_applied <- isTRUE(DBI::dbGetQuery(
+    connection,
+    "SELECT EXISTS (SELECT 1 FROM application.seed_applied WHERE seed_name = $1)",
+    params = list(seed_name)
+  )[[1]])
+  if (already_applied) return(invisible(FALSE))
+  # This CSV is a one-time bulk import from early in the project, not a
+  # perpetual sync source -- team membership is managed live through the
+  # Team & Roles UI from here on. Re-running it on every restart was
+  # silently re-inserting deleted access rows and overwriting role changes
+  # admins had made since. A database that already has real access rows is
+  # treated as already seeded (skip re-applying, just record the marker); a
+  # genuinely empty database still gets the one-time initial population.
+  already_has_data <- isTRUE(DBI::dbGetQuery(connection, "SELECT EXISTS (SELECT 1 FROM access.user_entity_access LIMIT 1)")[[1]])
+  if (!already_has_data) {
+    apply_user_entity_access_seed(connection, path)
+  }
+  DBI::dbExecute(
+    connection,
+    "INSERT INTO application.seed_applied (seed_name) VALUES ($1) ON CONFLICT (seed_name) DO NOTHING",
+    params = list(seed_name)
+  )
+  invisible(TRUE)
+}
+
 apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
   if (!file.exists(path)) return(invisible(FALSE))
   seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -283,6 +310,16 @@ ensure_measure_identity_sequences <- function(connection) {
 
 ensure_review_schema <- function(connection) {
   ensure_measure_identity_sequences(connection)
+  DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS application.seed_applied (",
+      "seed_name varchar(200) PRIMARY KEY,",
+      "applied_at timestamptz NOT NULL DEFAULT now()",
+      ")"
+    )
+  )
   DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS fiscal_analyst varchar(200)")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
@@ -529,7 +566,7 @@ ensure_review_schema <- function(connection) {
       "ON CONFLICT (user_id, entity_id) DO NOTHING"
     )
   )
-  apply_user_entity_access_seed(connection)
+  apply_user_entity_access_seed_once(connection)
   apply_agency_fiscal_analyst_seed(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
