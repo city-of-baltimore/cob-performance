@@ -520,6 +520,11 @@ plan_fiscal_analyst <- function(db, plan) {
   value
 }
 
+plan_fiscal_analyst_label <- function(db, plan) {
+  value <- plan_fiscal_analyst(db, plan)
+  if (is.na(value)) "Unassigned" else value
+}
+
 plan_service_rows <- function(db, plan) {
   if (is.null(plan) || !nrow(plan)) return(db$reference_service[0, , drop = FALSE])
   if (is.na(plan$plan_id[[1]])) return(db$reference_service[0, , drop = FALSE])
@@ -4195,6 +4200,7 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
     agency_contact = agency_director_contact(db, plan),
+    fiscal_analyst = plan_fiscal_analyst_label(db, plan),
     overview = if (nrow(overview) || !is.null(overview_draft)) list(overview = overview_text, vision = vision_text, web_address = web_address) else list(),
     overview_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_) else list(),
     include_review = isTRUE(include_review),
@@ -4287,6 +4293,14 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
         )
       ),
       div(class = "history-plan-updated", span(updated_label), strong(as.character(updated_value)))
+    ),
+    div(
+      class = "history-modal-contact-stack history-card-contacts",
+      p(class = "history-modal-contact", tags$strong("Plan contact: "), agency_director_contact(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
     ),
     div(
       class = "history-review-box",
@@ -4607,7 +4621,8 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
             p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
+            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("BBMR fiscal analyst: "), plan_fiscal_analyst_label(db, plan))
           )
         ),
         if (isTRUE(full_page)) actionButton("back_to_review_queue", label = tagList(icon("arrow-left"), "Back to queue"), class = "civic-button secondary small")

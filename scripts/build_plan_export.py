@@ -220,6 +220,7 @@ def pdf_meta_table(payload, review, styles):
         ("Status", payload.get("status")),
         ("Version", payload.get("version")),
         ("Plan contact", payload.get("agency_contact")),
+        ("BBMR fiscal analyst", payload.get("fiscal_analyst")),
     ]
     data = []
     for label, value in rows:
@@ -421,7 +422,15 @@ def build_pptx(payload, output, template=None):
     slide = prs.slides.add_slide(layout)
     add_slide_title(slide, f"{raw(payload.get('agency_name', 'Agency'))} Performance Plan", fy_label(payload.get("fiscal_year")))
     add_textbox(slide, "Beacon | Baltimore City Performance & Budgeting", Inches(0.65), Inches(1.6), Inches(8.5), Inches(0.5), 26, True)
-    add_textbox(slide, f"{raw(payload.get('status'))} | Version {raw(payload.get('version'))} | {raw(payload.get('agency_contact'))}", Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.45), 13, False, (63, 69, 74))
+    subtitle_parts = [
+        raw(payload.get("status")),
+        f"Version {raw(payload.get('version'))}",
+        raw(payload.get("agency_contact")),
+    ]
+    fiscal_analyst = payload.get("fiscal_analyst")
+    if fiscal_analyst and str(fiscal_analyst).strip() and str(fiscal_analyst).strip() != "Unassigned":
+        subtitle_parts.append(f"BBMR analyst: {raw(fiscal_analyst)}")
+    add_textbox(slide, " | ".join(subtitle_parts), Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.45), 13, False, (63, 69, 74))
 
     slide = prs.slides.add_slide(layout)
     if payload.get("include_review", True):
