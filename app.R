@@ -4297,8 +4297,9 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
       class = "history-modal-contact-stack history-card-contacts",
       p(class = "history-modal-contact", tags$strong("Plan contact: "), agency_director_contact(db, plan)),
       p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
-      p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
-      p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("BBMR fiscal analyst: "), plan_fiscal_analyst_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("OPI Reviewer: "), plan_reviewer_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
     ),
     div(
@@ -4618,10 +4619,10 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
             class = "history-modal-contact-stack",
             p(class = "history-modal-contact", tags$strong("Plan contact: "), agency_director_contact(db, plan)),
             p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("BBMR fiscal analyst: "), plan_fiscal_analyst_label(db, plan))
+            p(class = "history-modal-contact", tags$strong("BBMR fiscal analyst: "), plan_fiscal_analyst_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("OPI Reviewer: "), plan_reviewer_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
           )
         ),
         if (isTRUE(full_page)) actionButton("back_to_review_queue", label = tagList(icon("arrow-left"), "Back to queue"), class = "civic-button secondary small")
