@@ -1728,7 +1728,7 @@ page_login <- function(state = list(view = "login"), db = NULL) {
         )
       ),
       body,
-      div(class = "support-note", "Need access? Contact performance@baltimorecity.gov.")
+      div(class = "support-note", "Need access? Contact melanie.lada@baltimorecity.gov.")
     )
   )
 }
@@ -6126,7 +6126,7 @@ server <- function(input, output, session) {
     notice <- if (isTRUE(sent)) {
       "No Beacon account is associated with that email address. Melanie Lada has been notified."
     } else {
-      "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact performance@baltimorecity.gov."
+      "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact melanie.lada@baltimorecity.gov."
     }
     list(notice = notice, sent = isTRUE(sent))
   }
@@ -6138,7 +6138,7 @@ server <- function(input, output, session) {
     email <- tolower(trimws(user$email[[1]] %||% ""))
     user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
     if (!nrow(user_rows)) {
-      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
+      showNotification("That email address is not in the current user list. Contact melanie.lada@baltimorecity.gov for access.", type = "error", duration = 10)
       return(FALSE)
     }
     user_id <- as.character(user_rows$user_id[[1]])
