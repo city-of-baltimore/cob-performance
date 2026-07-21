@@ -1,6 +1,15 @@
 library(shiny)
 library(DBI)
 library(RPostgres)
+library(future)
+library(promises)
+
+# Full database reloads (refresh_app_data(), ~36 queries) run in a background
+# worker so one user's save/submit/approve doesn't block every other
+# connected session -- Shiny normally runs as a single process/thread, so a
+# synchronous reload here would freeze the whole app for its duration.
+# shared-cpu-2x machine (see fly.toml) -> 2 workers.
+future::plan(future::multisession, workers = 2)
 
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
@@ -6153,11 +6162,24 @@ server <- function(input, output, session) {
     data
   }
 
-  refresh_app_data <- function() {
-    data <- load_app_data(database)
-    app_data(data)
-    register_service_body_outputs(data)
-    invisible(data)
+  # Reloads the entire database (~36 queries) in a background worker instead
+  # of blocking the shared single-threaded Shiny process. `after` runs once
+  # the fresh data has landed in app_data() -- put cleanup/notification code
+  # there instead of directly after the call, since this returns immediately.
+  refresh_app_data <- function(after = NULL, on_error = NULL) {
+    promises::future_promise({
+      connection <- connect_app_database()
+      on.exit(DBI::dbDisconnect(connection), add = TRUE)
+      load_app_data(connection)
+    }, seed = TRUE) %...>% (function(data) {
+      app_data(data)
+      register_service_body_outputs(data)
+      if (!is.null(after)) after()
+    }) %...!% (function(error) {
+      showNotification(paste("Couldn't refresh plan data:", conditionMessage(error)), type = "error", duration = 8)
+      if (!is.null(on_error)) on_error(error)
+    })
+    invisible(NULL)
   }
 
   notify_unknown_login_email <- function(email, context = "sign in", requested_entity = "", requested_agency_role = "") {
@@ -6859,9 +6881,10 @@ server <- function(input, output, session) {
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
-    refresh_app_data()
-    current_measure_id(NULL)
-    showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
+    refresh_app_data(after = function() {
+      current_measure_id(NULL)
+      showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
+    })
   }
 
   observeEvent(input$open_measure_id, {
@@ -6883,9 +6906,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_measure_id(NULL)
-    showNotification("Measure deleted.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      current_measure_id(NULL)
+      showNotification("Measure deleted.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
@@ -6912,9 +6936,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    feedback_modal_open(FALSE)
-    showNotification("Feedback submitted. Thank you.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      feedback_modal_open(FALSE)
+      showNotification("Feedback submitted. Thank you.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$feedback_admin_update, {
     if (!current_user_can_view_application_admin()) {
@@ -6938,8 +6963,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Feedback request updated.", type = "message", duration = 5)
+    refresh_app_data(after = function() {
+      showNotification("Feedback request updated.", type = "message", duration = 5)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$feedback_admin_delete, {
     if (!current_user_can_view_application_admin()) {
@@ -6951,8 +6977,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Feedback request deleted.", type = "message", duration = 5)
+    refresh_app_data(after = function() {
+      showNotification("Feedback request deleted.", type = "message", duration = 5)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$measure_review_decision, {
     if (!current_user_can_review_measures()) {
@@ -6975,8 +7002,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
+    refresh_app_data(after = function() {
+      showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$measure_cap_error, {
     message <- input$measure_cap_error$message %||% "No more than 5 measures are allowed."
@@ -6985,16 +7013,20 @@ server <- function(input, output, session) {
   observeEvent(input$confirm_deactivate_measure, {
     measure_id <- current_measure_id()
     if (is.null(measure_id) || identical(measure_id, "new")) return()
-    tryCatch({
-      set_measure_active(database, measure_id, current_agency_id(), FALSE)
-      refresh_app_data()
+    result <- tryCatch(set_measure_active(database, measure_id, current_agency_id(), FALSE), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error")
+      return()
+    }
+    refresh_app_data(after = function() {
       showNotification("Measure made inactive.", type = "message")
-    }, error = function(error) showNotification(conditionMessage(error), type = "error"))
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$reactivate_measure, {
     set_measure_active(database, current_measure_id(), current_agency_id(), TRUE)
-    refresh_app_data()
-    showNotification("Measure reactivated.", type = "message")
+    refresh_app_data(after = function() {
+      showNotification("Measure reactivated.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$open_risk_id, {
@@ -7091,9 +7123,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_team_access_id(NULL)
-    showNotification("Team role updated.", type = "message")
+    refresh_app_data(after = function() {
+      current_team_access_id(NULL)
+      showNotification("Team role updated.", type = "message")
+    })
   }, ignoreInit = FALSE)
   observeEvent(input$team_role_delete_confirmed_request, {
     if (!current_user_can_manage_team()) {
@@ -7121,9 +7154,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_team_access_id(NULL)
-    showNotification("Team access deleted.", type = "message")
+    refresh_app_data(after = function() {
+      current_team_access_id(NULL)
+      showNotification("Team access deleted.", type = "message")
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$risk_save_request, {
     if (!current_user_can_edit_plan()) {
@@ -7142,9 +7176,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_risk_id(NULL)
-    showNotification("Risk saved.", type = "message")
+    refresh_app_data(after = function() {
+      current_risk_id(NULL)
+      showNotification("Risk saved.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$risk_delete_confirmed_request, {
@@ -7164,9 +7199,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_risk_id(NULL)
-    showNotification("Risk deleted.", type = "message")
+    refresh_app_data(after = function() {
+      current_risk_id(NULL)
+      showNotification("Risk deleted.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$duplicate_plan_from, {
@@ -7194,8 +7230,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification(paste(fy_label(source_plan$fiscal_year[[1]]), "plan copied into the current shared draft."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      showNotification(paste(fy_label(source_plan$fiscal_year[[1]]), "plan copied into the current shared draft."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$review_plan_request, {
@@ -7340,8 +7377,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Plan reviewer assignment saved.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      showNotification("Plan reviewer assignment saved.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_review_approve_request, {
@@ -7401,18 +7439,19 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
-    review_action_label <- if (isTRUE(admin_route)) {
-      "Plan routed"
-    } else if (identical(next_status, "Returned")) {
-      "Plan returned"
-    } else {
-      "Reviewer approval saved"
-    }
-    showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
+      review_action_label <- if (isTRUE(admin_route)) {
+        "Plan routed"
+      } else if (identical(next_status, "Returned")) {
+        "Plan returned"
+      } else {
+        "Reviewer approval saved"
+      }
+      showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_gate_approve_request, {
@@ -7434,11 +7473,12 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    next_status <- plan_gate_next_status(plan$plan_status[[1]])
-    showNotification(paste("Approval stamp added. Plan routed to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      next_status <- plan_gate_next_status(plan$plan_status[[1]])
+      showNotification(paste("Approval stamp added. Plan routed to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_gate_return_request, {
@@ -7474,10 +7514,11 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification(paste("Plan returned to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification(paste("Plan returned to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$publishing_route_request, {
@@ -7504,9 +7545,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the selected queue"
-    showNotification(paste("Plan routed back to", route_label, "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the selected queue"
+      showNotification(paste("Plan routed back to", route_label, "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$publish_plan_request, {
@@ -7526,10 +7568,11 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification("Plan published. Approved payload has been promoted to database records.", type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification("Plan published. Approved payload has been promoted to database records.", type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_approval_stamp_request, {
@@ -7561,10 +7604,11 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification(paste(approval_stage_label(stage), "approval stamp", if (identical(action, "remove")) "removed." else "added."), type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification(paste(approval_stage_label(stage), "approval stamp", if (identical(action, "remove")) "removed." else "added."), type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$export_plan_request, {
@@ -7576,6 +7620,11 @@ server <- function(input, output, session) {
     current_export_draft(NULL)
     draft_section_key <- as.character(request$draftSectionKey %||% "")
     draft_payload_json <- as.character(request$draftPayloadJson %||% "")
+    trigger_download <- function() {
+      current_export_plan_id(plan_id)
+      current_export_include_review(include_review)
+      session$sendCustomMessage("trigger-plan-download", list(type = export_type))
+    }
     if (
       nzchar(draft_section_key) &&
         nzchar(draft_payload_json) &&
@@ -7583,21 +7632,33 @@ server <- function(input, output, session) {
     ) {
       update_cached_section_draft(plan_id, draft_section_key, draft_payload_json)
       current_export_draft(list(plan_id = plan_id, section_key = draft_section_key))
-      tryCatch({
+      result <- tryCatch({
         data <- app_data()
         plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
         if (nrow(plan) && plan_is_editable(plan) && current_user_can_edit_plan()) {
           saved <- overwrite_section_draft(database, plan_id, draft_section_key, draft_payload_json)
           update_cached_section_draft(plan_id, draft_section_key, draft_payload_json, saved[1, , drop = FALSE])
-          refresh_app_data()
+          TRUE
+        } else {
+          FALSE
         }
-      }, error = function(error) {
-        showNotification(paste("Export will use the last saved draft:", conditionMessage(error)), type = "warning", duration = 8)
-      })
+      }, error = function(error) error)
+      if (inherits(result, "error")) {
+        showNotification(paste("Export will use the last saved draft:", conditionMessage(result)), type = "warning", duration = 8)
+        trigger_download()
+        return()
+      }
+      if (isTRUE(result)) {
+        # Unlike the other refresh_app_data() call sites, this one can't let
+        # the download trigger race ahead of the reload -- the export needs
+        # to reflect the just-saved draft. Waiting here only delays this
+        # user's own download trigger; the reload itself still runs in the
+        # background worker, so it doesn't block anyone else's session.
+        refresh_app_data(after = trigger_download, on_error = trigger_download)
+        return()
+      }
     }
-    current_export_plan_id(plan_id)
-    current_export_include_review(include_review)
-    session$sendCustomMessage("trigger-plan-download", list(type = export_type))
+    trigger_download()
   }, ignoreInit = TRUE)
 
   observeEvent(input$submit_plan_request, {
@@ -7613,8 +7674,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Plan submitted. Builder fields are locked while the plan is in review.", type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      showNotification("Plan submitted. Builder fields are locked while the plan is in review.", type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   output$download_plan_pdf <- downloadHandler(
