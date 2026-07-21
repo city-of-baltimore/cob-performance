@@ -138,14 +138,36 @@ apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("datab
   invisible(TRUE)
 }
 
-apply_user_entity_access_seed_once <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
-  seed_name <- "user_entity_access_seed"
-  already_applied <- isTRUE(DBI::dbGetQuery(
+apply_agency_fiscal_analyst_seed_once <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
+  seed_name <- "agency_fiscal_analyst_seed"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  apply_agency_fiscal_analyst_seed(connection, path)
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
+# application.seed_applied tracks one-time data operations so they run
+# exactly once per database rather than re-applying (and silently reverting
+# admin edits/deletions) on every app restart.
+seed_already_applied <- function(connection, seed_name) {
+  isTRUE(DBI::dbGetQuery(
     connection,
     "SELECT EXISTS (SELECT 1 FROM application.seed_applied WHERE seed_name = $1)",
     params = list(seed_name)
   )[[1]])
-  if (already_applied) return(invisible(FALSE))
+}
+
+mark_seed_applied <- function(connection, seed_name) {
+  DBI::dbExecute(
+    connection,
+    "INSERT INTO application.seed_applied (seed_name) VALUES ($1) ON CONFLICT (seed_name) DO NOTHING",
+    params = list(seed_name)
+  )
+}
+
+apply_user_entity_access_seed_once <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
+  seed_name <- "user_entity_access_seed"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
   # This CSV is a one-time bulk import from early in the project, not a
   # perpetual sync source -- team membership is managed live through the
   # Team & Roles UI from here on. Re-running it on every restart was
@@ -157,11 +179,7 @@ apply_user_entity_access_seed_once <- function(connection, path = file.path("dat
   if (!already_has_data) {
     apply_user_entity_access_seed(connection, path)
   }
-  DBI::dbExecute(
-    connection,
-    "INSERT INTO application.seed_applied (seed_name) VALUES ($1) ON CONFLICT (seed_name) DO NOTHING",
-    params = list(seed_name)
-  )
+  mark_seed_applied(connection, seed_name)
   invisible(TRUE)
 }
 
@@ -488,86 +506,97 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id)")
-  DBI::dbExecute(
-    connection,
-    paste(
-      "DELETE FROM access.user_entity_access uea",
-      "USING workflow.entity_role_assignment era",
-      "WHERE uea.entity_id = era.entity_id",
-      "AND uea.user_id IN (era.reviewer_user_id, era.deputy_mayor_user_id, era.ca_office_user_id)",
-      "AND uea.user_id IS DISTINCT FROM era.submitter_user_id"
+  # This reconciliation backfilled access.user_entity_access from
+  # access.user_agency_access and the legacy workflow.entity_role_assignment
+  # import table -- a one-time migration from when entity-level access was
+  # introduced, not a perpetual sync. Re-running it on every restart was
+  # deleting entity access for reviewer/DM/CA users every time, and
+  # silently re-inserting entity access rows admins had deleted through the
+  # Team & Roles UI, as long as the underlying agency-level access or the
+  # stale legacy assignment row still existed. Gated to run once.
+  if (!seed_already_applied(connection, "entity_access_legacy_reconciliation")) {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "DELETE FROM access.user_entity_access uea",
+        "USING workflow.entity_role_assignment era",
+        "WHERE uea.entity_id = era.entity_id",
+        "AND uea.user_id IN (era.reviewer_user_id, era.deputy_mayor_user_id, era.ca_office_user_id)",
+        "AND uea.user_id IS DISTINCT FROM era.submitter_user_id"
+      )
     )
-  )
-  DBI::dbExecute(
-    connection,
-    paste(
-      "INSERT INTO access.user_entity_access",
-      "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
-      "SELECT DISTINCT source.user_id, source.entity_id, source.agency_id, source.service_id, source.agency_role, source.agency_roles,",
-      "source.access_level, source.budget_access, source.adaptive_planning, source.performance_plan_access",
-      "FROM (",
-      "  SELECT era.submitter_user_id AS user_id, era.entity_id, era.agency_id, NULL::varchar(20) AS service_id,",
-      "    'Agency Staff'::varchar(30) AS agency_role, 'Agency Staff'::text AS agency_roles,",
-      "    'Submit'::varchar(20) AS access_level, false AS budget_access, false AS adaptive_planning, true AS performance_plan_access",
-      "  FROM workflow.entity_role_assignment era",
-      "  WHERE era.submitter_user_id IS NOT NULL AND era.entity_id IS NOT NULL",
-      "  UNION ALL",
-      "  SELECT uaa.user_id, pes.entity_id, uaa.agency_id, uaa.service_id, uaa.agency_role,",
-      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
-      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
-      "  FROM access.user_agency_access uaa",
-      "  JOIN reference.plan_entity_service pes ON pes.service_id = uaa.service_id",
-      "  JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
-      "  JOIN (",
-      "    SELECT pes2.service_id, COUNT(DISTINCT pe2.entity_id)::integer AS entity_count",
-      "    FROM reference.plan_entity_service pes2",
-      "    JOIN reference.plan_entity pe2 ON pe2.entity_id = pes2.entity_id",
-      "    WHERE pe2.active AND pe2.has_own_plan",
-      "    GROUP BY pes2.service_id",
-      "  ) counts ON counts.service_id = uaa.service_id AND counts.entity_count = 1",
-      "  WHERE pe.active AND pe.has_own_plan AND uaa.service_id IS NOT NULL",
-      "  UNION ALL",
-      "  SELECT uaa.user_id, pe.entity_id, uaa.agency_id, NULL::varchar(20) AS service_id, uaa.agency_role,",
-      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
-      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
-      "  FROM access.user_agency_access uaa",
-      "  JOIN reference.plan_entity pe ON pe.parent_agency_id = uaa.agency_id AND pe.entity_type = 'Agency'",
-      "  WHERE (uaa.service_id IS NULL OR trim(uaa.service_id) = '')",
-      "    AND pe.active AND pe.has_own_plan",
-      "    AND NOT EXISTS (",
-      "      SELECT 1",
-      "      FROM access.user_entity_access existing",
-      "      JOIN reference.plan_entity existing_entity ON existing_entity.entity_id = existing.entity_id",
-      "      WHERE existing.user_id = uaa.user_id",
-      "        AND existing_entity.parent_agency_id = uaa.agency_id",
-      "        AND existing_entity.entity_type <> 'Agency'",
-      "    )",
-      "    AND NOT EXISTS (",
-      "      SELECT 1",
-      "      FROM access.user_agency_access specific_uaa",
-      "      JOIN reference.plan_entity_service specific_pes ON specific_pes.service_id = specific_uaa.service_id",
-      "      JOIN reference.plan_entity specific_entity ON specific_entity.entity_id = specific_pes.entity_id",
-      "      JOIN (",
-      "        SELECT pes3.service_id, COUNT(DISTINCT pe3.entity_id)::integer AS entity_count",
-      "        FROM reference.plan_entity_service pes3",
-      "        JOIN reference.plan_entity pe3 ON pe3.entity_id = pes3.entity_id",
-      "        WHERE pe3.active AND pe3.has_own_plan",
-      "        GROUP BY pes3.service_id",
-      "      ) specific_counts ON specific_counts.service_id = specific_uaa.service_id AND specific_counts.entity_count = 1",
-      "      WHERE specific_uaa.user_id = uaa.user_id",
-      "        AND specific_uaa.agency_id = uaa.agency_id",
-      "        AND specific_uaa.service_id IS NOT NULL",
-      "        AND specific_entity.parent_agency_id = uaa.agency_id",
-      "        AND specific_entity.entity_type <> 'Agency'",
-      "    )",
-      ") source",
-      "JOIN access.\"user\" u ON u.user_id = source.user_id AND u.active",
-      "WHERE source.user_id IS NOT NULL",
-      "ON CONFLICT (user_id, entity_id) DO NOTHING"
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO access.user_entity_access",
+        "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
+        "SELECT DISTINCT source.user_id, source.entity_id, source.agency_id, source.service_id, source.agency_role, source.agency_roles,",
+        "source.access_level, source.budget_access, source.adaptive_planning, source.performance_plan_access",
+        "FROM (",
+        "  SELECT era.submitter_user_id AS user_id, era.entity_id, era.agency_id, NULL::varchar(20) AS service_id,",
+        "    'Agency Staff'::varchar(30) AS agency_role, 'Agency Staff'::text AS agency_roles,",
+        "    'Submit'::varchar(20) AS access_level, false AS budget_access, false AS adaptive_planning, true AS performance_plan_access",
+        "  FROM workflow.entity_role_assignment era",
+        "  WHERE era.submitter_user_id IS NOT NULL AND era.entity_id IS NOT NULL",
+        "  UNION ALL",
+        "  SELECT uaa.user_id, pes.entity_id, uaa.agency_id, uaa.service_id, uaa.agency_role,",
+        "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+        "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+        "  FROM access.user_agency_access uaa",
+        "  JOIN reference.plan_entity_service pes ON pes.service_id = uaa.service_id",
+        "  JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
+        "  JOIN (",
+        "    SELECT pes2.service_id, COUNT(DISTINCT pe2.entity_id)::integer AS entity_count",
+        "    FROM reference.plan_entity_service pes2",
+        "    JOIN reference.plan_entity pe2 ON pe2.entity_id = pes2.entity_id",
+        "    WHERE pe2.active AND pe2.has_own_plan",
+        "    GROUP BY pes2.service_id",
+        "  ) counts ON counts.service_id = uaa.service_id AND counts.entity_count = 1",
+        "  WHERE pe.active AND pe.has_own_plan AND uaa.service_id IS NOT NULL",
+        "  UNION ALL",
+        "  SELECT uaa.user_id, pe.entity_id, uaa.agency_id, NULL::varchar(20) AS service_id, uaa.agency_role,",
+        "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+        "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+        "  FROM access.user_agency_access uaa",
+        "  JOIN reference.plan_entity pe ON pe.parent_agency_id = uaa.agency_id AND pe.entity_type = 'Agency'",
+        "  WHERE (uaa.service_id IS NULL OR trim(uaa.service_id) = '')",
+        "    AND pe.active AND pe.has_own_plan",
+        "    AND NOT EXISTS (",
+        "      SELECT 1",
+        "      FROM access.user_entity_access existing",
+        "      JOIN reference.plan_entity existing_entity ON existing_entity.entity_id = existing.entity_id",
+        "      WHERE existing.user_id = uaa.user_id",
+        "        AND existing_entity.parent_agency_id = uaa.agency_id",
+        "        AND existing_entity.entity_type <> 'Agency'",
+        "    )",
+        "    AND NOT EXISTS (",
+        "      SELECT 1",
+        "      FROM access.user_agency_access specific_uaa",
+        "      JOIN reference.plan_entity_service specific_pes ON specific_pes.service_id = specific_uaa.service_id",
+        "      JOIN reference.plan_entity specific_entity ON specific_entity.entity_id = specific_pes.entity_id",
+        "      JOIN (",
+        "        SELECT pes3.service_id, COUNT(DISTINCT pe3.entity_id)::integer AS entity_count",
+        "        FROM reference.plan_entity_service pes3",
+        "        JOIN reference.plan_entity pe3 ON pe3.entity_id = pes3.entity_id",
+        "        WHERE pe3.active AND pe3.has_own_plan",
+        "        GROUP BY pes3.service_id",
+        "      ) specific_counts ON specific_counts.service_id = specific_uaa.service_id AND specific_counts.entity_count = 1",
+        "      WHERE specific_uaa.user_id = uaa.user_id",
+        "        AND specific_uaa.agency_id = uaa.agency_id",
+        "        AND specific_uaa.service_id IS NOT NULL",
+        "        AND specific_entity.parent_agency_id = uaa.agency_id",
+        "        AND specific_entity.entity_type <> 'Agency'",
+        "    )",
+        ") source",
+        "JOIN access.\"user\" u ON u.user_id = source.user_id AND u.active",
+        "WHERE source.user_id IS NOT NULL",
+        "ON CONFLICT (user_id, entity_id) DO NOTHING"
+      )
     )
-  )
+    mark_seed_applied(connection, "entity_access_legacy_reconciliation")
+  }
   apply_user_entity_access_seed_once(connection)
-  apply_agency_fiscal_analyst_seed(connection)
+  apply_agency_fiscal_analyst_seed_once(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
