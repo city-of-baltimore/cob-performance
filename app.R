@@ -1742,8 +1742,7 @@ page_login <- function(state = list(view = "login"), db = NULL) {
           div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
         )
       ),
-      body,
-      div(class = "support-note", "Need access? Contact melanie.lada@baltimorecity.gov.")
+      body
     )
   )
 }
