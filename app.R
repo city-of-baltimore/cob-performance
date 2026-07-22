@@ -3448,7 +3448,7 @@ validate_measure_selection_limit <- function(payload_json, section_key, limit = 
   NULL
 }
 
-builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL, fiscal_analyst = NULL) {
+builder_page <- function(title, description, body, plan_id, section_key, show_save = TRUE, show_status = TRUE, locked = FALSE, locked_message = NULL) {
   rubric_note <- "Rubric criteria are provided at the bottom of this page for reference."
   description <- if (section_key %in% c("overview", "goals", "services")) {
     paste(description, rubric_note)
@@ -3461,10 +3461,7 @@ builder_page <- function(title, description, body, plan_id, section_key, show_sa
       div(
         div(class = "eyebrow", "Performance plan builder"),
         h1(title),
-        p(description),
-        if (!is.null(fiscal_analyst) && !is.na(fiscal_analyst) && nzchar(fiscal_analyst)) {
-          p(class = "fiscal-analyst-note", paste0("BBMR fiscal analyst: ", fiscal_analyst))
-        }
+        p(description)
       ),
       div(
         class = "builder-header-actions",
@@ -4435,8 +4432,7 @@ page_plan_history <- function(db, agency_id, can_submit_plan = FALSE) {
     plan_id = plan$plan_id,
     section_key = "history",
     show_save = FALSE,
-    show_status = FALSE,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    show_status = FALSE
   )
 }
 
@@ -4629,7 +4625,6 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
             class = "history-modal-contact-stack",
             p(class = "history-modal-contact", tags$strong("Plan Contact: "), agency_director_contact(db, plan)),
             p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("Fiscal Analyst: "), plan_fiscal_analyst_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("CA Office Approver: "), plan_ca_office_label(db, plan))
