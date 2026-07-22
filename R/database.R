@@ -1752,29 +1752,22 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
       "UPDATE access.user_agency_access SET agency_role = $2::varchar(30), agency_roles = $3, access_level = CASE WHEN $2::text = 'Agency Staff' THEN 'ReadOnly' WHEN $2::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END WHERE access_id = $1",
       params = list(access_id, agency_role, agency_roles_value)
     )
-    existing_role <- DBI::dbGetQuery(
+    # Upserting on the user_id unique constraint (rather than a
+    # SELECT-then-branch) keeps this atomic: two overlapping saves for the
+    # same user_id (a double-click, or two admins saving around the same
+    # time) used to both see "no existing row" and race to INSERT, with the
+    # second hitting user_role_user_id_key and failing the whole save.
+    DBI::dbExecute(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
-      params = list(user_id)
+      paste(
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)",
+        "VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        "ON CONFLICT (user_id) DO UPDATE SET",
+        "app_role = EXCLUDED.app_role, agency_id = NULL, budget_access = EXCLUDED.budget_access,",
+        "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access"
+      ),
+      params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    if (nrow(existing_role)) {
-      DBI::dbExecute(
-        connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
-        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-      DBI::dbExecute(
-        connection,
-        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
-        params = list(user_id, existing_role$user_role_id[[1]])
-      )
-    } else {
-      DBI::dbExecute(
-        connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
-        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-    }
   })
   invisible(TRUE)
 }
@@ -1849,29 +1842,22 @@ save_entity_team_role_assignment <- function(connection, entity_access_id, entit
       "UPDATE access.user_entity_access SET agency_id = $2::varchar(20), service_id = $3::varchar(20), agency_role = $4::varchar(30), agency_roles = $5, access_level = CASE WHEN $4::text = 'Agency Staff' THEN 'ReadOnly' WHEN $4::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, budget_access = $6, adaptive_planning = $7, performance_plan_access = $8, updated_at = now() WHERE entity_access_id = $1",
       params = list(entity_access_id, agency_id, service_id, agency_role, agency_roles_value, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    existing_role <- DBI::dbGetQuery(
+    # Upserting on the user_id unique constraint (rather than a
+    # SELECT-then-branch) keeps this atomic: two overlapping saves for the
+    # same user_id (a double-click, or two admins saving around the same
+    # time) used to both see "no existing row" and race to INSERT, with the
+    # second hitting user_role_user_id_key and failing the whole save.
+    DBI::dbExecute(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
-      params = list(user_id)
+      paste(
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)",
+        "VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        "ON CONFLICT (user_id) DO UPDATE SET",
+        "app_role = EXCLUDED.app_role, agency_id = NULL, budget_access = EXCLUDED.budget_access,",
+        "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access"
+      ),
+      params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    if (nrow(existing_role)) {
-      DBI::dbExecute(
-        connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
-        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-      DBI::dbExecute(
-        connection,
-        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
-        params = list(user_id, existing_role$user_role_id[[1]])
-      )
-    } else {
-      DBI::dbExecute(
-        connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
-        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-    }
   })
   invisible(TRUE)
 }
