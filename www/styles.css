@@ -1409,6 +1409,13 @@ body.builder-autosave-active #page {
   flex-wrap: wrap;
 }
 
+.measure-review-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .approval-action-panel {
   flex-basis: auto;
   width: fit-content;

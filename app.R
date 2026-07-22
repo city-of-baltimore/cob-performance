@@ -2245,6 +2245,47 @@ measure_review_card <- function(db, measure) {
   )
 }
 
+measure_validation_export_rows <- function(db) {
+  measures <- db$performance_performance_measure
+  agency_names <- vapply(measures$agency_id, function(id) agency_name(db, id), character(1))
+  rows <- data.frame(
+    measure_id = measures$measure_id,
+    title = measures$title,
+    agency_id = measures$agency_id,
+    agency_name = agency_names,
+    approval_status = measures$approval_status,
+    validated = measures$validated,
+    active = measures$active,
+    submitted_for_approval_at = measures$submitted_for_approval_at,
+    last_updated = measures$last_updated,
+    stringsAsFactors = FALSE
+  )
+  rows[order(rows$agency_name, rows$title), ]
+}
+
+measure_data_export_rows <- function(db) {
+  actuals <- db$performance_measure_actuals
+  measures <- db$performance_performance_measure
+  idx <- match(actuals$measure_id, measures$measure_id)
+  agency_ids <- measures$agency_id[idx]
+  agency_names <- vapply(agency_ids, function(id) agency_name(db, id), character(1))
+  rows <- data.frame(
+    measure_id = actuals$measure_id,
+    title = measures$title[idx],
+    agency_id = agency_ids,
+    agency_name = agency_names,
+    format_type = measures$format_type[idx],
+    display_unit = measures$display_unit[idx],
+    fiscal_year = actuals$fiscal_year,
+    annual_actual = actuals$annual_actual,
+    annual_actual_notes = actuals$annual_actual_notes,
+    target_value = actuals$target_value,
+    target_value_notes = actuals$target_value_notes,
+    stringsAsFactors = FALSE
+  )
+  rows[order(rows$agency_name, rows$title, rows$fiscal_year), ]
+}
+
 page_measure_review <- function(db) {
   measures <- db$performance_performance_measure[db$performance_performance_measure$approval_status == "PendingApproval", , drop = FALSE]
   measures <- measures[order(measures$submitted_for_approval_at, measures$last_updated, decreasing = TRUE), , drop = FALSE]
@@ -2258,7 +2299,12 @@ page_measure_review <- function(db) {
         h1("Measure Review"),
         p("Review submitted measures for definition quality, data ownership, validation rigor, and readiness for use in performance planning. Approve measures that are ready, or return them to the agency with feedback.")
       ),
-      status_chip("OPI / System Admin", "primary")
+      div(
+        class = "measure-review-header-actions",
+        downloadButton("download_measure_validation_csv", "Export Validation", class = "civic-button secondary small"),
+        downloadButton("download_measure_data_csv", "Export Data", class = "civic-button secondary small"),
+        status_chip("OPI / System Admin", "primary")
+      )
     ),
     div(
       class = "dashboard-grid reviewer-dashboard-grid",
@@ -7666,6 +7712,20 @@ server <- function(input, output, session) {
       showNotification("Plan submitted. Builder fields are locked while the plan is in review.", type = "message", duration = 8)
     })
   }, ignoreInit = TRUE)
+
+  output$download_measure_validation_csv <- downloadHandler(
+    filename = function() paste0("measure-validation-", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+    content = function(file) {
+      utils::write.csv(measure_validation_export_rows(app_data()), file, row.names = FALSE, na = "")
+    }
+  )
+
+  output$download_measure_data_csv <- downloadHandler(
+    filename = function() paste0("measure-data-", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+    content = function(file) {
+      utils::write.csv(measure_data_export_rows(app_data()), file, row.names = FALSE, na = "")
+    }
+  )
 
   output$download_plan_pdf <- downloadHandler(
     filename = function() {
