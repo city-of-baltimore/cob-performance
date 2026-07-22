@@ -11,6 +11,9 @@ database/seed/*
 !database/seed/user_entity_access_seed.csv
 !database/seed/agency_fiscal_analyst_seed.csv
 docker/
+!docker/certs/
+docker/certs/*
+!docker/certs/baltrootca.pem
 docker-compose.yml
 scripts/__pycache__/
 scripts/generate_*.py
