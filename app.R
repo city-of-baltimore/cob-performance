@@ -3053,8 +3053,7 @@ page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_c
       plan_id = plan_id,
       section_key = "team",
       show_save = FALSE,
-      show_status = FALSE,
-      fiscal_analyst = plan_fiscal_analyst(db, plan)
+      show_status = FALSE
     ))
   }
   builder_page(
@@ -3088,8 +3087,7 @@ page_team <- function(db, submitter_value, can_manage_team = FALSE, team_scope_c
     plan_id = plan_id,
     section_key = "team",
     show_save = FALSE,
-    show_status = FALSE,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    show_status = FALSE
   )
 }
 
@@ -5177,8 +5175,7 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     plan_id = plan$plan_id,
     section_key = "measures",
     show_save = FALSE,
-    show_status = FALSE,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    show_status = FALSE
   )
 }
 
@@ -5255,8 +5252,7 @@ page_overview <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "overview",
-    locked = !plan_is_editable(plan) || !can_edit_plan,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
@@ -5576,8 +5572,7 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "goals",
-    locked = !plan_is_editable(plan) || !can_edit_plan,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
@@ -5699,8 +5694,7 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "services",
-    locked = !plan_is_editable(plan) || !can_edit_plan,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
@@ -5763,8 +5757,7 @@ page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
     ),
     plan_id = plan$plan_id,
     section_key = "risks",
-    locked = !plan_is_editable(plan) || !can_edit_plan,
-    fiscal_analyst = plan_fiscal_analyst(db, plan)
+    locked = !plan_is_editable(plan) || !can_edit_plan
   )
 }
 
