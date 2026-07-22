@@ -16,6 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# City of Baltimore's network TLS-inspection root CA. Without this, builds
+# on the city network fail SSL verification for external hosts (e.g. pypi.org)
+# that get intercepted and re-signed with this cert -- the browser trusts it
+# via Windows' certificate store, but a fresh container has no idea it exists.
+COPY docker/certs/baltrootca.pem /usr/local/share/ca-certificates/baltrootca.crt
+RUN update-ca-certificates
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
+
 # R package dependencies (sodium: password hashing; curl: SMTP for reset links;
 # future/promises: run full database reloads off the main process so one
 # user's save/submit/approve doesn't freeze every other connected session)
