@@ -1269,28 +1269,44 @@ nonblank_text <- function(value) {
 }
 
 goal_draft_readiness <- function(db, plan, goals) {
-  if (is.null(plan) || !nrow(plan) || !nrow(goals)) {
+  if (is.null(plan) || !nrow(plan)) {
     return(list(complete_count = 0L, aligned_count = 0L))
   }
   goals_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "goals") else NULL
+
+  # A goal only becomes a performance.agency_goal row once the plan is
+  # Approved (apply_plan_drafts_to_records() promotes the draft at that
+  # point) -- for every plan still Draft/Submitted/UnderReview/Returned,
+  # goals live only in the draft payload's goalIds list. Iterating just the
+  # published rows meant this always reported 0 complete goals for any
+  # agency still drafting, no matter how much they'd actually written.
+  draft_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) as.character(unlist(goals_draft$goalIds)) else character(0)
+  published_goal_ids <- if (nrow(goals)) as.character(goals$agency_goal_id) else character(0)
+  goal_ids <- union(published_goal_ids, draft_goal_ids)
+
   complete <- 0L
   aligned <- 0L
-  for (i in seq_len(nrow(goals))) {
-    goal_id <- as.character(goals$agency_goal_id[[i]])
-    statement <- draft_value(goals_draft, paste0("goal_statement_", goal_id), goals$title[[i]])
+  for (goal_id in goal_ids) {
+    published_row <- goals[as.character(goals$agency_goal_id) == goal_id, , drop = FALSE]
+    fallback_title <- if (nrow(published_row)) published_row$title[[1]] else ""
+    statement <- draft_value(goals_draft, paste0("goal_statement_", goal_id), fallback_title)
     initiative_values <- if (!is.null(goals_draft) && !is.null(goals_draft$initiatives[[goal_id]])) {
       as.character(unlist(goals_draft$initiatives[[goal_id]]))
-    } else {
-      initiative_links <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goals$agency_goal_id[[i]], , drop = FALSE]
+    } else if (nrow(published_row)) {
+      initiative_links <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == published_row$agency_goal_id[[1]], , drop = FALSE]
       db$performance_initiative$title[match(initiative_links$initiative_id, db$performance_initiative$initiative_id)]
+    } else {
+      character(0)
     }
     kpi_values <- if (!is.null(goals_draft) && !is.null(goals_draft$kpis[[goal_id]])) {
       as.character(unlist(goals_draft$kpis[[goal_id]]))
-    } else {
-      measure_links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goals$agency_goal_id[[i]], , drop = FALSE]
+    } else if (nrow(published_row)) {
+      measure_links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == published_row$agency_goal_id[[1]], , drop = FALSE]
       as.character(measure_links$measure_id)
+    } else {
+      character(0)
     }
-    fallback_alignment <- if ("alignment_code" %in% names(goals) && !is.na(goals$alignment_code[[i]])) goals$alignment_code[[i]] else ""
+    fallback_alignment <- if (nrow(published_row) && "alignment_code" %in% names(published_row) && !is.na(published_row$alignment_code[[1]])) published_row$alignment_code[[1]] else ""
     alignment <- draft_value(goals_draft, paste0("goal_alignment_", goal_id), fallback_alignment)
     has_initiative <- any(nzchar(trimws(initiative_values[!is.na(initiative_values)])))
     has_kpi <- any(nzchar(trimws(kpi_values[!is.na(kpi_values)])))
