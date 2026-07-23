@@ -1756,14 +1756,6 @@ page_login <- function(state = list(view = "login"), db = NULL) {
   )
 }
 
-reviewer_assignment_rows <- function() {
-  path <- file.path("database", "seed", "reviewer_assignments.csv")
-  if (!file.exists(path)) {
-    return(data.frame(agency_name = character(), agency_type = character(), analyst = character(), email = character()))
-  }
-  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-}
-
 reviewer_assignment_key <- function(value) {
   value <- as.character(value)
   value[is.na(value)] <- ""
@@ -1771,30 +1763,26 @@ reviewer_assignment_key <- function(value) {
   gsub("[^a-z0-9]+", "", value)
 }
 
+# reviewer_assignments.csv used to be consulted here too, as a name-matched
+# fallback for plans with no assigned_reviewer -- removed once
+# scripts/backfill_assigned_reviewer_from_csv.R backfilled the proper
+# ID-keyed planning.agency_plan.assigned_reviewer column for every plan the
+# CSV covered (2026-07-23). entity_assignments (workflow.entity_role_assignment)
+# remains as its own, separate, table-backed fallback for entity-scoped plans.
 apply_reviewer_assignments <- function(db, joined) {
-  assignments <- reviewer_assignment_rows()
   entity_assignments <- entity_role_assignment_rows(db)
   joined$assignment_reviewer_name <- NA_character_
-  joined$assignment_reviewer_email <- NA_character_
   joined$assignment_agency_type <- NA_character_
   if (!nrow(joined) || !"submitter_name" %in% names(joined)) {
     return(joined)
   }
-  plan_keys <- reviewer_assignment_key(joined$submitter_name)
   if (nrow(entity_assignments)) {
+    plan_keys <- reviewer_assignment_key(joined$submitter_name)
     entity_keys <- reviewer_assignment_key(entity_assignments$public_name)
     entity_match <- match(plan_keys, entity_keys)
     matched <- !is.na(entity_match)
     joined$assignment_reviewer_name[matched] <- entity_assignments$reviewer[entity_match[matched]]
     joined$assignment_agency_type[matched] <- entity_assignments$entity_type[entity_match[matched]]
-  }
-  if (nrow(assignments)) {
-    assignment_keys <- reviewer_assignment_key(assignments$agency_name)
-    match_index <- match(plan_keys, assignment_keys)
-    matched <- !is.na(match_index) & (is.na(joined$assignment_reviewer_name) | !nzchar(joined$assignment_reviewer_name))
-    joined$assignment_reviewer_name[matched] <- assignments$analyst[match_index[matched]]
-    joined$assignment_reviewer_email[matched] <- assignments$email[match_index[matched]]
-    joined$assignment_agency_type[matched] <- assignments$agency_type[match_index[matched]]
   }
   joined
 }
