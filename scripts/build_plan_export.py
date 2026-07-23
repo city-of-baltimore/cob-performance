@@ -218,7 +218,6 @@ def pdf_meta_table(payload, review, styles):
     rows = [
         ("Status", payload.get("status")),
         ("Version", payload.get("version")),
-        ("Plan Contact", payload.get("agency_contact")),
         ("Submitter", payload.get("submitter")),
         ("Fiscal Analyst", payload.get("fiscal_analyst")),
         ("Performance Analyst", payload.get("performance_analyst")),
@@ -427,7 +426,6 @@ def build_pptx(payload, output, template=None):
     add_textbox(slide, "Beacon | Baltimore City Performance & Budgeting", Inches(0.65), Inches(1.6), Inches(8.5), Inches(0.5), 26, True)
     add_textbox(slide, f"{raw(payload.get('status'))} | Version {raw(payload.get('version'))}", Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.35), 13, False, (63, 69, 74))
     contact_rows = [
-        ("Plan Contact", payload.get("agency_contact")),
         ("Submitter", payload.get("submitter")),
         ("Fiscal Analyst", payload.get("fiscal_analyst")),
         ("Performance Analyst", payload.get("performance_analyst")),
