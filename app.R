@@ -188,6 +188,10 @@ can_delete_measures <- function(app_roles) {
   has_any_role(app_roles, "SystemAdmin")
 }
 
+can_edit_locked_measure_data <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
 can_view_performance_reviewing <- function(app_roles) {
   has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
 }
@@ -299,6 +303,18 @@ fy_label <- function(year) {
 
 measure_entry_years <- function() {
   2022:2028
+}
+
+# Once a fiscal year's data is published in the budget book it shouldn't
+# change casually -- actuals are locked at FY25 and earlier, targets are
+# locked at FY27 and earlier (leaving only the forward-looking FY28 target
+# open), for everyone except a system admin (see can_edit_locked_measure_data).
+measure_actual_is_locked <- function(year) {
+  as.integer(year) <= 2025L
+}
+
+measure_target_is_locked <- function(year) {
+  as.integer(year) <= 2027L
 }
 
 parse_submitter_value <- function(value) {
@@ -3576,30 +3592,6 @@ metric_export_summary <- function(db, measure_ids, current_fy = 2027) {
   })
 }
 
-agency_director_contact <- function(db, plan) {
-  agency_id <- plan_accounting_agency_id(db, plan)
-  access_rows <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
-  director_mask <- if (nrow(access_rows)) {
-    vapply(seq_len(nrow(access_rows)), function(i) {
-      roles <- split_stored_roles(if ("agency_roles" %in% names(access_rows)) access_rows$agency_roles[[i]] else access_rows$agency_role[[i]])
-      any(roles %in% c("Agency Director", "Agency Head"))
-    }, logical(1))
-  } else {
-    logical(0)
-  }
-  director_rows <- access_rows[director_mask, , drop = FALSE]
-  if (nrow(director_rows)) return(director_rows$full_name[[1]])
-  approver_rows <- db$access_user_role[
-    db$access_user_role$agency_id == agency_id & db$access_user_role$app_role == "AgencyApprover",
-    ,
-    drop = FALSE
-  ]
-  if (nrow(approver_rows)) return(approver_rows$full_name[[1]])
-  header <- db$performance_plan_header[db$performance_plan_header$plan_id == plan$plan_id[[1]], , drop = FALSE]
-  if (nrow(header) && !is.na(header$primary_contact_name[[1]]) && nzchar(trimws(header$primary_contact_name[[1]]))) return(header$primary_contact_name[[1]])
-  "Director-level contact not assigned"
-}
-
 score_out_of_100 <- function(score) {
   if (is.na(score)) return("Not scored")
   numeric_score <- as.numeric(score)
@@ -4236,7 +4228,6 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     agency_name = plan_display_name(db, plan),
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
-    agency_contact = agency_director_contact(db, plan),
     submitter = plan_submitter_label(db, plan),
     fiscal_analyst = plan_fiscal_analyst_label(db, plan),
     performance_analyst = plan_reviewer_label(db, plan),
@@ -4336,7 +4327,6 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
     ),
     div(
       class = "history-modal-contact-stack history-card-contacts",
-      p(class = "history-modal-contact", tags$strong("Plan Contact: "), agency_director_contact(db, plan)),
       p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Fiscal Analyst: "), plan_fiscal_analyst_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
@@ -4657,7 +4647,6 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
           div(class = "chip-row", status_chip(agency_plan_status(plan$plan_status[[1]]), status_tone(plan$plan_status[[1]])), status_chip(paste("Version", plan$version[[1]]), "primary")),
           div(
             class = "history-modal-contact-stack",
-            p(class = "history-modal-contact", tags$strong("Plan Contact: "), agency_director_contact(db, plan)),
             p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
@@ -4883,16 +4872,18 @@ measure_label <- function(text, help, required = FALSE) {
   )
 }
 
-measure_note_input <- function(input_id, label, value = "") {
+measure_note_input <- function(input_id, label, value = "", locked = FALSE) {
   note_value <- if (is.null(value) || length(value) == 0 || is.na(value)) "" else as.character(value)
+  textarea_attrs <- list(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
+  if (locked) textarea_attrs$disabled <- "disabled"
   div(
-    class = "form-group shiny-input-container",
+    class = paste("form-group shiny-input-container", if (locked) "measure-note-locked"),
     tags$label(class = "control-label", `for` = input_id, label),
-    tags$textarea(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
+    do.call(tags$textarea, textarea_attrs)
   )
 }
 
-measure_value_input <- function(input_id, label, value = NA, format_type = "Count") {
+measure_value_input <- function(input_id, label, value = NA, format_type = "Count", locked = FALSE) {
   format_class <- paste0("format-", tolower(format_type))
   input_value <- if (is.null(value) || length(value) == 0 || is.na(value)) NULL else as.character(value)
   input_attrs <- list(
@@ -4908,8 +4899,9 @@ measure_value_input <- function(input_id, label, value = NA, format_type = "Coun
     input_attrs$min <- "0"
     input_attrs$max <- "100"
   }
+  if (locked) input_attrs$disabled <- "disabled"
   div(
-    class = paste("measure-number-field", format_class),
+    class = paste("measure-number-field", format_class, if (locked) "measure-value-locked"),
     div(
       class = "form-group shiny-input-container",
       tags$label(class = "control-label", `for` = input_id, label),
@@ -4942,7 +4934,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -5093,16 +5085,27 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           class = "modal-section-block measure-form-section",
           h3("Fiscal Year Actuals & Targets"),
           p("Enter annual actuals and targets. Notes should explain revisions, data quality issues, or target rationale."),
+          if (!can_edit_locked_data) p(class = "field-inline-help", "FY25 and earlier actuals and FY27 and earlier targets are locked once published -- only system admins can edit them."),
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
+              actual_locked <- measure_actual_is_locked(year) && !can_edit_locked_data
+              target_locked <- measure_target_is_locked(year) && !can_edit_locked_data
+              actual_admin_override <- measure_actual_is_locked(year) && can_edit_locked_data
+              target_admin_override <- measure_target_is_locked(year) && can_edit_locked_data
               div(
                 class = "measure-year-row",
                 h4(fy_label(year)),
-                measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format),
-                measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes")),
-                measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format),
-                measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"))
+                div(
+                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
+                ),
+                measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                div(
+                  measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
+                ),
+                measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked)
               )
             })
           )
@@ -6493,6 +6496,9 @@ server <- function(input, output, session) {
   current_user_can_manage_measure_admin_fields <- function() {
     can_review_measures(current_user_app_roles())
   }
+  current_user_can_edit_locked_measure_data <- function() {
+    can_edit_locked_measure_data(current_user_app_roles())
+  }
   current_user_email <- function() {
     data <- app_data()
     user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
@@ -6695,6 +6701,11 @@ server <- function(input, output, session) {
     if (is.null(value) || length(value) == 0 || is.na(value)) return("")
     substr(as.character(value), 1, limit)
   }
+  values_differ <- function(a, b) {
+    if (is.na(a) && is.na(b)) return(FALSE)
+    if (is.na(a) || is.na(b)) return(TRUE)
+    !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
+  }
   has_two_or_fewer_decimals <- function(value) {
     is.na(value) || abs(value * 100 - round(value * 100)) < 0.000001
   }
@@ -6833,13 +6844,48 @@ server <- function(input, output, session) {
     values
   }
   collect_measure_years <- function() {
-    lapply(measure_entry_years(), function(year) list(
-      fiscal_year = year,
-      annual_actual = nullable_number(input[[paste0("measure_actual_", year)]]),
-      annual_actual_notes = limit_note(input[[paste0("measure_actual_notes_", year)]]),
-      target_value = nullable_number(input[[paste0("measure_target_", year)]]),
-      target_value_notes = limit_note(input[[paste0("measure_target_notes_", year)]])
-    ))
+    data <- app_data()
+    existing_id <- current_measure_id()
+    existing_actuals <- if (is.null(existing_id) || identical(existing_id, "new")) {
+      data.frame()
+    } else {
+      data$performance_measure_actuals[data$performance_measure_actuals$measure_id == as.integer(existing_id), , drop = FALSE]
+    }
+    is_admin <- current_user_can_edit_locked_measure_data()
+    lapply(measure_entry_years(), function(year) {
+      existing_row <- existing_actuals[existing_actuals$fiscal_year == year, , drop = FALSE]
+      existing_actual <- if (nrow(existing_row)) existing_row$annual_actual[[1]] else NA_real_
+      existing_actual_notes <- if (nrow(existing_row)) existing_row$annual_actual_notes[[1]] else NA_character_
+      existing_target <- if (nrow(existing_row)) existing_row$target_value[[1]] else NA_real_
+      existing_target_notes <- if (nrow(existing_row)) existing_row$target_value_notes[[1]] else NA_character_
+
+      submitted_actual <- nullable_number(input[[paste0("measure_actual_", year)]])
+      submitted_actual_notes <- limit_note(input[[paste0("measure_actual_notes_", year)]])
+      submitted_target <- nullable_number(input[[paste0("measure_target_", year)]])
+      submitted_target_notes <- limit_note(input[[paste0("measure_target_notes_", year)]])
+
+      actual_locked <- measure_actual_is_locked(year)
+      target_locked <- measure_target_is_locked(year)
+
+      # Disabling the input already stops a non-admin from changing a locked
+      # field in the UI, but a locked field's stored value is what's kept
+      # here regardless of what a submitted request contains -- so a
+      # tampered client request can't slip an edit past the disabled control.
+      final_actual <- if (actual_locked && !is_admin) existing_actual else submitted_actual
+      final_actual_notes <- if (actual_locked && !is_admin) (existing_actual_notes %||% "") else submitted_actual_notes
+      final_target <- if (target_locked && !is_admin) existing_target else submitted_target
+      final_target_notes <- if (target_locked && !is_admin) (existing_target_notes %||% "") else submitted_target_notes
+
+      list(
+        fiscal_year = year,
+        annual_actual = final_actual,
+        annual_actual_notes = final_actual_notes,
+        target_value = final_target,
+        target_value_notes = final_target_notes,
+        actual_locked_change_needs_note = actual_locked && is_admin && values_differ(final_actual, existing_actual) && !nzchar(trimws(final_actual_notes %||% "")),
+        target_locked_change_needs_note = target_locked && is_admin && values_differ(final_target, existing_target) && !nzchar(trimws(final_target_notes %||% ""))
+      )
+    })
   }
   persist_measure <- function(submit = FALSE) {
     if (!submit && !current_user_can_submit_measure() && !current_user_can_review_measures()) {
@@ -6852,6 +6898,18 @@ server <- function(input, output, session) {
     }
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
+    locked_changes_missing_note <- Filter(
+      function(row) isTRUE(row$actual_locked_change_needs_note) || isTRUE(row$target_locked_change_needs_note),
+      yearly_values
+    )
+    if (length(locked_changes_missing_note)) {
+      years_needing_notes <- vapply(locked_changes_missing_note, function(row) fy_label(row$fiscal_year), character(1))
+      showNotification(
+        paste("Add a note explaining the change before saving edits to locked historical data:", paste(years_needing_notes, collapse = ", ")),
+        type = "error", duration = 10
+      )
+      return()
+    }
     if (length(values$initial_cycle) != 1 || is.na(values$initial_cycle)) {
       showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before saving the measure.", type = "error", duration = 8)
       return()
@@ -8248,7 +8306,8 @@ server <- function(input, output, session) {
       current_user_can_manage_measure_admin_fields(),
       target_fy,
       current_user_can_submit_measure() || current_user_can_review_measures(),
-      can_delete_measures(current_user_app_roles())
+      can_delete_measures(current_user_app_roles()),
+      current_user_can_edit_locked_measure_data()
     )
   })
 

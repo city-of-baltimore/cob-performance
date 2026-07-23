@@ -3471,6 +3471,13 @@ body.builder-autosave-active #page {
   line-height: 1.45;
 }
 
+.measure-value-locked input:disabled,
+.measure-note-locked textarea:disabled {
+  background: var(--lp-surface-soft-bg);
+  color: var(--lp-text-secondary);
+  cursor: not-allowed;
+}
+
 .measure-scope-options {
   display: flex;
   flex-wrap: wrap;
