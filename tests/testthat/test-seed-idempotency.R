@@ -24,24 +24,28 @@ test_that("seed_already_applied / mark_seed_applied round-trip and re-marking is
   })
 })
 
-test_that("apply_user_entity_access_seed_once is a no-op on a second call once marked applied", {
+test_that("apply_user_entity_access_seed_once is a no-op once the seed is already marked applied", {
   skip_if_no_test_database()
   connection <- connect_app_database()
   on.exit(DBI::dbDisconnect(connection), add = TRUE)
 
   with_rollback(connection, {
-    seed_path <- repo_path("database", "seed", "user_entity_access_seed.csv")
-
-    apply_user_entity_access_seed_once(connection, path = seed_path)
-    expect_true(seed_already_applied(connection, "user_entity_access_seed"))
-
-    # This is the exact regression: before the fix, this second call (which
-    # is what happened on every app restart) would re-apply the seed and
-    # silently re-insert/overwrite live access rows an admin had since
-    # changed or deleted. After the fix it must return FALSE and touch
-    # nothing.
-    second_call_result <- apply_user_entity_access_seed_once(connection, path = seed_path)
-    expect_false(second_call_result)
+    # This is the exact regression: before the fix, apply_user_entity_access_seed_once()
+    # re-ran its seeding logic on every app restart, silently re-inserting
+    # deleted access rows / overwriting role changes an admin had since made.
+    # Marking "already applied" directly (rather than running the real seed
+    # first) keeps this deterministic and, critically, never lets
+    # apply_user_entity_access_seed()'s own internal DBI::dbWithTransaction()
+    # run inside this test's transaction -- Postgres/DBI doesn't support
+    # nesting those, which is what happened when this test ran for real
+    # against CI's empty database (locally it passed by accident, since a
+    # dev database usually already has this marker set).
+    mark_seed_applied(connection, "user_entity_access_seed")
+    result <- apply_user_entity_access_seed_once(
+      connection,
+      path = repo_path("database", "seed", "user_entity_access_seed.csv")
+    )
+    expect_false(result)
   })
 })
 
