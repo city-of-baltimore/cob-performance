@@ -66,6 +66,20 @@ docker compose down
 Do not run `docker compose down -v` unless you intentionally want to delete the
 local Docker database volume and reseed from scratch.
 
+## Testing
+
+```powershell
+docker compose up -d db
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/cob_performance"
+Rscript tests/testthat.R
+```
+
+Tests live in `tests/testthat/`. Pure logic tests (display-name resolution,
+CSV export shape) run with or without a database; database-backed tests
+(team role save, seed idempotency) skip automatically if `DATABASE_URL` isn't
+set. CI (`.github/workflows/ci.yml`) runs the full suite against a fresh
+Postgres service container on every push/PR.
+
 ## Configuration
 
 The app expects `DATABASE_URL`.
