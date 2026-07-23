@@ -29,8 +29,9 @@
 # as authoritative for whichever one you just ran against -- don't reuse
 # numbers from one run to reason about the other.
 #
-# Three of the plans this surfaced as fully unmatched were resolved directly
-# by Melanie (2026-07-23):
+# Every plan this surfaced as unmatched (fully, or as a suggested
+# prefix/suffix-stripped near-match) was resolved directly by Melanie
+# (2026-07-23):
 #   - Mayor's Office of Infrastructure Development: an abolished office --
 #     handled separately, see scripts/deactivate_abolished_plan_entities.R,
 #     not a reviewer-assignment question at all.
@@ -38,6 +39,10 @@
 #     office as the CSV's "Office of Immigrant and Multicultural Affairs".
 #   - M-R Office of Information and Technology (AGC4303) confirmed to be the
 #     same office as the CSV's "Baltimore City Information Technology (BCIT)".
+#   - The remaining 11 "suggested match after stripping a prefix/suffix"
+#     rows were all confirmed to be the same office under different
+#     wording (an added "M-R " prefix, a dropped "Board of " prefix, or a
+#     dropped "'s Office" suffix) -- see confirmed_manual below.
 # These two are keyed by agency_id (a stable reference code, unlike the
 # autoincrement plan_id/entity_id, which can differ across environments) so
 # this stays correct whichever database it runs against.
@@ -102,8 +107,20 @@ common_cols <- c("plan_id", "display_name", "user_id", "agency_name")
 exact <- merge(plans, csv[, c("key", "user_id", "agency_name")], by = "key")[, common_cols]
 
 confirmed_manual <- data.frame(
-  agency_id = c("AGC4393", "AGC4303"),
-  csv_agency_name = c("Office of Immigrant and Multicultural Affairs", "Baltimore City Information Technology (BCIT)"),
+  agency_id = c(
+    "AGC4393", "AGC4303",
+    # Confirmed by Melanie (2026-07-23) -- pure prefix/suffix wording drift
+    # ("M-R " added, "Board of " dropped, "'s Office" dropped), same offices.
+    "AGC4383", "AGC7900", "AGC4309", "AGC4500", "AGC4381",
+    "AGC4346", "AGC4392", "AGC4308", "AGC4341", "AGC6500", "AGC6900"
+  ),
+  csv_agency_name = c(
+    "Office of Immigrant and Multicultural Affairs", "Baltimore City Information Technology (BCIT)",
+    "Environmental Control Board", "Board of Municipal and Zoning Appeals", "Office of Children and Family Success",
+    "Office of Employment Development", "Office of Homeless Services", "Office of Neighborhood Safety and Engagement",
+    "Office of Recovery Programs", "Office of the Inspector General", "Office of the Labor Commissioner",
+    "Sheriff's Office", "State's Attorney's Office"
+  ),
   stringsAsFactors = FALSE
 )
 manual_matches <- merge(
