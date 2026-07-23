@@ -28,6 +28,19 @@
 # so run this against each database separately and treat the printed report
 # as authoritative for whichever one you just ran against -- don't reuse
 # numbers from one run to reason about the other.
+#
+# Three of the plans this surfaced as fully unmatched were resolved directly
+# by Melanie (2026-07-23):
+#   - Mayor's Office of Infrastructure Development: an abolished office --
+#     handled separately, see scripts/deactivate_abolished_plan_entities.R,
+#     not a reviewer-assignment question at all.
+#   - M-R Office of Immigrant Affairs (AGC4393) confirmed to be the same
+#     office as the CSV's "Office of Immigrant and Multicultural Affairs".
+#   - M-R Office of Information and Technology (AGC4303) confirmed to be the
+#     same office as the CSV's "Baltimore City Information Technology (BCIT)".
+# These two are keyed by agency_id (a stable reference code, unlike the
+# autoincrement plan_id/entity_id, which can differ across environments) so
+# this stays correct whichever database it runs against.
 
 source("R/database.R", local = TRUE)
 
@@ -84,8 +97,27 @@ if (nrow(unmatched_email)) {
 }
 csv <- csv[!is.na(csv$user_id), ]
 
-exact <- merge(plans, csv[, c("key", "user_id", "agency_name")], by = "key")
-cat("Exact matches (auto-applied):", nrow(exact), "\n")
+common_cols <- c("plan_id", "display_name", "user_id", "agency_name")
+
+exact <- merge(plans, csv[, c("key", "user_id", "agency_name")], by = "key")[, common_cols]
+
+confirmed_manual <- data.frame(
+  agency_id = c("AGC4393", "AGC4303"),
+  csv_agency_name = c("Office of Immigrant and Multicultural Affairs", "Baltimore City Information Technology (BCIT)"),
+  stringsAsFactors = FALSE
+)
+manual_matches <- merge(
+  plans[plans$agency_id %in% confirmed_manual$agency_id, c("plan_id", "agency_id", "display_name")],
+  confirmed_manual,
+  by = "agency_id"
+)
+manual_matches <- merge(manual_matches, csv[, c("agency_name", "user_id")], by.x = "csv_agency_name", by.y = "agency_name")
+manual_matches$agency_name <- manual_matches$csv_agency_name
+if (nrow(manual_matches)) {
+  exact <- rbind(exact, manual_matches[, common_cols])
+}
+
+cat("Exact + confirmed manual matches (auto-applied):", nrow(exact), "\n")
 if (nrow(exact)) print(exact[, c("plan_id", "display_name", "agency_name")], row.names = FALSE)
 cat("\n")
 
