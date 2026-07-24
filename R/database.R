@@ -554,11 +554,20 @@ ensure_review_schema <- function(connection) {
       "added_by integer REFERENCES access.\"user\"(user_id),",
       "approved_at timestamptz NOT NULL DEFAULT now(),",
       "notes text,",
-      "created_at timestamptz NOT NULL DEFAULT now()",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer REFERENCES access.\"user\"(user_id)",
       ")"
     )
   )
+  # Backfills these two columns onto databases where this table already
+  # existed before they were added above -- CREATE TABLE IF NOT EXISTS alone
+  # is a no-op against an existing table, so without this an
+  # already-provisioned database (e.g. production) would never pick them up.
+  DBI::dbExecute(connection, "ALTER TABLE workflow.plan_approval_stamp ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
+  DBI::dbExecute(connection, "ALTER TABLE workflow.plan_approval_stamp ADD COLUMN IF NOT EXISTS modified_by integer REFERENCES access.\"user\"(user_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_plan_stage ON workflow.plan_approval_stamp(plan_id, approval_stage, approved_at DESC)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_modified_by ON workflow.plan_approval_stamp(modified_by)")
   DBI::dbExecute(
     connection,
     paste(
@@ -587,6 +596,7 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_modified_by ON workflow.entity_role_assignment(modified_by)")
   # This reconciliation backfilled access.user_entity_access from
   # access.user_agency_access and the legacy workflow.entity_role_assignment
   # import table -- a one-time migration from when entity-level access was
