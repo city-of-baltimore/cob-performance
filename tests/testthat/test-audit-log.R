@@ -57,6 +57,22 @@ test_that("updating reference.service logs the prior description and the acting 
     expect_equal(logged$row_pk[[1]], service_id)
     expect_equal(logged$changed_by[[1]], actor_id)
     expect_equal(logged$old_description[[1]], original)
+
+    # Regression guard for a real 2026-07-24 production bug: a BEFORE UPDATE
+    # trigger's return value becomes the row Postgres actually writes.
+    # log_row_change() briefly returned OLD unconditionally (correct for
+    # DELETE, wrong for UPDATE), which silently discarded every update to
+    # this table -- the update "succeeded" with no error, but the row was
+    # rewritten with its own pre-update value. The audit_log assertions
+    # above would still pass under that bug, since old_data is captured
+    # before the trigger returns anything -- only checking the live row
+    # actually catches it.
+    current_description <- DBI::dbGetQuery(
+      connection,
+      "SELECT service_description FROM reference.service WHERE service_id = $1",
+      params = list(service_id)
+    )$service_description[[1]]
+    expect_equal(current_description, "Changed for the audit-log regression test.")
   })
 })
 
@@ -95,4 +111,36 @@ test_that("save_service_risk attributes an edit to the acting user via changed_b
   expect_equal(logged$row_pk[[1]], as.character(risk_id))
   expect_equal(logged$changed_by[[1]], actor_id)
   expect_equal(logged$old_description[[1]], "Original description for the audit-log regression test.")
+
+  current_description <- DBI::dbGetQuery(
+    connection,
+    "SELECT description FROM performance.service_risk WHERE risk_id = $1",
+    params = list(risk_id)
+  )$description[[1]]
+  expect_equal(current_description, "Updated description for the audit-log regression test.")
+})
+
+test_that("updating planning.plan_section_draft actually persists the new payload", {
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+  ensure_review_schema(connection)
+
+  with_rollback(connection, {
+    plan_id <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan LIMIT 1")$plan_id[[1]]
+    DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'regression_test'", params = list(plan_id))
+
+    first <- overwrite_section_draft(connection, plan_id, "regression_test", '{"values":{"a":"one"}}')
+    expect_equal(first$revision[[1]], 1L)
+
+    # The second write is the one that exercises the ON CONFLICT DO UPDATE
+    # branch -- i.e. an actual UPDATE, which is exactly the path the
+    # BEFORE UPDATE trigger bug above silently broke for every plan-builder
+    # draft (Goals, Services) after its first-ever autosave.
+    second <- overwrite_section_draft(connection, plan_id, "regression_test", '{"values":{"a":"two"}}')
+    expect_equal(second$revision[[1]], 2L)
+
+    stored <- get_section_draft(connection, plan_id, "regression_test")
+    expect_equal(jsonlite::fromJSON(stored$payload[[1]])$values$a, "two")
+  })
 })

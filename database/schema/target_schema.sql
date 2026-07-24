@@ -203,7 +203,18 @@ BEGIN
   END IF;
   INSERT INTO application.audit_log (table_name, row_pk, operation, old_data, changed_by)
   VALUES (TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME, to_jsonb(OLD) ->> TG_ARGV[0], TG_OP, to_jsonb(OLD), actor_id);
-  RETURN OLD;
+  -- A BEFORE trigger's return value becomes the row Postgres actually
+  -- writes. For DELETE, OLD is correct (and required, to let the delete
+  -- proceed). For UPDATE, returning OLD instead of NEW silently discards
+  -- every update -- the row gets rewritten with its own pre-update values,
+  -- with no error. This was live in production from this trigger's
+  -- introduction (PR #46) until 2026-07-24: every edit past the first save
+  -- to plan_section_draft/reference.service/agency_goal/overview_vision/
+  -- service_risk was silently thrown away.
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END;
 $BODY$ LANGUAGE plpgsql;
 
