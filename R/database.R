@@ -390,7 +390,17 @@ ensure_review_schema <- function(connection) {
       "  END IF;",
       "  INSERT INTO application.audit_log (table_name, row_pk, operation, old_data, changed_by)",
       "  VALUES (TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME, to_jsonb(OLD) ->> TG_ARGV[0], TG_OP, to_jsonb(OLD), actor_id);",
-      "  RETURN OLD;",
+      # A BEFORE trigger's return value becomes the row Postgres actually
+      # writes. RETURN OLD unconditionally (matching the target_schema.sql
+      # copy of this same function, before the 2026-07-24 fix) silently
+      # discarded every UPDATE to the 5 audited tables: the update
+      # "succeeded" with no error, but the row was rewritten with its own
+      # pre-update value. DELETE still needs OLD. Keep both copies of this
+      # function in sync -- see the header comment on target_schema.sql.
+      "  IF TG_OP = 'DELETE' THEN",
+      "    RETURN OLD;",
+      "  END IF;",
+      "  RETURN NEW;",
       "END;",
       "$BODY$ LANGUAGE plpgsql"
     )
@@ -2158,6 +2168,64 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
     ),
     params = list(as.integer(plan_id), as.character(section_key), as.character(payload), updated_by)
   )
+}
+
+# Deep-merges an incoming Goals-section draft payload against whatever is
+# already stored, keyed by field id / goal id, instead of replacing it
+# outright. Every team member's "quiet" autosave sends a full snapshot of
+# their own browser's Goals page, and that browser only syncs with the
+# shared draft once per page load -- so a tab that's been open a while has
+# no idea about a goal/field a teammate added afterward. A blind overwrite
+# (the previous behavior) silently erased it the moment that stale tab's
+# next autosave landed. Merging means a save that doesn't mention a given
+# field or goal id leaves the existing value alone.
+#
+# Trade-off: this can't distinguish "my browser never knew this goal
+# existed" from "I just deleted this goal" -- both look identical (the
+# payload just doesn't mention that goal id). A goal deleted by one team
+# member could reappear if another team member's already-stale tab saves
+# afterward. Accepted as a much narrower, more visible failure mode than
+# the one being fixed (any conflicting save silently dropping *all* of
+# another user's unsynced additions, every time -- reported 2026-07-24).
+merge_goals_draft_payload <- function(existing, incoming) {
+  if (is.null(existing) || !is.list(existing)) return(incoming)
+  merge_named_list <- function(existing_list, incoming_list) {
+    if (is.null(existing_list) || !is.list(existing_list)) existing_list <- list()
+    if (is.null(incoming_list) || !is.list(incoming_list)) incoming_list <- list()
+    merged <- existing_list
+    for (key in names(incoming_list)) merged[[key]] <- incoming_list[[key]]
+    merged
+  }
+  merged <- incoming
+  merged$values <- merge_named_list(existing$values, incoming$values)
+  merged$kpis <- merge_named_list(existing$kpis, incoming$kpis)
+  merged$initiatives <- merge_named_list(existing$initiatives, incoming$initiatives)
+  existing_goal_ids <- if (is.null(existing$goalIds)) character(0) else vapply(existing$goalIds, as.character, character(1))
+  incoming_goal_ids <- if (is.null(incoming$goalIds)) character(0) else vapply(incoming$goalIds, as.character, character(1))
+  merged$goalIds <- as.list(union(existing_goal_ids, incoming_goal_ids))
+  merged
+}
+
+# Read-merge-write under a row lock so two concurrent Goals autosaves merge
+# against each other correctly instead of racing a blind overwrite.
+save_goals_draft_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  DBI::dbWithTransaction(connection, {
+    existing_row <- DBI::dbGetQuery(
+      connection,
+      "SELECT payload::text AS payload FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'goals' FOR UPDATE",
+      params = list(plan_id)
+    )
+    existing_payload <- if (nrow(existing_row)) {
+      tryCatch(jsonlite::fromJSON(existing_row$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+    } else {
+      NULL
+    }
+    incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
+    merged_payload <- merge_goals_draft_payload(existing_payload, incoming_payload)
+    merged_json <- jsonlite::toJSON(merged_payload, auto_unbox = TRUE, null = "null")
+    overwrite_section_draft(connection, plan_id, "goals", merged_json, updated_by)
+  })
 }
 
 submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {

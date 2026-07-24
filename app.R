@@ -8042,9 +8042,10 @@ server <- function(input, output, session) {
         session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "The goals draft could not be read."))
         return()
       }
-      saved <- overwrite_section_draft(database, plan_id, "goals", payload_json)
+      saved <- save_goals_draft_merged(database, plan_id, payload_json)
       row <- saved[1, , drop = FALSE]
-      update_cached_section_draft(plan_id, "goals", payload_json, row)
+      merged_payload_json <- get_section_draft(database, plan_id, "goals")$payload[[1]]
+      update_cached_section_draft(plan_id, "goals", merged_payload_json, row)
       session$sendCustomMessage("goals-draft-result", list(
         ok = TRUE,
         planId = plan_id,
