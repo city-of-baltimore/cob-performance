@@ -2170,6 +2170,17 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
   )
 }
 
+# Shared by every draft-payload merge below: existing entries survive
+# unless the incoming payload actually has that same key, in which case
+# incoming wins for that key only.
+merge_named_list <- function(existing_list, incoming_list) {
+  if (is.null(existing_list) || !is.list(existing_list)) existing_list <- list()
+  if (is.null(incoming_list) || !is.list(incoming_list)) incoming_list <- list()
+  merged <- existing_list
+  for (key in names(incoming_list)) merged[[key]] <- incoming_list[[key]]
+  merged
+}
+
 # Deep-merges an incoming Goals-section draft payload against whatever is
 # already stored, keyed by field id / goal id, instead of replacing it
 # outright. Every team member's "quiet" autosave sends a full snapshot of
@@ -2189,13 +2200,6 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
 # another user's unsynced additions, every time -- reported 2026-07-24).
 merge_goals_draft_payload <- function(existing, incoming) {
   if (is.null(existing) || !is.list(existing)) return(incoming)
-  merge_named_list <- function(existing_list, incoming_list) {
-    if (is.null(existing_list) || !is.list(existing_list)) existing_list <- list()
-    if (is.null(incoming_list) || !is.list(incoming_list)) incoming_list <- list()
-    merged <- existing_list
-    for (key in names(incoming_list)) merged[[key]] <- incoming_list[[key]]
-    merged
-  }
   merged <- incoming
   merged$values <- merge_named_list(existing$values, incoming$values)
   merged$kpis <- merge_named_list(existing$kpis, incoming$kpis)
@@ -2203,6 +2207,28 @@ merge_goals_draft_payload <- function(existing, incoming) {
   existing_goal_ids <- if (is.null(existing$goalIds)) character(0) else vapply(existing$goalIds, as.character, character(1))
   incoming_goal_ids <- if (is.null(incoming$goalIds)) character(0) else vapply(incoming$goalIds, as.character, character(1))
   merged$goalIds <- as.list(union(existing_goal_ids, incoming_goal_ids))
+  merged
+}
+
+# Same idea as merge_goals_draft_payload(), for the Services page's "quiet"
+# autosave (services_draft_quiet_save in app.R, fed by
+# scheduleServicesQuietAutosave()/collectBuilderDraft() in app.js) --
+# discovered 2026-07-24 to be the *actual* live Services autosave path.
+# save_services_draft_field()/with_section_draft_lock() below were added
+# earlier the same day believing service_description_draft_save and
+# service_metrics_draft_save were the live path; they turned out to be
+# unreachable from the client (flushServiceDescriptionAutosave() and
+# flushServiceMetricsAutosave() are defined in app.js but never called),
+# so that fix touched code the browser never actually invokes. This is the
+# one that matters: collectBuilderDraft() sends a full snapshot of every
+# values/serviceMetrics key on the page, same as Goals' collectGoalsDraft(),
+# and was going through the same blind overwrite_section_draft() Goals used
+# to. No goalIds-equivalent array to reconcile here, just two dictionaries.
+merge_services_draft_payload <- function(existing, incoming) {
+  if (is.null(existing) || !is.list(existing)) return(incoming)
+  merged <- incoming
+  merged$values <- merge_named_list(existing$values, incoming$values)
+  merged$serviceMetrics <- merge_named_list(existing$serviceMetrics, incoming$serviceMetrics)
   merged
 }
 
@@ -2244,22 +2270,14 @@ save_goals_draft_merged <- function(connection, plan_id, payload_json, updated_b
   }, updated_by)
 }
 
-# Applies a single-field/single-service change to the Services draft under
-# the same row lock as Goals, instead of the previous read-then-write with
-# no lock (two concurrent saves -- even to two different fields -- could
-# both read the draft before either wrote, and whichever committed second
-# silently discarded the first's change, since it wrote back a payload
-# built from an already-stale read). `mutate_values` receives the current
-# payload (with `values`/`serviceMetrics` guaranteed to be lists, never
-# NULL) and should mutate and return it; savedAt is stamped afterward.
-save_services_draft_field <- function(connection, plan_id, mutate_values, updated_by = NULL) {
-  with_section_draft_lock(connection, plan_id, "services", function(payload) {
-    if (is.null(payload) || !is.list(payload)) payload <- list()
-    if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
-    if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
-    payload <- mutate_values(payload)
-    payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
-    payload
+# The actual fix for Services' "quiet" full-snapshot autosave -- see
+# merge_services_draft_payload()'s comment for why this is the one that
+# matters (a same-day, since-removed save_services_draft_field() targeted
+# the wrong, unreachable code path first).
+save_services_draft_quiet_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+  incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
+  with_section_draft_lock(connection, plan_id, "services", function(existing_payload) {
+    merge_services_draft_payload(existing_payload, incoming_payload)
   }, updated_by)
 }
 

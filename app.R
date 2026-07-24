@@ -7918,96 +7918,11 @@ server <- function(input, output, session) {
     })
   }, ignoreInit = TRUE)
 
-  observeEvent(input$service_description_draft_save, {
-    request <- input$service_description_draft_save
-    plan_id <- suppressWarnings(as.integer(request$planId))
-    section_key <- as.character(request$sectionKey %||% "services")
-    service_id <- as.character(request$serviceId %||% "")
-    field_id <- as.character(request$fieldId %||% "")
-    value <- as.character(request$value %||% "")
-    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id) || !grepl("^service_description_", field_id)) {
-      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "The service description save request was incomplete."))
-      return()
-    }
-    tryCatch({
-      if (!current_user_can_edit_plan()) {
-        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "You do not have permission to edit this plan."))
-        return()
-      }
-      data <- app_data()
-      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
-      if (!nrow(plan) || !plan_is_editable(plan)) {
-        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "This plan is locked and cannot be edited."))
-        return()
-      }
-      saved <- save_services_draft_field(database, plan_id, function(payload) {
-        payload$values[[field_id]] <- value
-        payload
-      })
-      row <- saved[1, , drop = FALSE]
-      payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
-      update_cached_section_draft(plan_id, "services", payload_json, row)
-      session$sendCustomMessage("service-description-draft-result", list(
-        ok = TRUE,
-        planId = plan_id,
-        sectionKey = "services",
-        fieldId = field_id,
-        revision = row$revision[[1]],
-        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
-      ))
-    }, error = function(error) {
-      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = conditionMessage(error)))
-    })
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$service_metrics_draft_save, {
-    request <- input$service_metrics_draft_save
-    plan_id <- suppressWarnings(as.integer(request$planId))
-    section_key <- as.character(request$sectionKey %||% "services")
-    service_id <- as.character(request$serviceId %||% "")
-    ui_version <- suppressWarnings(as.integer(request$uiVersion %||% NA_integer_))
-    metric_ids <- suppressWarnings(as.integer(unlist(request$metricIds %||% list())))
-    metric_ids <- metric_ids[!is.na(metric_ids)]
-    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id)) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "The service metrics save request was incomplete."))
-      return()
-    }
-    if (length(metric_ids) > 5L) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "A service can have no more than 5 metrics."))
-      return()
-    }
-    tryCatch({
-      if (!current_user_can_edit_plan()) {
-        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "You do not have permission to edit this plan."))
-        return()
-      }
-      data <- app_data()
-      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
-      if (!nrow(plan) || !plan_is_editable(plan)) {
-        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "This plan is locked and cannot be edited."))
-        return()
-      }
-      saved <- save_services_draft_field(database, plan_id, function(payload) {
-        payload$serviceMetrics[service_id] <- list(as.list(metric_ids))
-        payload
-      })
-      row <- saved[1, , drop = FALSE]
-      payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
-      update_cached_section_draft(plan_id, "services", payload_json, row)
-      session$sendCustomMessage("service-metrics-draft-result", list(
-        ok = TRUE,
-        planId = plan_id,
-        sectionKey = "services",
-        serviceId = service_id,
-        metricIds = as.list(metric_ids),
-        uiVersion = ui_version,
-        revision = row$revision[[1]],
-        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
-      ))
-    }, error = function(error) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = conditionMessage(error)))
-    })
-  }, ignoreInit = TRUE)
+  # NOTE: service_description_draft_save / service_metrics_draft_save
+  # observers were removed 2026-07-24 -- confirmed dead (app.js's
+  # flushServiceDescriptionAutosave()/flushServiceMetricsAutosave() are
+  # defined but never called; the live Services autosave path is
+  # services_draft_quiet_save below, via scheduleServicesQuietAutosave()).
 
   observeEvent(input$goals_draft_quiet_save, {
     request <- input$goals_draft_quiet_save
@@ -8079,9 +7994,10 @@ server <- function(input, output, session) {
         payload$values <- payload$values[!grepl("^service_metric_", names(payload$values))]
         payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
       }
-      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      saved <- save_services_draft_quiet_merged(database, plan_id, payload_json)
       row <- saved[1, , drop = FALSE]
-      update_cached_section_draft(plan_id, "services", payload_json, row)
+      merged_payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
+      update_cached_section_draft(plan_id, "services", merged_payload_json, row)
       session$sendCustomMessage("services-draft-result", list(
         ok = TRUE,
         planId = plan_id,
