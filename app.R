@@ -7265,7 +7265,10 @@ server <- function(input, output, session) {
     risk_id <- current_risk_id()
     risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
     result <- tryCatch(
-      save_service_risk(database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description),
+      save_service_risk(
+        database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description,
+        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
@@ -7288,7 +7291,10 @@ server <- function(input, output, session) {
     risk_id <- current_risk_id()
     risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
     result <- tryCatch(
-      delete_service_risk(database, risk_id, plan$plan_id[[1]]),
+      delete_service_risk(
+        database, risk_id, plan$plan_id[[1]],
+        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
