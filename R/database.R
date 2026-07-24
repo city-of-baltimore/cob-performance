@@ -2170,6 +2170,29 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
   )
 }
 
+# Parses a stored section-draft payload, warning (rather than silently
+# returning NULL) if it's corrupted. Every caller that hits this treats a
+# NULL as "no draft exists yet" and proceeds from scratch -- correct for a
+# genuinely missing row, but for a *corrupted* one it means whatever was
+# stored is discarded with zero trace. A warning at least makes that
+# discoverable (visible in `flyctl logs`) instead of indistinguishable from
+# the normal "first save ever" case. jsonb columns shouldn't normally hold
+# invalid JSON, so this is defensive, not expected to fire in practice.
+parse_stored_draft_payload <- function(payload_text, context = "") {
+  tryCatch(
+    jsonlite::fromJSON(payload_text, simplifyVector = FALSE),
+    error = function(error) {
+      warning(
+        "Failed to parse stored section-draft payload",
+        if (nzchar(context)) paste0(" (", context, ")") else "",
+        ": ", conditionMessage(error),
+        call. = FALSE
+      )
+      NULL
+    }
+  )
+}
+
 # Shared by every draft-payload merge below: existing entries survive
 # unless the incoming payload actually has that same key, in which case
 # incoming wins for that key only.
@@ -2253,7 +2276,7 @@ with_section_draft_lock <- function(connection, plan_id, section_key, mutate, up
       params = list(plan_id, section_key)
     )
     existing_payload <- if (nrow(existing_row)) {
-      tryCatch(jsonlite::fromJSON(existing_row$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+      parse_stored_draft_payload(existing_row$payload[[1]], context = paste0("plan_id=", plan_id, " section_key=", section_key))
     } else {
       NULL
     }
