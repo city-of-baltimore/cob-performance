@@ -3493,7 +3493,7 @@ section_draft_payload <- function(db, plan_id, section_key) {
     drop = FALSE
   ]
   if (!nrow(drafts)) return(NULL)
-  payload <- tryCatch(jsonlite::fromJSON(drafts$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+  payload <- parse_stored_draft_payload(drafts$payload[[1]], context = paste0("plan_id=", plan_id, " section_key=", section_key))
   if (is.null(payload) || !is.list(payload)) return(NULL)
   payload
 }
