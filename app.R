@@ -7940,16 +7940,12 @@ server <- function(input, output, session) {
         session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "This plan is locked and cannot be edited."))
         return()
       }
-      existing <- get_section_draft(database, plan_id, "services")
-      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
-      if (is.null(payload) || !is.list(payload)) payload <- list()
-      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
-      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
-      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
-      payload$values[[field_id]] <- value
-      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
-      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      saved <- save_services_draft_field(database, plan_id, function(payload) {
+        payload$values[[field_id]] <- value
+        payload
+      })
       row <- saved[1, , drop = FALSE]
+      payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
       update_cached_section_draft(plan_id, "services", payload_json, row)
       session$sendCustomMessage("service-description-draft-result", list(
         ok = TRUE,
@@ -7991,16 +7987,12 @@ server <- function(input, output, session) {
         session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "This plan is locked and cannot be edited."))
         return()
       }
-      existing <- get_section_draft(database, plan_id, "services")
-      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
-      if (is.null(payload) || !is.list(payload)) payload <- list()
-      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
-      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
-      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
-      payload$serviceMetrics[service_id] <- list(as.list(metric_ids))
-      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
-      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
+      saved <- save_services_draft_field(database, plan_id, function(payload) {
+        payload$serviceMetrics[service_id] <- list(as.list(metric_ids))
+        payload
+      })
       row <- saved[1, , drop = FALSE]
+      payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
       update_cached_section_draft(plan_id, "services", payload_json, row)
       session$sendCustomMessage("service-metrics-draft-result", list(
         ok = TRUE,
