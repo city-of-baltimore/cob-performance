@@ -15,6 +15,14 @@
 #     this database (target_schema.sql only auto-applies on a fresh database
 #     -- see its own header comment). All CREATE INDEX IF NOT EXISTS, so
 #     re-running this script is always safe.
+#   - Two of those six -- access.password_reset_token and
+#     access.user_login_session -- turned out to be missing updated_at and
+#     modified_by entirely (not just their indexes; an earlier pass of this
+#     audit misread the column diff and only caught the index gap on the
+#     first run of this script, which failed with "column modified_by does
+#     not exist" -- caught before any partial state was committed, since
+#     this whole script runs in one transaction). Both columns are added
+#     here before their indexes.
 #
 # Not covered here (confirmed via the same audit, no live change needed):
 #   - performance.service_risk and review.section_score already have the
@@ -45,6 +53,12 @@ DBI::dbWithTransaction(connection, {
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ALTER COLUMN access_level SET DEFAULT 'Edit'")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ALTER COLUMN access_level SET NOT NULL")
   cat("access_level constraint applied (NOT NULL DEFAULT 'Edit')\n")
+
+  DBI::dbExecute(connection, "ALTER TABLE access.password_reset_token ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
+  DBI::dbExecute(connection, "ALTER TABLE access.password_reset_token ADD COLUMN IF NOT EXISTS modified_by integer")
+  DBI::dbExecute(connection, "ALTER TABLE access.user_login_session ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
+  DBI::dbExecute(connection, "ALTER TABLE access.user_login_session ADD COLUMN IF NOT EXISTS modified_by integer")
+  cat("password_reset_token/user_login_session updated_at + modified_by columns added (or already present)\n")
 
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_access_password_reset_token_modified_by ON access.password_reset_token(modified_by)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_access_user_entity_access_modified_by ON access.user_entity_access(modified_by)")
