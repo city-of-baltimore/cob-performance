@@ -2206,26 +2206,61 @@ merge_goals_draft_payload <- function(existing, incoming) {
   merged
 }
 
-# Read-merge-write under a row lock so two concurrent Goals autosaves merge
-# against each other correctly instead of racing a blind overwrite.
-save_goals_draft_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+# Runs `mutate` against the current section-draft payload under a row
+# lock, then saves whatever it returns -- an atomic read-modify-write, so
+# two concurrent saves to the same (plan_id, section_key) draft serialize
+# against each other correctly instead of both reading the same stale
+# payload and racing to overwrite it. `mutate` receives the current payload
+# as a parsed list (NULL if no draft row exists yet) and must return the
+# full new payload to store. Shared by both save_goals_draft_merged() and
+# the Services per-field/per-metric save path below -- Services was found
+# to have the same class of lost-update race as Goals (2026-07-24), just
+# narrower in scope (each save already only touches one field/service
+# instead of a whole-page snapshot).
+with_section_draft_lock <- function(connection, plan_id, section_key, mutate, updated_by = NULL) {
   plan_id <- as.integer(plan_id)
+  section_key <- as.character(section_key)
   DBI::dbWithTransaction(connection, {
     existing_row <- DBI::dbGetQuery(
       connection,
-      "SELECT payload::text AS payload FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'goals' FOR UPDATE",
-      params = list(plan_id)
+      "SELECT payload::text AS payload FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = $2 FOR UPDATE",
+      params = list(plan_id, section_key)
     )
     existing_payload <- if (nrow(existing_row)) {
       tryCatch(jsonlite::fromJSON(existing_row$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
     } else {
       NULL
     }
-    incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
-    merged_payload <- merge_goals_draft_payload(existing_payload, incoming_payload)
-    merged_json <- jsonlite::toJSON(merged_payload, auto_unbox = TRUE, null = "null")
-    overwrite_section_draft(connection, plan_id, "goals", merged_json, updated_by)
+    new_payload <- mutate(existing_payload)
+    new_payload_json <- jsonlite::toJSON(new_payload, auto_unbox = TRUE, null = "null")
+    overwrite_section_draft(connection, plan_id, section_key, new_payload_json, updated_by)
   })
+}
+
+save_goals_draft_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+  incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
+  with_section_draft_lock(connection, plan_id, "goals", function(existing_payload) {
+    merge_goals_draft_payload(existing_payload, incoming_payload)
+  }, updated_by)
+}
+
+# Applies a single-field/single-service change to the Services draft under
+# the same row lock as Goals, instead of the previous read-then-write with
+# no lock (two concurrent saves -- even to two different fields -- could
+# both read the draft before either wrote, and whichever committed second
+# silently discarded the first's change, since it wrote back a payload
+# built from an already-stale read). `mutate_values` receives the current
+# payload (with `values`/`serviceMetrics` guaranteed to be lists, never
+# NULL) and should mutate and return it; savedAt is stamped afterward.
+save_services_draft_field <- function(connection, plan_id, mutate_values, updated_by = NULL) {
+  with_section_draft_lock(connection, plan_id, "services", function(payload) {
+    if (is.null(payload) || !is.list(payload)) payload <- list()
+    if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
+    if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
+    payload <- mutate_values(payload)
+    payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
+    payload
+  }, updated_by)
 }
 
 submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {
