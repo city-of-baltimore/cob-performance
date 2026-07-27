@@ -289,11 +289,13 @@ format_measure_value <- function(value, format_type, display_unit = NA, missing_
   formatted
 }
 
+# Built on current_fiscal_year() (R/database.R) so there's one shared
+# implementation of the July-1 rollover, not a second copy that could
+# drift from it -- this just relabels the same number for this page's
+# "last complete actual / this year's target" summary column.
 fiscal_measure_snapshot_years <- function(today = Sys.Date()) {
-  calendar_year <- as.integer(format(today, "%Y"))
-  fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
-  last_completed_fy <- if (today >= fiscal_year_start) calendar_year else calendar_year - 1L
-  list(actual_fy = last_completed_fy, target_fy = last_completed_fy + 1L)
+  target_fy <- current_fiscal_year(today)
+  list(actual_fy = target_fy - 1L, target_fy = target_fy)
 }
 
 fy_label <- function(year) {
@@ -303,18 +305,6 @@ fy_label <- function(year) {
 
 measure_entry_years <- function() {
   2022:2028
-}
-
-# Once a fiscal year's data is published in the budget book it shouldn't
-# change casually -- actuals are locked at FY25 and earlier, targets are
-# locked at FY27 and earlier (leaving only the forward-looking FY28 target
-# open), for everyone except a system admin (see can_edit_locked_measure_data).
-measure_actual_is_locked <- function(year) {
-  as.integer(year) <= 2025L
-}
-
-measure_target_is_locked <- function(year) {
-  as.integer(year) <= 2027L
 }
 
 parse_submitter_value <- function(value) {
@@ -4888,6 +4878,28 @@ measure_label <- function(text, help, required = FALSE) {
   )
 }
 
+# Recursively adds a disabled attribute to the actual <input>/<textarea>/
+# <select> nested inside a Shiny widget's tag (Shiny's textInput() etc.
+# don't take a disabled argument directly, and disabling the outer
+# wrapper div wouldn't do anything). Used to lock definition fields on a
+# validated measure without duplicating each field's whole render block
+# into an editable/read-only branch.
+disable_input_tag <- function(tag, disabled = TRUE) {
+  if (!isTRUE(disabled)) return(tag)
+  walk <- function(node) {
+    if (inherits(node, "shiny.tag")) {
+      if (node$name %in% c("input", "textarea", "select")) {
+        node$attribs$disabled <- "disabled"
+      }
+      if (length(node$children)) node$children <- lapply(node$children, walk)
+      return(node)
+    }
+    if (is.list(node)) return(lapply(node, walk))
+    node
+  }
+  walk(tag)
+}
+
 measure_note_input <- function(input_id, label, value = "", locked = FALSE) {
   note_value <- if (is.null(value) || length(value) == 0 || is.na(value)) "" else as.character(value)
   textarea_attrs <- list(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
@@ -4964,6 +4976,17 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   pillar_choices <- c("Not linked" = "", setNames(db$reference_pillar$pillar_id, db$reference_pillar$pillar_name))
   pillar_goal_choices <- c("Not linked" = "", setNames(db$reference_pillar_goal$pillar_goal_id, paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)))
   status <- value("approval_status", "Draft")
+  # Once a measure is Validated, everything about it locks to SystemAdmin
+  # only, except the current fiscal year's actual (still being actively
+  # reported) and the following fiscal year's target (still being
+  # actively planned) -- see measure_actual_is_locked()/
+  # measure_target_is_locked()/measure_definition_is_locked() in
+  # R/database.R for the shared, date-driven rule, enforced again
+  # server-side in collect_measure_form()/collect_measure_years() and
+  # save_measure_record() regardless of what this UI renders.
+  is_measure_validated <- identical(status, "Validated")
+  definition_locked <- measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data
+  effective_can_edit_scope <- can_edit_scope && !definition_locked
   status_meta <- if (is_new) list(label = "Draft", tone = "warning") else measure_library_status(measure)
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
   format_choices <- if (identical(selected_format, "N/A")) c("N/A (legacy)" = "N/A", "Percent" = "Percent", "Count" = "Count", "Currency" = "Currency") else c("Percent", "Count", "Currency")
@@ -5005,6 +5028,16 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-form-stack",
         div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
+        if (definition_locked) {
+          div(
+            class = "measure-validated-lock-note",
+            icon("lock"),
+            paste0(
+              "This measure is validated and locked to system admins, except the ",
+              fy_label(current_fiscal_year()), " actual and the ", fy_label(current_fiscal_year() + 1L), " target."
+            )
+          )
+        },
         if (nrow(latest_review) && nzchar(trimws(latest_review$feedback[[1]] %||% ""))) {
           tags$section(
             class = "modal-section-block measure-review-feedback",
@@ -5022,14 +5055,14 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Definition"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title"))),
-            div(class = "measure-field full-width", textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description"))),
-            div(class = "measure-field", selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_direction", measure_label("Desired direction", "Select whether successful performance should increase, decrease, maintain, or not apply to this value.", TRUE), choices = c("Increase", "Decrease", "Maintain", "Not Applicable"), selected = value("desired_direction", "Increase"), selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_format", measure_label("Format", "Select how this value should be displayed. New measures use Percent, Count, or Currency; N/A is preserved for legacy measures.", TRUE), choices = format_choices, selected = selected_format, selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_unit", measure_label("Display unit", "Optional label for the unit shown with the value, such as residents, permits, or dollars."), choices = display_unit_choices(db, selected_display_unit), selected = selected_display_unit, selectize = FALSE)),
-            div(class = "measure-field", numericInput("measure_baseline", measure_label("Baseline value", "Enter the starting value used to compare future progress."), value = value("baseline_value", NA))),
-            div(class = "measure-field", numericInput("measure_baseline_fy", measure_label("Baseline fiscal year", "Enter the fiscal year for the baseline value."), value = value("baseline_fy", 2026), min = 2000, max = 2100))
+            div(class = "measure-field full-width", disable_input_tag(textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_direction", measure_label("Desired direction", "Select whether successful performance should increase, decrease, maintain, or not apply to this value.", TRUE), choices = c("Increase", "Decrease", "Maintain", "Not Applicable"), selected = value("desired_direction", "Increase"), selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_format", measure_label("Format", "Select how this value should be displayed. New measures use Percent, Count, or Currency; N/A is preserved for legacy measures.", TRUE), choices = format_choices, selected = selected_format, selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_unit", measure_label("Display unit", "Optional label for the unit shown with the value, such as residents, permits, or dollars."), choices = display_unit_choices(db, selected_display_unit), selected = selected_display_unit, selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(numericInput("measure_baseline", measure_label("Baseline value", "Enter the starting value used to compare future progress."), value = value("baseline_value", NA)), definition_locked)),
+            div(class = "measure-field", disable_input_tag(numericInput("measure_baseline_fy", measure_label("Baseline fiscal year", "Enter the fiscal year for the baseline value."), value = value("baseline_fy", 2026), min = 2000, max = 2100), definition_locked))
           )
         ),
         tags$section(
@@ -5037,13 +5070,13 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Data Source & Ownership"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textInput("measure_data_source", measure_label("Data source", "Name the system, report, dataset, or official source used to produce this measure.", TRUE), value = value("data_source"))),
-            div(class = "measure-field", textInput("measure_data_owner", measure_label("Data owner", "Name the person or team responsible for the source data.", TRUE), value = value("data_owner"))),
-            div(class = "measure-field", textInput("measure_data_owner_role", measure_label("Data owner role", "Identify the title or role accountable for maintaining and validating the data.", TRUE), value = value("data_owner_role"))),
-            div(class = "measure-field", textInput("measure_frequency", measure_label("Update frequency", "State how often the measure can be updated, such as monthly, quarterly, annually, or daily.", TRUE), value = value("update_frequency"))),
-            div(class = "measure-field", textInput("measure_data_location", measure_label("Data location", "Describe where the underlying data lives, such as a database, spreadsheet, system export, or public report.", TRUE), value = value("data_location"))),
-            div(class = "measure-field full-width", textAreaInput("measure_formula", measure_label("Formula or calculation", "Document the calculation clearly enough that another reviewer could reproduce the result.", TRUE), rows = 2, value = value("formula"))),
-            div(class = "measure-field full-width", textAreaInput("measure_collection_method", measure_label("Collection method", "Describe how the data is collected, compiled, refreshed, or quality checked.", TRUE), rows = 2, value = value("collection_method")))
+            div(class = "measure-field full-width", disable_input_tag(textInput("measure_data_source", measure_label("Data source", "Name the system, report, dataset, or official source used to produce this measure.", TRUE), value = value("data_source")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_owner", measure_label("Data owner", "Name the person or team responsible for the source data.", TRUE), value = value("data_owner")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_owner_role", measure_label("Data owner role", "Identify the title or role accountable for maintaining and validating the data.", TRUE), value = value("data_owner_role")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_frequency", measure_label("Update frequency", "State how often the measure can be updated, such as monthly, quarterly, annually, or daily.", TRUE), value = value("update_frequency")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_location", measure_label("Data location", "Describe where the underlying data lives, such as a database, spreadsheet, system export, or public report.", TRUE), value = value("data_location")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_formula", measure_label("Formula or calculation", "Document the calculation clearly enough that another reviewer could reproduce the result.", TRUE), rows = 2, value = value("formula")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_collection_method", measure_label("Collection method", "Describe how the data is collected, compiled, refreshed, or quality checked.", TRUE), rows = 2, value = value("collection_method")), definition_locked))
           )
         ),
         tags$section(
@@ -5051,18 +5084,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Validation Criteria"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textAreaInput("measure_context", measure_label("Context required for interpretation", "Note caveats, comparison limits, seasonality, policy changes, or other context needed to interpret the value responsibly."), rows = 2, value = value("context_required"))),
-            if (can_edit_scope) {
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_context", measure_label("Context required for interpretation", "Note caveats, comparison limits, seasonality, policy changes, or other context needed to interpret the value responsibly."), rows = 2, value = value("context_required")), definition_locked)),
+            if (effective_can_edit_scope) {
               div(class = "measure-field checkbox-field", checkboxInput("measure_replicability", "Calculation is replicable", value = isTRUE(value("replicability", FALSE))), p(class = "field-inline-help", "Reviewer/admin field: a reviewer should be able to recreate the value from the formula and source data."))
             } else {
-              div(class = "measure-scope-options scope-derived", div(class = "scope-derived-grid", span("Calculation is replicable"), strong(if (isTRUE(value("replicability", FALSE))) "Yes" else "Not yet validated")), p(class = "scope-admin-note", "This validation field is completed by OPI reviewers or system admins."))
+              div(class = "measure-scope-options scope-derived", div(class = "scope-derived-grid", span("Calculation is replicable"), strong(if (isTRUE(value("replicability", FALSE))) "Yes" else "Not yet validated")), p(class = "scope-admin-note", if (definition_locked) "This measure is validated -- only a system admin can change this now." else "This validation field is completed by OPI reviewers or system admins."))
             },
-            div(class = "measure-field", textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation"))),
-            div(class = "measure-field full-width", textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used"))),
-            div(class = "measure-field full-width", textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful"))),
-            div(class = "measure-field full-width", textAreaInput("measure_proxy", measure_label("Proxy measure or limitations", "Describe whether this is a proxy for a harder-to-measure outcome and name important limitations."), rows = 2, value = value("proxy_measure"))),
-            div(class = "measure-field full-width", textAreaInput("measure_improvement_notes", measure_label("Improvement notes", "Identify needed improvements to data quality, frequency, definition, validation, or reporting."), rows = 2, value = value("improvement_notes"))),
-            if (can_edit_scope) {
+            div(class = "measure-field", disable_input_tag(textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_proxy", measure_label("Proxy measure or limitations", "Describe whether this is a proxy for a harder-to-measure outcome and name important limitations."), rows = 2, value = value("proxy_measure")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_improvement_notes", measure_label("Improvement notes", "Identify needed improvements to data quality, frequency, definition, validation, or reporting."), rows = 2, value = value("improvement_notes")), definition_locked)),
+            if (effective_can_edit_scope) {
               tagList(
                 div(class = "measure-field", selectInput("measure_pillar", measure_label("Action Plan pillar", "Only system admins will be able to designate citywide metrics and match them to an Action Plan pillar."), choices = pillar_choices, selected = as.character(value("pillar_id")), selectize = FALSE)),
                 div(class = "measure-field full-width", selectInput("measure_pillar_goal", measure_label("Action Plan pillar goal", "Only system admins will be able to designate citywide metrics and match them to an Action Plan goal."), choices = pillar_goal_choices, selected = as.character(value("pillar_goal_id")), selectize = FALSE))
@@ -5074,10 +5107,10 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 tags$input(id = "measure_pillar_goal", type = "hidden", value = if (is.na(selected_pillar_goal_id)) "" else selected_pillar_goal_id),
                 div(class = "scope-derived-grid", span("Action Plan pillar"), strong(pillar_label)),
                 div(class = "scope-derived-grid", span("Action Plan goal"), strong(pillar_goal_label)),
-                p(class = "scope-admin-note", "Action Plan metric alignment is system-admin managed.")
+                p(class = "scope-admin-note", if (definition_locked) "This measure is validated -- only a system admin can change this now." else "Action Plan metric alignment is system-admin managed.")
               )
             },
-            if (can_edit_scope) {
+            if (effective_can_edit_scope) {
               div(
                 class = "measure-scope-options full-width",
                 checkboxInput("measure_is_city", "Citywide measure", value = scope_city),
@@ -5101,14 +5134,22 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           class = "modal-section-block measure-form-section",
           h3("Fiscal Year Actuals & Targets"),
           p("Enter annual actuals and targets. Notes should explain revisions, data quality issues, or target rationale."),
-          if (!can_edit_locked_data) p(class = "field-inline-help", "FY25 and earlier actuals and FY27 and earlier targets are locked once published -- only system admins can edit them."),
+          if (is_measure_validated && !can_edit_locked_data) {
+            p(
+              class = "field-inline-help",
+              paste0(
+                "This measure is validated: only the ", fy_label(current_fiscal_year()), " actual and the ",
+                fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
+              )
+            )
+          },
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
-              actual_locked <- measure_actual_is_locked(year) && !can_edit_locked_data
-              target_locked <- measure_target_is_locked(year) && !can_edit_locked_data
-              actual_admin_override <- measure_actual_is_locked(year) && can_edit_locked_data
-              target_admin_override <- measure_target_is_locked(year) && can_edit_locked_data
+              actual_locked <- measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
+              target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
               div(
                 class = "measure-year-row",
                 h4(fy_label(year)),
@@ -6819,38 +6860,48 @@ server <- function(input, output, session) {
     initial_cycle <- plan_scalar_integer(plan, "cycle_id")
     existing_id <- current_measure_id()
     existing <- if (is.null(existing_id) || identical(existing_id, "new")) data.frame() else data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
+    is_validated <- nrow(existing) > 0 && identical(existing$approval_status[[1]], "Validated")
+    is_admin <- current_user_can_edit_locked_measure_data()
+    # Once validated, every definition field reverts to its existing
+    # value for anyone but a SystemAdmin -- a tampered client request
+    # can't slip a change past the disabled UI control. save_measure_record()
+    # enforces the identical rule again server-side as a second guard.
+    definition_locked <- measure_definition_is_locked(is_validated) && !is_admin
+    existing_value <- function(field, fallback = NA) if (nrow(existing)) existing[[field]][[1]] else fallback
+    locked_or <- function(field, submitted) if (definition_locked) existing_value(field) else submitted
+    scope_editable <- current_user_can_manage_measure_admin_fields() && !definition_locked
     values <- list(
       measure_id = if (nrow(existing)) existing$measure_id[[1]] else NULL,
       agency_id = agency_id,
       initial_cycle = initial_cycle,
-      title = input$measure_title,
-      measure_type = input$measure_type,
-      description = input$measure_description,
-      data_source = input$measure_data_source,
-      data_owner = input$measure_data_owner,
-      data_owner_role = input$measure_data_owner_role,
-      update_frequency = input$measure_frequency,
-      formula = input$measure_formula,
-      desired_direction = input$measure_direction,
-      baseline_value = nullable_number(input$measure_baseline),
-      baseline_fy = nullable_number(input$measure_baseline_fy, TRUE),
-      format_type = input$measure_format,
-      display_unit = if (nzchar(trimws(input$measure_unit))) input$measure_unit else NA_character_,
-      context_required = input$measure_context,
-      replicability = if (current_user_can_manage_measure_admin_fields()) isTRUE(input$measure_replicability) else if (nrow(existing)) isTRUE(existing$replicability[[1]]) else FALSE,
-      disaggregation = input$measure_disaggregation,
-      data_location = input$measure_data_location,
-      collection_method = input$measure_collection_method,
-      how_data_used = input$measure_how_used,
-      why_meaningful = input$measure_why_meaningful,
-      proxy_measure = input$measure_proxy,
-      improvement_notes = input$measure_improvement_notes,
+      title = locked_or("title", input$measure_title),
+      measure_type = locked_or("measure_type", input$measure_type),
+      description = locked_or("description", input$measure_description),
+      data_source = locked_or("data_source", input$measure_data_source),
+      data_owner = locked_or("data_owner", input$measure_data_owner),
+      data_owner_role = locked_or("data_owner_role", input$measure_data_owner_role),
+      update_frequency = locked_or("update_frequency", input$measure_frequency),
+      formula = locked_or("formula", input$measure_formula),
+      desired_direction = locked_or("desired_direction", input$measure_direction),
+      baseline_value = locked_or("baseline_value", nullable_number(input$measure_baseline)),
+      baseline_fy = locked_or("baseline_fy", nullable_number(input$measure_baseline_fy, TRUE)),
+      format_type = locked_or("format_type", input$measure_format),
+      display_unit = locked_or("display_unit", if (nzchar(trimws(input$measure_unit))) input$measure_unit else NA_character_),
+      context_required = locked_or("context_required", input$measure_context),
+      replicability = if (scope_editable) isTRUE(input$measure_replicability) else isTRUE(existing_value("replicability", FALSE)),
+      disaggregation = locked_or("disaggregation", input$measure_disaggregation),
+      data_location = locked_or("data_location", input$measure_data_location),
+      collection_method = locked_or("collection_method", input$measure_collection_method),
+      how_data_used = locked_or("how_data_used", input$measure_how_used),
+      why_meaningful = locked_or("why_meaningful", input$measure_why_meaningful),
+      proxy_measure = locked_or("proxy_measure", input$measure_proxy),
+      improvement_notes = locked_or("improvement_notes", input$measure_improvement_notes),
       change_mapping = if (nrow(existing) && !is.na(existing$change_mapping[[1]])) existing$change_mapping[[1]] else "New",
-      pillar_id = nullable_number(input$measure_pillar, TRUE),
-      pillar_goal_id = nullable_number(input$measure_pillar_goal, TRUE),
-      is_city = input_bool(input$measure_is_city),
-      is_agency = input_bool(input$measure_is_agency),
-      is_service = input_bool(input$measure_is_service),
+      pillar_id = if (scope_editable) nullable_number(input$measure_pillar, TRUE) else existing_value("pillar_id", NA_integer_),
+      pillar_goal_id = if (scope_editable) nullable_number(input$measure_pillar_goal, TRUE) else existing_value("pillar_goal_id", NA_integer_),
+      is_city = if (scope_editable) input_bool(input$measure_is_city) else isTRUE(existing_value("is_city", FALSE)),
+      is_agency = if (scope_editable) input_bool(input$measure_is_agency) else isTRUE(existing_value("is_agency", FALSE)),
+      is_service = if (scope_editable) input_bool(input$measure_is_service) else isTRUE(existing_value("is_service", FALSE)),
       approval_status = if (nrow(existing)) existing$approval_status[[1]] else "Draft",
       submitted_for_approval_at = if (nrow(existing)) existing$submitted_for_approval_at[[1]] else as.POSIXct(NA)
     )
@@ -6862,6 +6913,12 @@ server <- function(input, output, session) {
   collect_measure_years <- function() {
     data <- app_data()
     existing_id <- current_measure_id()
+    existing_measure <- if (is.null(existing_id) || identical(existing_id, "new")) {
+      data.frame()
+    } else {
+      data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
+    }
+    is_validated <- nrow(existing_measure) > 0 && identical(existing_measure$approval_status[[1]], "Validated")
     existing_actuals <- if (is.null(existing_id) || identical(existing_id, "new")) {
       data.frame()
     } else {
@@ -6880,8 +6937,8 @@ server <- function(input, output, session) {
       submitted_target <- nullable_number(input[[paste0("measure_target_", year)]])
       submitted_target_notes <- limit_note(input[[paste0("measure_target_notes_", year)]])
 
-      actual_locked <- measure_actual_is_locked(year)
-      target_locked <- measure_target_is_locked(year)
+      actual_locked <- measure_actual_is_locked(year, is_validated)
+      target_locked <- measure_target_is_locked(year, is_validated)
 
       # Disabling the input already stops a non-admin from changing a locked
       # field in the UI, but a locked field's stored value is what's kept
@@ -6968,7 +7025,7 @@ server <- function(input, output, session) {
       return()
     }
     reported_by <- if (nrow(user_rows)) user_rows$user_id[[1]] else data$access_user_agency_access$user_id[[1]]
-    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit), error = function(error) error)
+    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit, is_admin = current_user_can_edit_locked_measure_data()), error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()

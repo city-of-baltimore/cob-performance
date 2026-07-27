@@ -1129,18 +1129,102 @@ delete_feedback_request <- function(connection, feedback_id) {
   invisible(feedback_id)
 }
 
-save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE) {
+# Baltimore's fiscal year runs July 1 - June 30, named by the calendar
+# year it ends in (e.g. FY2027 = July 1, 2026 - June 30, 2027). Computed
+# fresh from the real date (not tied to whichever planning cycle happens
+# to be active) since the validated-measure lock below is meant to track
+# the calendar, not the plan cycle. `today` is a parameter (not always
+# Sys.Date() internally) so this is deterministically testable against a
+# specific date rather than only ever reflecting whenever a test happens
+# to run.
+current_fiscal_year <- function(today = Sys.Date()) {
+  calendar_year <- as.integer(format(today, "%Y"))
+  fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
+  if (today >= fiscal_year_start) calendar_year + 1L else calendar_year
+}
+
+# Once a measure is validated, its historic data and definition lock to
+# everyone except a SystemAdmin (see can_edit_locked_measure_data() in
+# app.R), except the current fiscal year's actual (still being actively
+# reported) and the following fiscal year's target (still being actively
+# planned). All three return FALSE for a not-yet-validated measure, so
+# nothing is locked until validation happens. Enforced in two places:
+# app.R's collect_measure_form()/collect_measure_years() (so a tampered
+# client request can't slip a change past a disabled UI control) and
+# again here in save_measure_record() itself, since that's the only
+# function that actually writes these rows -- a second, independent
+# guard rather than trusting a single call site to always get it right.
+measure_actual_is_locked <- function(year, is_validated) {
+  isTRUE(is_validated) && as.integer(year) < current_fiscal_year()
+}
+
+measure_target_is_locked <- function(year, is_validated) {
+  isTRUE(is_validated) && as.integer(year) <= current_fiscal_year()
+}
+
+measure_definition_is_locked <- function(is_validated) {
+  isTRUE(is_validated)
+}
+
+save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE, is_admin = FALSE) {
   DBI::dbWithTransaction(connection, {
+    is_validated <- !is.null(values$measure_id) && identical(values$approval_status, "Validated")
+    # A non-admin can only ever touch the current fiscal year's actual and
+    # the following fiscal year's target on a validated measure -- every
+    # other field gets forced back to its existing value below, before
+    # this function ever writes anything. Since that kind of save doesn't
+    # represent a real change requiring re-review, it shouldn't knock the
+    # measure back to Draft the way any other edit to a
+    # Validated/PendingApproval/Returned measure normally does. An admin's
+    # edit to genuinely locked content still goes through the existing
+    # re-validation-required path below.
+    revalidation_required <- !is.null(values$measure_id) &&
+      values$approval_status %in% c("Validated", "PendingApproval", "Returned") &&
+      !(is_validated && !is_admin)
+    if (is_validated && !is_admin && !is.null(values$measure_id)) {
+      existing_measure <- DBI::dbGetQuery(
+        connection,
+        paste(
+          "SELECT title, measure_type, description, data_source, data_owner, data_owner_role, update_frequency, formula,",
+          "desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required, replicability,",
+          "disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
+          "pillar_id, pillar_goal_id, is_city, is_agency, is_service",
+          "FROM performance.performance_measure WHERE measure_id = $1"
+        ),
+        params = list(as.integer(values$measure_id))
+      )
+      if (nrow(existing_measure)) {
+        for (field in names(existing_measure)) values[[field]] <- existing_measure[[field]][[1]]
+      }
+      existing_actuals <- DBI::dbGetQuery(
+        connection,
+        "SELECT fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals WHERE measure_id = $1",
+        params = list(as.integer(values$measure_id))
+      )
+      yearly_values <- lapply(yearly_values, function(year_value) {
+        existing_row <- existing_actuals[existing_actuals$fiscal_year == year_value$fiscal_year, , drop = FALSE]
+        if (!nrow(existing_row)) return(year_value)
+        if (measure_actual_is_locked(year_value$fiscal_year, is_validated)) {
+          year_value$annual_actual <- existing_row$annual_actual[[1]]
+          year_value$annual_actual_notes <- existing_row$annual_actual_notes[[1]]
+        }
+        if (measure_target_is_locked(year_value$fiscal_year, is_validated)) {
+          year_value$target_value <- existing_row$target_value[[1]]
+          year_value$target_value_notes <- existing_row$target_value_notes[[1]]
+        }
+        year_value
+      })
+    }
     status <- if (submit) {
       "PendingApproval"
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
+    } else if (revalidation_required) {
       "Draft"
     } else {
       values$approval_status
     }
     submitted_at <- if (submit) {
       Sys.time()
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
+    } else if (revalidation_required) {
       as.POSIXct(NA)
     } else {
       values$submitted_for_approval_at
