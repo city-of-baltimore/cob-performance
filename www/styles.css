@@ -2198,6 +2198,22 @@ body.builder-autosave-active #page {
   white-space: nowrap;
 }
 
+.table-row.action-plan-measures-row {
+  grid-template-columns: minmax(0, 1.3fr) minmax(8rem, 10rem) minmax(9rem, 11rem) minmax(9rem, 10rem) minmax(7rem, 8rem);
+  column-gap: 1.25rem;
+}
+
+.action-plan-measures-table .action-plan-measures-row > * {
+  min-width: 0;
+  justify-self: stretch;
+  text-align: left;
+}
+
+.action-plan-measure-unlinked {
+  color: var(--lp-text-secondary);
+  font-style: italic;
+}
+
 .table-row:first-child {
   border-top: 0;
 }

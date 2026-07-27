@@ -818,7 +818,13 @@
     if (addButton) {
       sendPage(addButton.getAttribute("data-page") || "metrics");
     }
-    window.Shiny.setInputValue("open_measure_id", addButton ? "new" : row.getAttribute("data-measure-id"), { priority: "event" });
+    // "new:city" (vs. plain "new") tells the server to pre-check "Citywide
+    // measure" for this new measure -- used by the Add button on the
+    // Action Plan Measures page, so a measure created from there doesn't
+    // silently fail to show back up in that same list until someone
+    // remembers to check the box by hand.
+    var newMeasureValue = addButton && addButton.getAttribute("data-default-city") === "true" ? "new:city" : "new";
+    window.Shiny.setInputValue("open_measure_id", addButton ? newMeasureValue : row.getAttribute("data-measure-id"), { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {

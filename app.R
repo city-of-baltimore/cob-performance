@@ -29,6 +29,7 @@ pages <- list(
   approval_queue = "Plan approval queue",
   publishing_queue = "Publishing queue",
   measure_review = "Measure review",
+  action_plan_measures = "Action Plan Measures",
   bug_fix = "Bug/Fix",
   role_preview = "Role preview",
   strategic_plan = "City action plan",
@@ -1328,13 +1329,14 @@ nav_item <- function(id, label, icon_tag, section = NULL, item_class = NULL) {
 
 performance_reviewing_nav_items <- function(approval_first = FALSE) {
   measure_review <- nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item measure-review-nav-item")
+  action_plan_measures <- nav_item("action_plan_measures", "Action Plan Measures", icon("bullseye"), item_class = "performance-reviewing-nav-item action-plan-measures-nav-item")
   plan_review <- nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item")
   approval_queue <- nav_item("approval_queue", "Plan approval queue", icon("stamp"), item_class = "performance-reviewing-nav-item approval-queue-nav-item")
   publishing_queue <- nav_item("publishing_queue", "Publishing queue", icon("upload"), item_class = "performance-reviewing-nav-item publishing-nav-item")
   if (isTRUE(approval_first)) {
-    tagList(measure_review, approval_queue, plan_review, publishing_queue)
+    tagList(measure_review, action_plan_measures, approval_queue, plan_review, publishing_queue)
   } else {
-    tagList(measure_review, plan_review, approval_queue, publishing_queue)
+    tagList(measure_review, action_plan_measures, plan_review, approval_queue, publishing_queue)
   }
 }
 
@@ -1409,10 +1411,18 @@ metric_number <- function(value, unit = NULL) {
 }
 
 metric_visual <- function(metric) {
-  unit <- metric$unit
-  max_value <- max(metric$current, metric$target, na.rm = TRUE)
-  current_width <- max(3, round(metric$current / max_value * 100))
-  target_position <- min(100, max(3, round(metric$target / max_value * 100)))
+  format_type <- metric$format_type %||% "Count"
+  # format_measure_value() checks is.na(display_unit) to detect "no unit",
+  # but metric$unit is NULL (not NA) when absent -- is.na(NULL) is
+  # logical(0), which throws in an `if`, so coalesce it to NA first.
+  metric_unit <- metric$unit %||% NA_character_
+  label_for <- function(value) format_measure_value(value, format_type, metric_unit, "Not set")
+  current_value <- if (is.null(metric$current) || length(metric$current) == 0) NA_real_ else metric$current
+  target_value <- if (is.null(metric$target) || length(metric$target) == 0) NA_real_ else metric$target
+  max_value <- suppressWarnings(max(current_value, target_value, na.rm = TRUE))
+  if (!is.finite(max_value) || max_value == 0) max_value <- 1
+  current_width <- if (is.na(current_value)) 0 else max(3, round(current_value / max_value * 100))
+  target_position <- if (is.na(target_value)) 0 else min(100, max(3, round(target_value / max_value * 100)))
   current_label_position <- min(96, max(4, current_width))
   target_label_position <- min(96, max(4, target_position))
 
@@ -1428,52 +1438,33 @@ metric_visual <- function(metric) {
       div(
         class = "metric-bar-track",
         role = "img",
-        `aria-label` = paste("Current", metric_number(metric$current, unit), "target", metric_number(metric$target, unit)),
-        div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
-        div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
+        `aria-label` = paste("Current", label_for(current_value), "target", label_for(target_value)),
+        if (!is.na(current_value)) div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
+        if (!is.na(target_value)) div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
       ),
-      span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), metric_number(metric$current, unit)),
-      span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), metric_number(metric$target, unit))
+      if (!is.na(current_value)) span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), label_for(current_value)),
+      if (!is.na(target_value)) span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), label_for(target_value))
     )
   )
 }
 
-action_plan_measure_item <- function(db, metric) {
-  matched_id <- suppressWarnings(as.integer(metric$matched_measure_id %||% NA_integer_))
-  matched_measure <- if (!is.na(matched_id)) {
-    db$performance_performance_measure[db$performance_performance_measure$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  history <- if (nrow(matched_measure)) {
-    db$performance_measure_actuals[db$performance_measure_actuals$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  has_data <- nrow(history) && (any(!is.na(history$annual_actual)) || any(!is.na(history$target_value)))
-  data_summary <- NULL
-  if (has_data) {
-    actual_rows <- history[!is.na(history$annual_actual), , drop = FALSE]
-    target_rows <- history[!is.na(history$target_value), , drop = FALSE]
-    latest_actual <- actual_rows[order(actual_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    latest_target <- target_rows[order(target_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    data_summary <- div(
-      class = "action-plan-measure-data",
-      if (nrow(latest_actual)) span(tags$strong(paste0(fy_label(latest_actual$fiscal_year[[1]]), " actual: ")), format_measure_value(latest_actual$annual_actual[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]])),
-      if (nrow(latest_target)) span(tags$strong(paste0(fy_label(latest_target$fiscal_year[[1]]), " target: ")), format_measure_value(latest_target$target_value[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]], "Not set")),
-      span(class = "measure-direction-note", paste0(metric$match_type, " to measure ", matched_id))
-    )
-  }
+# Renders one Citywide measure in a pillar's "Performance Measures"
+# section: a current-vs-target bar chart (metric_visual()) once it has at
+# least one recorded value, otherwise a plain placeholder -- a measure can
+# be marked Citywide and linked to a pillar before any actual/target for
+# the current snapshot years has been entered.
+action_plan_measure_item <- function(metric) {
+  has_data <- !is.na(metric$current) || !is.na(metric$target)
+  if (has_data) return(metric_visual(metric))
   div(
     class = "action-plan-measure-item",
     div(
       tags$strong(metric$name),
       if (!is.null(metric$direction) && !is.na(metric$direction) && nzchar(trimws(metric$direction))) {
         span(class = "measure-direction-note", metric$direction)
-      },
-      data_summary
+      }
     ),
-    if (has_data) status_chip("Data linked", "success") else status_chip("Awaiting data", "warning")
+    status_chip("Awaiting data", "warning")
   )
 }
 
@@ -1598,8 +1589,12 @@ pillar_modal <- function(pillar_id, db) {
         tags$section(
           class = "modal-section-block",
           h3("Performance Measures"),
-          p("Action Plan measure names are included here. Baselines, actuals, and targets are awaiting validated data."),
-          div(class = "action-plan-measure-list", lapply(pillar$metrics, function(metric) action_plan_measure_item(db, metric)))
+          p("Citywide measures assigned to this pillar, with the most recently reported actual and current target."),
+          if (length(pillar$metrics)) {
+            div(class = "action-plan-measure-list", lapply(pillar$metrics, action_plan_measure_item))
+          } else {
+            p(class = "action-plan-measure-empty", "No measures are marked Citywide for this pillar yet.")
+          }
         ),
         tags$section(
           class = "modal-section-block",
@@ -4962,7 +4957,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE, default_is_city = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -4998,7 +4993,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   selected_pillar_goal <- db$reference_pillar_goal[db$reference_pillar_goal$pillar_goal_id == selected_pillar_goal_id, , drop = FALSE]
   pillar_label <- if (nrow(selected_pillar)) selected_pillar$pillar_name[[1]] else "Not linked"
   pillar_goal_label <- if (nrow(selected_pillar_goal)) paste(selected_pillar_goal$goal_code[[1]], selected_pillar_goal$goal_title[[1]]) else "Not linked"
-  scope_city <- isTRUE(value("is_city", FALSE))
+  scope_city <- isTRUE(value("is_city", default_is_city))
   scope_agency <- isTRUE(value("is_agency", FALSE))
   scope_service <- if (is_new) TRUE else isTRUE(value("is_service", FALSE))
   scope_label <- paste(
@@ -5265,6 +5260,74 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     section_key = "measures",
     show_save = FALSE,
     show_status = FALSE
+  )
+}
+
+# Every measure marked Citywide (is_city = TRUE), across every agency --
+# the admin view for the Action Plan Measures feature. Reuses the same
+# measure editor modal as the regular Measures page (data-measure-id /
+# data-new-measure, handled by the same client-side click handler and
+# open_measure_id observer) rather than a separate editor. Visible to the
+# whole Performance Reviewing group; the modal's own can_edit_scope check
+# still restricts who can actually mark a measure Citywide or change its
+# pillar to SystemAdmin/OPIReviewer.
+page_action_plan_measures <- function(db) {
+  measures <- db$city_measures
+  snapshot_years <- fiscal_measure_snapshot_years()
+  missing_pillar_count <- if (nrow(measures)) sum(is.na(measures$pillar_id)) else 0L
+  awaiting_data_count <- if (nrow(measures)) sum(is.na(measures$current_value) & is.na(measures$target_value)) else 0L
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "Performance Reviewing"),
+        h1("Action Plan Measures"),
+        p("Every measure marked Citywide, across all agencies. Open a measure to update its data, targets, or Action Plan pillar alignment.")
+      )
+    ),
+    div(
+      class = "dashboard-grid reviewer-dashboard-grid",
+      metric_tile("Citywide measures", nrow(measures), "Marked is_city across all agencies"),
+      metric_tile("Missing a pillar", missing_pillar_count, "Won't appear on any pillar's Action Plan view until assigned", if (missing_pillar_count) "warning" else "success"),
+      metric_tile("Awaiting data", awaiting_data_count, paste0(fy_label(snapshot_years$actual_fy), " actual and ", fy_label(snapshot_years$target_fy), " target both blank"), if (awaiting_data_count) "warning" else "success")
+    ),
+    surface(
+      "Citywide Measures",
+      "To add a measure under a specific agency, select that agency in the header above first -- new measures always file under whichever agency is currently selected there. Leave Mayor's Office selected for measures with no single clear owner (Office of Performance and Innovation).",
+      if (!nrow(measures)) {
+        div(class = "empty-state", h3("No measures are marked Citywide yet"), p("Open any measure and check \"Citywide measure\" (SystemAdmin/OPIReviewer only) to have it appear here."))
+      } else {
+        div(
+          class = "app-table measure-library-table action-plan-measures-table",
+          div(
+            class = "table-row table-head action-plan-measures-row",
+            span("Measure"),
+            span("Pillar"),
+            span("Owning agency"),
+            span(paste(fy_label(snapshot_years$actual_fy), "Actual /", fy_label(snapshot_years$target_fy), "Target")),
+            span("Status")
+          ),
+          lapply(seq_len(nrow(measures)), function(i) {
+            status_meta <- measure_library_status(measures[i, , drop = FALSE])
+            actual <- format_measure_value(measures$current_value[i], measures$format_type[i], measures$display_unit[i], "Not reported")
+            target <- format_measure_value(measures$target_value[i], measures$format_type[i], measures$display_unit[i], "Not set")
+            pillar_label <- if (is.na(measures$pillar_name[i])) "Not linked" else measures$pillar_name[i]
+            agency_label <- if (!is.na(measures$agency_public_name[i]) && nzchar(measures$agency_public_name[i])) measures$agency_public_name[i] else measures$agency_name[i]
+            tags$button(
+              type = "button",
+              class = "table-row action-plan-measures-row measure-library-row",
+              `data-measure-id` = measures$measure_id[i],
+              span(measures$title[i]),
+              span(class = if (is.na(measures$pillar_name[i])) "action-plan-measure-unlinked", pillar_label),
+              span(agency_label),
+              span(paste(actual, "/", target)),
+              status_chip(status_meta$label, status_meta$tone)
+            )
+          })
+        )
+      },
+      actions = tags$button(type = "button", class = "civic-button primary", `data-new-measure` = "true", `data-page` = "action_plan_measures", `data-default-city` = "true", icon("plus"), "Add a Citywide measure")
+    )
   )
 }
 
@@ -5953,6 +6016,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
     publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
+    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db) else page_landing(db, agency_id, app_roles, agency_roles),
     bug_fix = if (can_view_application_admin(app_roles)) {
       page_bug_fix(
         db,
@@ -6173,6 +6237,7 @@ server <- function(input, output, session) {
   current_page <- reactiveVal("login")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
+  pending_new_measure_default_city <- reactiveVal(FALSE)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -7041,7 +7106,14 @@ server <- function(input, output, session) {
   }
 
   observeEvent(input$open_measure_id, {
-    current_measure_id(as.character(input$open_measure_id))
+    raw_measure_id <- as.character(input$open_measure_id)
+    if (identical(raw_measure_id, "new:city")) {
+      pending_new_measure_default_city(TRUE)
+      current_measure_id("new")
+    } else {
+      pending_new_measure_default_city(FALSE)
+      current_measure_id(raw_measure_id)
+    }
   }, ignoreInit = TRUE)
 
   observeEvent(input$close_measure_modal, current_measure_id(NULL), ignoreInit = TRUE)
@@ -8295,7 +8367,8 @@ server <- function(input, output, session) {
       target_fy,
       current_user_can_submit_measure() || current_user_can_review_measures(),
       can_delete_measures(current_user_app_roles()),
-      current_user_can_edit_locked_measure_data()
+      current_user_can_edit_locked_measure_data(),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city())
     )
   })
 

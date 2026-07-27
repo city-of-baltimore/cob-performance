@@ -112,54 +112,8 @@ FROM (VALUES
 JOIN reference.pillar_goal pg ON pg.goal_code = seed.goal_code
 ON CONFLICT (pillar_goal_id, sort_order) DO UPDATE SET initiative_title = EXCLUDED.initiative_title;
 
-INSERT INTO reference.action_plan_measure (pillar_id, measure_name, desired_direction, display_unit, baseline_value, current_value, target_value, sort_order)
-VALUES
-    (1, 'Homicides per 100,000 residents', 'Decrease', NULL, 47, 31, 24, 1),
-    (1, 'Non-fatal shootings per 100,000 residents', 'Decrease', NULL, 95, 54, 45, 2),
-    (1, 'Violent Group A crimes per 100k residents', 'Decrease', NULL, 960, 830, 760, 3),
-    (1, 'Consent Decree assessments on track or better', 'Increase', '%', 61, 74, 85, 4),
-    (1, 'Residents citing crime and drugs as a top issue', 'Decrease', '%', 42, 35, 28, 5),
-    (1, 'Uniformed positions filled', 'Increase', '%', 78, 82, 90, 6),
-    (1, 'Eligible 911 calls appropriately diverted', 'Increase', '%', 8, 17, 30, 7),
-    (2, 'Students reading at grade level by grade three', 'Increase', '%', 26, 31, 45, 1),
-    (2, 'Quality early childhood seats funded by Baltimore City', 'Increase', NULL, 1200, 1750, 2500, 2),
-    (2, 'Youth ages 16-24 not in school nor working', 'Decrease', '%', 14, 12, 9, 3),
-    (2, 'Youth placed in paid employment or apprenticeships annually', 'Increase', NULL, 3200, 4100, 5500, 4),
-    (2, 'Language access compliance rate', 'Increase', '%', 62, 76, 90, 5),
-    (2, 'Legacy homeowner households contacted and remaining in homes', 'Increase', '%', 52, 68, 82, 6),
-    (2, 'Households served by Safe City Baltimore and BNAAC', 'Increase', NULL, 900, 1350, 2000, 7),
-    (2, 'Employees completing LGBTQ+ Equity and Inclusiveness training', 'Increase', '%', 38, 57, 85, 8),
-    (3, 'Overdose mortality reduction from 2024 baseline', 'Increase', '%', 0, 8, 20, 1),
-    (3, 'Infant mortality rate', 'Decrease', NULL, 8.2, 7.6, 6.5, 2),
-    (3, 'Homes weatherized or treated for lead hazards', 'Increase', NULL, 850, 1125, 1600, 3),
-    (3, 'Reported dirty streets and alleys per 1,000 residents', 'Decrease', NULL, 41, 36, 28, 4),
-    (3, 'Maryland Recycling Act diversion rate', 'Increase', '%', 24, 29, 40, 5),
-    (3, 'City electricity usage from renewable sources', 'Increase', '%', 18, 31, 55, 6),
-    (3, 'Point-in-Time count of individuals experiencing homelessness', 'Decrease', NULL, 1551, 1475, 1300, 7),
-    (4, 'Total vacant building notices', 'Decrease', NULL, 14500, 11800, 9000, 1),
-    (4, 'Cost-burdened homeowners rate', 'Decrease', '%', 31, 29, 25, 2),
-    (4, 'Cost-burdened renters rate', 'Decrease', '%', 54, 51, 45, 3),
-    (4, 'Individual average taxable gross income', 'Increase', '$', 47500, 50200, 56000, 4),
-    (4, 'Unemployment rate', 'Decrease', '%', 7.4, 6.2, 5.1, 5),
-    (4, 'Labor force participation rate', 'Increase', '%', 62, 64, 68, 6),
-    (4, 'Downtown office occupancy rate', 'Increase', '%', 68, 72, 82, 7),
-    (4, 'Estimated total visitation to Baltimore', 'Increase', 'M', 24.5, 27.2, 32, 8),
-    (5, 'City credit rating', 'Increase', 'score', 78, 82, 90, 1),
-    (5, 'Vacant city positions', 'Decrease', '%', 22, 18, 12, 2),
-    (5, 'City employee retention rate', 'Increase', '%', 81, 84, 90, 3),
-    (5, '311 service requests resolved within SLA', 'Increase', '%', 68, 74, 85, 4),
-    (5, 'Resident satisfaction with City services', 'Increase', '%', 46, 53, 65, 5),
-    (6, 'Facility Conditions Index', 'Decrease', NULL, 0.19, 0.16, 0.12, 1),
-    (6, 'Average age of fleet', 'Decrease', 'years', 7.4, 6.9, 6.2, 2),
-    (6, 'Linear miles of bike infrastructure constructed', 'Increase', NULL, 6, 11, 22, 3),
-    (6, 'Lane miles repaved', 'Increase', NULL, 72, 91, 125, 4),
-    (6, 'Water main breaks per 100 miles', 'Decrease', NULL, 32, 28, 22, 5),
-    (6, 'Sanitary sewer overflows per 100 miles', 'Decrease', NULL, 11, 8, 5, 6),
-    (6, 'Fatal and serious injury crashes per capita', 'Decrease', NULL, 14.8, 12.5, 9.5, 7),
-    (6, 'Linear footage of conduit rehabilitated', 'Increase', NULL, 1500, 2400, 4000, 8),
-    (6, 'Low-income households participating in Water4All', 'Increase', '%', 21, 30, 45, 9),
-    (6, 'Households with broadband internet subscription', 'Increase', '%', 78, 82, 90, 10)
-ON CONFLICT (pillar_id, sort_order) DO UPDATE SET
-    measure_name = EXCLUDED.measure_name, desired_direction = EXCLUDED.desired_direction, display_unit = EXCLUDED.display_unit,
-    baseline_value = EXCLUDED.baseline_value, current_value = EXCLUDED.current_value, target_value = EXCLUDED.target_value;
-
+-- reference.action_plan_measure's seed rows were removed 2026-07-27 --
+-- that table held dummy data from another bot, not real Action Plan
+-- measures, and has been dropped (see target_schema.sql). Real Action
+-- Plan measures are now any performance.performance_measure marked
+-- Citywide (is_city = TRUE) and linked to a pillar.
