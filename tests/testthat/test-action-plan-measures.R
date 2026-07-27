@@ -138,3 +138,31 @@ test_that("a measure marked Citywide without a pillar still appears in city_meas
   all_metric_ids <- unlist(lapply(db$strategic_plan, function(p) vapply(p$metrics, function(m) m$measure_id, integer(1))))
   expect_false(measure_id %in% all_metric_ids)
 })
+
+test_that("owning_entity_choices includes real agencies (regression: db$reference_agency has no active column to re-filter on)", {
+  # Regression guard: load_app_data() already filters reference_agency /
+  # reference_plan_entity to active rows in their SQL query, so they carry
+  # no "active" column -- filtering on db$reference_agency$active here
+  # silently zeroed out every agency choice (NULL index -> 0 rows).
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+  db <- load_app_data(connection)
+
+  choices <- owning_entity_choices(db)
+  expect_true("agency:AGC4301" %in% choices)
+  expect_true(any(startsWith(unname(choices), "agency:")))
+})
+
+test_that("resolve_owning_agency_id resolves both an agency value and an entity value to an agency_id", {
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+  db <- load_app_data(connection)
+
+  expect_equal(resolve_owning_agency_id(db, "agency:AGC4301"), "AGC4301")
+
+  entity <- db$reference_plan_entity[1, , drop = FALSE]
+  resolved <- resolve_owning_agency_id(db, paste0("entity:", entity$entity_id[[1]]))
+  expect_equal(resolved, entity$parent_agency_id[[1]])
+})

@@ -3360,6 +3360,36 @@ agency_choices_only <- function(db) {
   choices[startsWith(unname(choices), "agency:")]
 }
 
+owning_entity_choices <- function(db) {
+  # db$reference_agency / db$reference_plan_entity are already filtered to
+  # active rows (and entities with their own plan) at the SQL load layer in
+  # load_app_data() -- there's no "active" column left to re-filter on here.
+  agencies <- db$reference_agency
+  agency_labels <- ifelse(
+    !is.na(agencies$public_name) & nzchar(trimws(agencies$public_name)),
+    agencies$public_name,
+    agencies$agency_name
+  )
+  agency_choices <- setNames(paste0("agency:", agencies$agency_id), agency_labels)
+  entities <- db$reference_plan_entity
+  entity_choices <- character(0)
+  if (!is.null(entities) && nrow(entities)) {
+    entity_choices <- setNames(paste0("entity:", entities$entity_id), entities$public_name)
+  }
+  choices <- c(agency_choices, entity_choices)
+  choices[order(names(choices))]
+}
+
+resolve_owning_agency_id <- function(db, value) {
+  submitter <- parse_submitter_value(value)
+  if (identical(submitter$type, "entity")) {
+    entity <- db$reference_plan_entity[db$reference_plan_entity$entity_id == submitter$id, , drop = FALSE]
+    if (nrow(entity)) return(entity$parent_agency_id[[1]])
+    return(NA_character_)
+  }
+  submitter$id
+}
+
 user_submitter_choices <- function(db, user_id) {
   valid_choices <- agency_selector_choices(db)
   valid_values <- unname(valid_choices)
@@ -4957,7 +4987,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE, default_is_city = FALSE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE, default_is_city = FALSE, show_owning_entity_picker = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -5050,6 +5080,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Definition"),
           div(
             class = "measure-form-grid",
+            if (is_new && show_owning_entity_picker) {
+              div(
+                class = "measure-field full-width",
+                selectInput(
+                  "measure_owning_entity",
+                  measure_label("Owning agency", "Griffin files this measure under whichever agency or entity owns it. If there's no clear single owner, leave this set to Mayor's Office (Office of Performance and Innovation).", TRUE),
+                  choices = owning_entity_choices(db),
+                  selected = "agency:AGC4301",
+                  selectize = FALSE
+                )
+              )
+            },
             div(class = "measure-field full-width", disable_input_tag(textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title")), definition_locked)),
             div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description")), definition_locked)),
             div(class = "measure-field", disable_input_tag(selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE), definition_locked)),
@@ -5293,7 +5335,7 @@ page_action_plan_measures <- function(db) {
     ),
     surface(
       "Citywide Measures",
-      "To add a measure under a specific agency, select that agency in the header above first -- new measures always file under whichever agency is currently selected there. Leave Mayor's Office selected for measures with no single clear owner (Office of Performance and Innovation).",
+      "When you add a Citywide measure, you'll pick its owning agency or entity directly in the form. Leave Mayor's Office selected for measures with no single clear owner (Office of Performance and Innovation).",
       if (!nrow(measures)) {
         div(class = "empty-state", h3("No measures are marked Citywide yet"), p("Open any measure and check \"Citywide measure\" (SystemAdmin/OPIReviewer only) to have it appear here."))
       } else {
@@ -6924,6 +6966,13 @@ server <- function(input, output, session) {
     plan <- current_plan(data, current_submitter_value())
     initial_cycle <- plan_scalar_integer(plan, "cycle_id")
     existing_id <- current_measure_id()
+    if (is.null(existing_id) || identical(existing_id, "new")) {
+      picker_value <- input$measure_owning_entity
+      if (!is.null(picker_value) && length(picker_value) == 1 && nzchar(picker_value)) {
+        resolved_owner <- resolve_owning_agency_id(data, picker_value)
+        if (!is.na(resolved_owner) && nzchar(resolved_owner)) agency_id <- resolved_owner
+      }
+    }
     existing <- if (is.null(existing_id) || identical(existing_id, "new")) data.frame() else data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
     is_validated <- nrow(existing) > 0 && identical(existing$approval_status[[1]], "Validated")
     is_admin <- current_user_can_edit_locked_measure_data()
@@ -8368,6 +8417,7 @@ server <- function(input, output, session) {
       current_user_can_submit_measure() || current_user_can_review_measures(),
       can_delete_measures(current_user_app_roles()),
       current_user_can_edit_locked_measure_data(),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city()),
       identical(measure_id, "new") && isTRUE(pending_new_measure_default_city())
     )
   })
