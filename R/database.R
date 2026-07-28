@@ -1226,30 +1226,35 @@ percent_value_scale_backfill <- function(connection, measure_ids = NULL) {
     scope_clause <- sprintf("AND pm.measure_id IN (%s)", placeholders)
     scope_params <- as.list(measure_ids)
   }
-  DBI::dbExecute(
-    connection,
-    paste(
-      "UPDATE performance.measure_actuals ma",
-      "SET annual_actual = round(ma.annual_actual * 100, 2), updated_at = now()",
-      "FROM performance.performance_measure pm",
-      "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
-      "AND ma.annual_actual IS NOT NULL AND ma.annual_actual != round(ma.annual_actual)",
-      scope_clause
-    ),
-    params = scope_params
+  actual_sql <- paste(
+    "UPDATE performance.measure_actuals ma",
+    "SET annual_actual = round(ma.annual_actual * 100, 2), updated_at = now()",
+    "FROM performance.performance_measure pm",
+    "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+    "AND ma.annual_actual IS NOT NULL AND ma.annual_actual != round(ma.annual_actual)",
+    scope_clause
   )
-  DBI::dbExecute(
-    connection,
-    paste(
-      "UPDATE performance.measure_actuals ma",
-      "SET target_value = round(ma.target_value * 100, 2), updated_at = now()",
-      "FROM performance.performance_measure pm",
-      "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
-      "AND ma.target_value IS NOT NULL AND ma.target_value != round(ma.target_value)",
-      scope_clause
-    ),
-    params = scope_params
+  target_sql <- paste(
+    "UPDATE performance.measure_actuals ma",
+    "SET target_value = round(ma.target_value * 100, 2), updated_at = now()",
+    "FROM performance.performance_measure pm",
+    "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+    "AND ma.target_value IS NOT NULL AND ma.target_value != round(ma.target_value)",
+    scope_clause
   )
+  # dbExecute()'s params argument must be omitted entirely (not passed as an
+  # empty list) when the statement has no placeholders -- some DBI/RPostgres
+  # versions treat params = list() on a zero-placeholder query as an error
+  # ("Query does not require parameters"), which only surfaces on the
+  # unscoped call path (measure_ids = NULL), i.e. exactly how
+  # ensure_review_schema() calls this on every app boot.
+  if (length(scope_params)) {
+    DBI::dbExecute(connection, actual_sql, params = scope_params)
+    DBI::dbExecute(connection, target_sql, params = scope_params)
+  } else {
+    DBI::dbExecute(connection, actual_sql)
+    DBI::dbExecute(connection, target_sql)
+  }
   invisible(TRUE)
 }
 
