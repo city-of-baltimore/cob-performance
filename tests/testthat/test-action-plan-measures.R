@@ -139,38 +139,30 @@ test_that("a measure marked Citywide without a pillar still appears in city_meas
   expect_false(measure_id %in% all_metric_ids)
 })
 
-test_that("owning_entity_choices doesn't list an agency's own plan-submission entity as a separate duplicate choice", {
-  # Regression guard: every plan-submitting agency has a matching
-  # plan_entity row that exists purely as its plan-submission record
-  # (parent_agency_id points back at the same agency, identical name) --
-  # e.g. agency AGC6500 "Sheriff's Office" and entity 74 "Sheriff's
-  # Office". Left in, the dropdown showed the same label twice with no
-  # way to tell them apart. Genuinely distinct entities (a quasi-agency or
-  # mayoral service grouped under a broader parent, e.g. "Mayor's Office
-  # of LGBTQ Affairs" under Mayoralty) must still appear.
+test_that("the new-measure owning-agency picker reuses agency_selector_choices -- the same clean, deduped list as the working-plan dropdown", {
+  # The picker used to build its own agency/entity list (owning_entity_choices()),
+  # which didn't line up with the header's "working plan" selector and needed
+  # its own de-dup logic. Reusing agency_selector_choices() directly guarantees
+  # the two stay identical and inherits its one-choice-per-submitting-org guarantee.
   skip_if_no_test_database()
   connection <- connect_app_database()
   on.exit(DBI::dbDisconnect(connection), add = TRUE)
   db <- load_app_data(connection)
 
-  choices <- owning_entity_choices(db)
+  choices <- agency_selector_choices(db)
   expect_equal(sum(duplicated(names(choices))), 0L)
   expect_true(any(grepl("LGBTQ", names(choices))))
 })
 
-test_that("owning_entity_choices includes real agencies (regression: db$reference_agency has no active column to re-filter on)", {
-  # Regression guard: load_app_data() already filters reference_agency /
-  # reference_plan_entity to active rows in their SQL query, so they carry
-  # no "active" column -- filtering on db$reference_agency$active here
-  # silently zeroed out every agency choice (NULL index -> 0 rows).
+test_that("default_owning_measure_choice defaults to OPI, resolving to Mayoralty's agency_id", {
   skip_if_no_test_database()
   connection <- connect_app_database()
   on.exit(DBI::dbDisconnect(connection), add = TRUE)
   db <- load_app_data(connection)
 
-  choices <- owning_entity_choices(db)
-  expect_true("agency:AGC4301" %in% choices)
-  expect_true(any(startsWith(unname(choices), "agency:")))
+  choices <- agency_selector_choices(db)
+  default_value <- default_owning_measure_choice(choices)
+  expect_equal(resolve_owning_agency_id(db, default_value), "AGC4301")
 })
 
 test_that("resolve_owning_agency_id resolves both an agency value and an entity value to an agency_id", {

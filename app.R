@@ -3360,37 +3360,6 @@ agency_choices_only <- function(db) {
   choices[startsWith(unname(choices), "agency:")]
 }
 
-owning_entity_choices <- function(db) {
-  # db$reference_agency / db$reference_plan_entity are already filtered to
-  # active rows (and entities with their own plan) at the SQL load layer in
-  # load_app_data() -- there's no "active" column left to re-filter on here.
-  agencies <- db$reference_agency
-  agency_labels <- ifelse(
-    !is.na(agencies$public_name) & nzchar(trimws(agencies$public_name)),
-    agencies$public_name,
-    agencies$agency_name
-  )
-  agency_choices <- setNames(paste0("agency:", agencies$agency_id), agency_labels)
-  entities <- db$reference_plan_entity
-  entity_choices <- character(0)
-  if (!is.null(entities) && nrow(entities)) {
-    # Every plan-submitting agency has a matching plan_entity row purely as
-    # its plan-submission record (parent_agency_id points right back at it,
-    # same name) -- alongside plan_entity rows for genuinely distinct
-    # quasi-agencies/mayoral services grouped under a broader parent (e.g.
-    # "Mayor's Office of LGBTQ Affairs" under Mayoralty). Only the latter
-    # belong here; the former just duplicate an agency choice already listed.
-    parent_labels <- agency_labels[match(entities$parent_agency_id, agencies$agency_id)]
-    is_shadow_of_parent <- !is.na(parent_labels) & parent_labels == entities$public_name
-    entities <- entities[!is_shadow_of_parent, , drop = FALSE]
-    if (nrow(entities)) {
-      entity_choices <- setNames(paste0("entity:", entities$entity_id), entities$public_name)
-    }
-  }
-  choices <- c(agency_choices, entity_choices)
-  choices[order(names(choices))]
-}
-
 resolve_owning_agency_id <- function(db, value) {
   submitter <- parse_submitter_value(value)
   if (identical(submitter$type, "entity")) {
@@ -3399,6 +3368,18 @@ resolve_owning_agency_id <- function(db, value) {
     return(NA_character_)
   }
   submitter$id
+}
+
+# Default selection for the new-measure owning-agency picker: OPI when it's
+# in the choice list (it resolves to Mayoralty's agency_id, AGC4301, via
+# resolve_owning_agency_id()), else the Mayor's Office agency choice itself,
+# else just the first available choice.
+default_owning_measure_choice <- function(choices) {
+  opi_match <- unname(choices[names(choices) == "Mayor's Office of Performance and Innovation"])
+  if (length(opi_match)) return(opi_match[[1]])
+  if ("agency:AGC4301" %in% choices) return("agency:AGC4301")
+  if (length(choices)) return(unname(choices[[1]]))
+  "agency:AGC4301"
 }
 
 user_submitter_choices <- function(db, user_id) {
@@ -5092,13 +5073,14 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-form-grid",
             if (is_new && show_owning_entity_picker) {
+              owning_choices <- agency_selector_choices(db)
               div(
                 class = "measure-field full-width",
                 selectInput(
                   "measure_owning_entity",
                   measure_label("Owning agency", "Griffin files this measure under whichever agency or entity owns it. If there's no clear single owner, leave this set to Mayor's Office (Office of Performance and Innovation).", TRUE),
-                  choices = owning_entity_choices(db),
-                  selected = "agency:AGC4301",
+                  choices = owning_choices,
+                  selected = default_owning_measure_choice(owning_choices),
                   selectize = FALSE
                 )
               )
