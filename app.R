@@ -5260,7 +5260,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 ),
                 div(
                   class = if (is_recent_actual_year) "measure-year-highlight",
-                  measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters.", is_recent_actual_year), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                  measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
                   if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
                 ),
                 div(
@@ -5271,7 +5271,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 ),
                 div(
                   class = if (is_next_target_year) "measure-year-highlight",
-                  measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Note explaining target rationale, assumptions, or revisions. Maximum 200 characters.", is_next_target_year), annual_value(year, "target_value_notes"), locked = target_locked),
+                  measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked),
                   if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
                 )
               )
