@@ -657,10 +657,15 @@ scorable_service_rows <- function(service_rows) {
   service_rows[!is_administration_service(service_rows), , drop = FALSE]
 }
 
-measure_preview_years <- function(current_fy = 2027) {
+measure_preview_years <- function(current_fy = current_fiscal_year()) {
+  # Matches the budget book: the four most recently completed actual years,
+  # then the current (in-progress) year's target and the upcoming budget
+  # year's target -- e.g. for a FY28 budget book, FY23-FY26 Actual and
+  # FY27-FY28 Target. The two ranges must not overlap (a repeated year
+  # showed up as a duplicate column).
   list(
-    actual_years = seq.int(current_fy - 5L, current_fy - 1L),
-    target_years = seq.int(current_fy - 1L, current_fy + 1L)
+    actual_years = seq.int(current_fy - 5L, current_fy - 2L),
+    target_years = seq.int(current_fy - 1L, current_fy)
   )
 }
 
@@ -716,7 +721,7 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
+  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% current_fiscal_year())
   actual_years <- preview_years$actual_years
   target_years <- preview_years$target_years
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
@@ -5462,7 +5467,7 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   pillar_goal_labels <- paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)
   alignment_choices <- c("Not aligned" = "", setNames(pillar_goal_codes, pillar_goal_labels))
   kpi_choices <- setNames(agency_measures$measure_id, agency_measures$title)
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
+  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% current_fiscal_year())
   actual_years <- preview_years$actual_years
   target_years <- preview_years$target_years
 
