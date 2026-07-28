@@ -3244,6 +3244,26 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
   unique(c(goal_measure_ids, service_measure_ids))
 }
 
+# Measures selected as this plan's goal KPIs or service metrics that are
+# missing an actual for the most recently completed fiscal year (e.g.
+# FY26 actual while FY27 is executing). Measures marked "New" this cycle
+# are exempt -- they weren't tracked yet, so there's nothing to report.
+plan_measures_missing_recent_actual <- function(db, plan, goals, services) {
+  empty <- db$performance_performance_measure[0, , drop = FALSE]
+  if (is.null(plan) || !nrow(plan)) return(empty)
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
+  if (!length(selected_measure_ids)) return(empty)
+  measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  change_mapping <- ifelse(is.na(measures$change_mapping), "", measures$change_mapping)
+  measures <- measures[change_mapping != "New", , drop = FALSE]
+  if (!nrow(measures)) return(measures)
+  actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  reported_ids <- unique(db$performance_measure_actuals$measure_id[
+    db$performance_measure_actuals$fiscal_year == actual_fy & !is.na(db$performance_measure_actuals$annual_actual)
+  ])
+  measures[!measures$measure_id %in% reported_ids, , drop = FALSE]
+}
+
 plan_readiness_summary <- function(db, submitter_value, plan) {
   if (is.null(plan) || !nrow(plan)) return(list(rows = list(), has_errors = TRUE))
   services <- plan_service_rows(db, plan)
@@ -3313,11 +3333,24 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
     paste("Missing validation:", paste(head(invalid_selected_measures$title, 3), collapse = ", "), if (nrow(invalid_selected_measures) > 3) paste("and", nrow(invalid_selected_measures) - 3, "more") else "")
   }
   risks_complete <- nrow(risks) > 0
+  recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  missing_recent_actual <- plan_measures_missing_recent_actual(db, plan, goals, services)
+  recent_actual_complete <- !nrow(missing_recent_actual)
+  recent_actual_detail <- if (recent_actual_complete) {
+    paste("All plan measures have reported their", fy_label(recent_actual_fy), "actual")
+  } else {
+    paste0(
+      "Missing ", fy_label(recent_actual_fy), " actual: ",
+      paste(head(missing_recent_actual$title, 3), collapse = ", "),
+      if (nrow(missing_recent_actual) > 3) paste0(" and ", nrow(missing_recent_actual) - 3, " more") else ""
+    )
+  }
   rows <- list(
     list(label = "Agency overview and vision", detail = if (overview_complete) "Overview, vision, and website are complete" else paste("Missing:", paste(overview_missing, collapse = ", ")), complete = overview_complete),
     list(label = "Goals and KPIs", detail = if (goals_complete) paste(complete_goal_count, "complete goals with Action Plan alignment") else paste("Missing:", paste(goals_missing, collapse = ", ")), complete = goals_complete),
     list(label = "Services", detail = service_detail, complete = services_complete),
     list(label = "Measures", detail = measures_detail, complete = measures_complete),
+    list(label = paste(fy_label(recent_actual_fy), "actuals"), detail = recent_actual_detail, complete = recent_actual_complete),
     list(label = "Risks", detail = if (risks_complete) paste(nrow(risks), "risks registered") else "Missing: at least one risk", complete = risks_complete)
   )
   list(rows = rows, has_errors = any(!vapply(rows, function(row) isTRUE(row$complete), logical(1))))
@@ -7840,9 +7873,31 @@ server <- function(input, output, session) {
     request <- input$publish_plan_request
     plan_id <- suppressWarnings(as.integer(request$planId))
     if (is.na(plan_id)) return()
+    data <- ensure_app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
+    services <- plan_service_rows(data, plan)
+    selected_measure_ids <- plan_selected_measure_ids(data, plan, goals, services)
+    missing_recent_actual <- plan_measures_missing_recent_actual(data, plan, goals, services)
+    if (nrow(missing_recent_actual)) {
+      recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+      showNotification(
+        paste0(
+          "Cannot publish: missing ", fy_label(recent_actual_fy), " actual for ",
+          paste(head(missing_recent_actual$title, 5), collapse = ", "),
+          if (nrow(missing_recent_actual) > 5) paste0(" and ", nrow(missing_recent_actual) - 5, " more") else ""
+        ),
+        type = "error", duration = 10
+      )
+      return()
+    }
     current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
     result <- tryCatch(
-      publish_agency_plan(database, plan_id, current_preview_user_id),
+      publish_agency_plan(
+        database, plan_id, current_preview_user_id,
+        required_measure_ids = selected_measure_ids,
+        actual_fy = fiscal_measure_snapshot_years()$actual_fy
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {

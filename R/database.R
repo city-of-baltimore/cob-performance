@@ -2705,7 +2705,39 @@ approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
   invisible(plan_id)
 }
 
-publish_agency_plan <- function(connection, plan_id, published_by = NULL) {
+# Given a set of measure_ids, returns the subset that are not marked "New"
+# (a measure added this cycle has nothing prior to report yet) and have no
+# recorded, non-null annual_actual for actual_fy. Re-queries fresh from the
+# database rather than trusting a caller-supplied "already checked" flag --
+# the goal/service *selection* logic (which measure_ids belong to a plan)
+# still lives in app.R's plan_selected_measure_ids(), since duplicating that
+# in SQL here would risk drifting out of sync with its draft/administration-
+# service handling.
+measure_ids_missing_recent_actual <- function(connection, measure_ids, actual_fy) {
+  measure_ids <- unique(suppressWarnings(as.integer(measure_ids)))
+  measure_ids <- measure_ids[!is.na(measure_ids)]
+  if (!length(measure_ids)) return(integer(0))
+  placeholders <- paste0("$", seq_along(measure_ids) + 1L, collapse = ", ")
+  rows <- DBI::dbGetQuery(
+    connection,
+    sprintf(
+      paste(
+        "SELECT pm.measure_id FROM performance.performance_measure pm",
+        "WHERE pm.measure_id IN (%s)",
+        "AND (pm.change_mapping IS NULL OR pm.change_mapping != 'New')",
+        "AND NOT EXISTS (",
+        "  SELECT 1 FROM performance.measure_actuals ma",
+        "  WHERE ma.measure_id = pm.measure_id AND ma.fiscal_year = $1 AND ma.annual_actual IS NOT NULL",
+        ")"
+      ),
+      placeholders
+    ),
+    params = c(list(as.integer(actual_fy)), as.list(measure_ids))
+  )
+  rows$measure_id
+}
+
+publish_agency_plan <- function(connection, plan_id, published_by = NULL, required_measure_ids = NULL, actual_fy = NULL) {
   plan_id <- as.integer(plan_id)
   published_by <- if (is.null(published_by) || is.na(published_by)) NA_integer_ else as.integer(published_by)
   if (is.na(published_by)) {
@@ -2722,6 +2754,23 @@ publish_agency_plan <- function(connection, plan_id, published_by = NULL) {
     if (!nrow(plan)) stop("Plan not found.")
     if (!identical(plan$plan_status[[1]], "Approved")) {
       stop("Only plans in the ready-to-publish queue can be published.")
+    }
+    if (length(required_measure_ids) && !is.null(actual_fy)) {
+      missing_ids <- measure_ids_missing_recent_actual(connection, required_measure_ids, actual_fy)
+      if (length(missing_ids)) {
+        id_placeholders <- paste0("$", seq_along(missing_ids), collapse = ", ")
+        titles <- DBI::dbGetQuery(
+          connection,
+          sprintf("SELECT title FROM performance.performance_measure WHERE measure_id IN (%s) ORDER BY title", id_placeholders),
+          params = as.list(as.integer(missing_ids))
+        )$title
+        stop(sprintf(
+          "Cannot publish: FY%02d actual missing for %s%s",
+          actual_fy %% 100L,
+          paste(head(titles, 5), collapse = ", "),
+          if (length(titles) > 5) sprintf(" and %d more", length(titles) - 5) else ""
+        ))
+      }
     }
     set_audit_actor(connection, published_by)
     apply_plan_drafts_to_records(connection, plan_id)
