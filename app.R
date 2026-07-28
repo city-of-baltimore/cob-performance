@@ -3442,25 +3442,15 @@ resolve_owning_agency_id <- function(db, value) {
 # whichever entity the picker selected, not to whatever plan the current user
 # happens to be viewing -- e.g. a SystemAdmin looking at Mayoralty's own plan
 # who picks "OPI" as the owner must link the new measure to OPI, not to
-# Mayoralty. Editing an existing measure (no picker involved) keeps the prior
-# current-submitter behavior.
-#
-# Leaving the picker at its default -- Mayor's Office / OPI, per
-# default_owning_measure_choice() -- is explicitly documented in the modal's
-# own field help text as meaning "no single clear owner", not "OPI owns
-# this measure". Reported 2026-07-28: linking that default selection to OPI
-# anyway made every unassigned Citywide measure incorrectly show up on OPI's
-# own Measures page. NA_character_ tells the caller to skip creating an
-# entity-specific link entirely, leaving the measure at the bare agency_id
-# (Mayoralty) level -- visible on the Action Plan Measures admin page and
-# any bare top-level Mayoralty view, but not force-attributed to OPI.
-resolve_link_submitter_value <- function(existing_measure_id, owning_picker_value, current_submitter_value, default_picker_value = NULL) {
+# Mayoralty. This applies even when OPI is left at its default selection --
+# OPI is meant to administratively hold measures with no other single clear
+# owner, so those should still link (and surface) specifically under OPI,
+# not sit unlinked at the bare Mayoralty agency level. Editing an existing
+# measure (no picker involved) keeps the prior current-submitter behavior.
+resolve_link_submitter_value <- function(existing_measure_id, owning_picker_value, current_submitter_value) {
   is_new <- is.null(existing_measure_id) || identical(existing_measure_id, "new")
   picker_usable <- !is.null(owning_picker_value) && length(owning_picker_value) == 1 && nzchar(owning_picker_value)
-  if (is_new && picker_usable) {
-    if (!is.null(default_picker_value) && identical(owning_picker_value, default_picker_value)) return(NA_character_)
-    return(owning_picker_value)
-  }
+  if (is_new && picker_usable) return(owning_picker_value)
   current_submitter_value
 }
 
@@ -7254,13 +7244,8 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    default_owning_picker_value <- default_owning_measure_choice(agency_selector_choices(data))
-    link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value(), default_owning_picker_value)
-    link_result <- if (is.na(link_submitter_value)) {
-      NULL
-    } else {
-      tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, link_submitter_value)), error = function(error) error)
-    }
+    link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
+    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, link_submitter_value)), error = function(error) error)
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
