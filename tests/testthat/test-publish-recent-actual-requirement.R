@@ -1,10 +1,11 @@
 # Requirement added 2026-07-27, clarified 2026-07-27: a plan's selected
 # measures (goal KPIs and service metrics) must have reported BOTH the
-# most recently completed fiscal year's actual (e.g. FY26 actual while
-# FY27 is executing) AND the upcoming budget year's target (e.g. FY28)
-# before the plan can be published -- enforced both in the "Plan
-# readiness" checklist (plan_measures_missing_required_fiscal_data() in
-# app.R) and as a hard server-side gate in publish_agency_plan()
+# most recently completed fiscal year's actual value AND its explanatory
+# note, AND the upcoming budget year's target value AND its note (e.g.
+# FY26 actual/notes, FY28 target/notes while FY27 is executing) before
+# the plan can be published -- enforced both in the "Plan readiness"
+# checklist (plan_measures_missing_required_fiscal_data() in app.R) and
+# as a hard server-side gate in publish_agency_plan()
 # (measure_ids_missing_required_fiscal_data() in R/database.R). Measures
 # marked change_mapping = "New" this cycle are exempt, since they have
 # nothing prior to report yet.
@@ -43,13 +44,13 @@ test_that("measure_ids_missing_required_fiscal_data flags a measure missing eith
   missing_actual_id <- save_measure_record(
     connection,
     c(base_values, list(title = "Fiscal-data test: missing actual", change_mapping = "Unchanged")),
-    list(list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "")),
+    list(list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "target explanation")),
     user_id, submit = FALSE, is_admin = TRUE
   )
   missing_target_id <- save_measure_record(
     connection,
     c(base_values, list(title = "Fiscal-data test: missing target", change_mapping = "Unchanged")),
-    list(list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "", target_value = NA_real_, target_value_notes = "")),
+    list(list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "actual explanation", target_value = NA_real_, target_value_notes = "")),
     user_id, submit = FALSE, is_admin = TRUE
   )
   new_id <- save_measure_record(
@@ -60,6 +61,18 @@ test_that("measure_ids_missing_required_fiscal_data flags a measure missing eith
   complete_id <- save_measure_record(
     connection,
     c(base_values, list(title = "Fiscal-data test: complete", change_mapping = "Unchanged")),
+    list(
+      list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "actual explanation", target_value = NA_real_, target_value_notes = ""),
+      list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "target explanation")
+    ),
+    user_id, submit = FALSE, is_admin = TRUE
+  )
+  # Regression guard: both values present but notes left blank must still
+  # count as missing -- the notes are required alongside the values, not
+  # merely optional accompaniments.
+  missing_notes_id <- save_measure_record(
+    connection,
+    c(base_values, list(title = "Fiscal-data test: values present, notes blank", change_mapping = "Unchanged")),
     list(
       list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "", target_value = NA_real_, target_value_notes = ""),
       list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "")
@@ -72,7 +85,7 @@ test_that("measure_ids_missing_required_fiscal_data flags a measure missing eith
   # driver state badly enough to poison later tests' own connections too.
   on.exit(
     {
-      ids <- c(missing_actual_id, missing_target_id, new_id, complete_id)
+      ids <- c(missing_actual_id, missing_target_id, new_id, complete_id, missing_notes_id)
       placeholders <- paste0("$", seq_along(ids), collapse = ", ")
       id_params <- as.list(as.integer(ids))
       DBI::dbExecute(connection, sprintf("DELETE FROM performance.measure_actuals WHERE measure_id IN (%s)", placeholders), params = id_params)
@@ -83,9 +96,9 @@ test_that("measure_ids_missing_required_fiscal_data flags a measure missing eith
   )
 
   missing <- measure_ids_missing_required_fiscal_data(
-    connection, c(missing_actual_id, missing_target_id, new_id, complete_id), actual_fy, next_target_fy
+    connection, c(missing_actual_id, missing_target_id, new_id, complete_id, missing_notes_id), actual_fy, next_target_fy
   )
-  expect_setequal(missing, c(missing_actual_id, missing_target_id))
+  expect_setequal(missing, c(missing_actual_id, missing_target_id, missing_notes_id))
 })
 
 test_that("publish_agency_plan rejects publishing when a required measure is missing its recent actual or next target", {

@@ -3276,11 +3276,13 @@ plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services
   if (!nrow(measures)) return(measures)
   actual_fy <- fiscal_measure_snapshot_years()$actual_fy
   next_target_fy <- current_fiscal_year() + 1L
-  reported_actual_ids <- unique(db$performance_measure_actuals$measure_id[
-    db$performance_measure_actuals$fiscal_year == actual_fy & !is.na(db$performance_measure_actuals$annual_actual)
+  actuals <- db$performance_measure_actuals
+  nonblank <- function(x) !is.na(x) & nzchar(trimws(x))
+  reported_actual_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == actual_fy & !is.na(actuals$annual_actual) & nonblank(actuals$annual_actual_notes)
   ])
-  reported_target_ids <- unique(db$performance_measure_actuals$measure_id[
-    db$performance_measure_actuals$fiscal_year == next_target_fy & !is.na(db$performance_measure_actuals$target_value)
+  reported_target_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == next_target_fy & !is.na(actuals$target_value) & nonblank(actuals$target_value_notes)
   ])
   measures[!(measures$measure_id %in% reported_actual_ids & measures$measure_id %in% reported_target_ids), , drop = FALSE]
 }
@@ -4951,11 +4953,11 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   do.call(div, c(backdrop_attrs, list(panel)))
 }
 
-measure_label <- function(text, help, required = FALSE, required_label = "Required") {
+measure_label <- function(text, help, required = FALSE) {
   tags$span(
     class = "field-label-with-help",
     span(text),
-    if (required) span(class = "required-marker", required_label),
+    if (required) span(class = "required-marker", "Required"),
     tags$span(class = "field-help-icon", tabindex = "0", title = help, `aria-label` = paste(text, "guidance"), "?")
   )
 }
@@ -5109,7 +5111,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       ),
       div(
         class = "measure-form-stack",
-        div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete. Fields marked \"Required to publish\" are a separate check -- they gate the overall plan being published, not this measure's own save or submit."),
+        div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
         if (definition_locked) {
           div(
             class = "measure-validated-lock-note",
@@ -5252,18 +5254,26 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 h4(fy_label(year)),
                 div(
                   class = if (is_recent_actual_year) "measure-year-highlight",
-                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year.", is_recent_actual_year, required_label = "Required to publish"), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
                   if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
-                measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                div(
+                  class = if (is_recent_actual_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters.", is_recent_actual_year), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                ),
                 div(
                   class = if (is_next_target_year) "measure-year-highlight",
-                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year.", is_next_target_year, required_label = "Required to publish"), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year."), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
                   if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
-                measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked)
+                div(
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Note explaining target rationale, assumptions, or revisions. Maximum 200 characters.", is_next_target_year), annual_value(year, "target_value_notes"), locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                )
               )
             })
           )

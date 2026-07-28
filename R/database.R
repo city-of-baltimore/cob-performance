@@ -2734,10 +2734,12 @@ measure_ids_missing_required_fiscal_data <- function(connection, measure_ids, ac
         "  NOT EXISTS (",
         "    SELECT 1 FROM performance.measure_actuals ma",
         "    WHERE ma.measure_id = pm.measure_id AND ma.fiscal_year = $1 AND ma.annual_actual IS NOT NULL",
+        "    AND ma.annual_actual_notes IS NOT NULL AND btrim(ma.annual_actual_notes) <> ''",
         "  )",
         "  OR NOT EXISTS (",
         "    SELECT 1 FROM performance.measure_actuals mt",
         "    WHERE mt.measure_id = pm.measure_id AND mt.fiscal_year = $2 AND mt.target_value IS NOT NULL",
+        "    AND mt.target_value_notes IS NOT NULL AND btrim(mt.target_value_notes) <> ''",
         "  )",
         ")"
       ),
