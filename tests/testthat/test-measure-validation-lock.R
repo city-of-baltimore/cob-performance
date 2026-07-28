@@ -1,11 +1,14 @@
 # Once a performance measure is validated, it locks to SystemAdmin-only
 # editing -- including all historic fiscal-year data and every definition
-# field -- except the current fiscal year's actual (still being actively
-# reported) and the following fiscal year's target (still being actively
-# planned). See current_fiscal_year()/measure_actual_is_locked()/
-# measure_target_is_locked()/measure_definition_is_locked() in
-# R/database.R, enforced in app.R's collect_measure_form()/
-# collect_measure_years() and again in save_measure_record() itself.
+# field -- except the two most recently completed years' actuals (the
+# most recent one is required to publish the plan, see
+# plan_measures_missing_recent_actual() in app.R, so it must stay open to
+# non-admins even after validation) and the following fiscal year's target
+# (still being actively planned). See current_fiscal_year()/
+# measure_actual_is_locked()/measure_target_is_locked()/
+# measure_definition_is_locked() in R/database.R, enforced in app.R's
+# collect_measure_form()/collect_measure_years() and again in
+# save_measure_record() itself.
 
 test_that("current_fiscal_year() rolls over on July 1, named by the ending calendar year", {
   expect_equal(current_fiscal_year(as.Date("2026-06-30")), 2026L)
@@ -19,7 +22,11 @@ test_that("measure lock functions are validation- and date-driven, not static fi
 
   expect_false(measure_actual_is_locked(fy - 5L, FALSE))
   expect_true(measure_actual_is_locked(fy - 5L, TRUE))
-  expect_true(measure_actual_is_locked(fy - 1L, TRUE))
+  expect_true(measure_actual_is_locked(fy - 2L, TRUE))
+  # The most recently completed year's actual stays open even once
+  # validated -- it's required to publish, so a non-admin must still be
+  # able to report it.
+  expect_false(measure_actual_is_locked(fy - 1L, TRUE))
   expect_false(measure_actual_is_locked(fy, TRUE))
 
   expect_false(measure_target_is_locked(fy - 1L, FALSE))
@@ -31,7 +38,7 @@ test_that("measure lock functions are validation- and date-driven, not static fi
   expect_true(measure_definition_is_locked(TRUE))
 })
 
-test_that("save_measure_record locks a validated measure's definition and historic data from non-admins, keeping the two open windows editable and the status intact", {
+test_that("save_measure_record locks a validated measure's definition and historic data from non-admins, keeping the open windows editable and the status intact", {
   skip_if_no_test_database()
   connection <- connect_app_database()
 
@@ -53,6 +60,7 @@ test_that("save_measure_record locks a validated measure's definition and histor
     approval_status = "Draft", submitted_for_approval_at = as.POSIXct(NA)
   )
   yearly_values <- list(
+    list(fiscal_year = fy - 2L, annual_actual = 80, annual_actual_notes = "", target_value = 75, target_value_notes = ""),
     list(fiscal_year = fy - 1L, annual_actual = 100, annual_actual_notes = "", target_value = 90, target_value_notes = ""),
     list(fiscal_year = fy, annual_actual = 50, annual_actual_notes = "", target_value = 95, target_value_notes = ""),
     list(fiscal_year = fy + 1L, annual_actual = NA_real_, annual_actual_notes = "", target_value = 120, target_value_notes = "")
@@ -75,8 +83,9 @@ test_that("save_measure_record locks a validated measure's definition and histor
   DBI::dbExecute(connection, "UPDATE performance.performance_measure SET approval_status = 'Validated', validated = true WHERE measure_id = $1", params = list(measure_id))
 
   # A non-admin's request tries to change everything: title/formula/scope
-  # (definition), the historic year, and the current year's own target --
-  # plus the two things that should genuinely be allowed to change.
+  # (definition), the fully-historic year, the recent year's locked target
+  # -- plus the things that should genuinely be allowed to change (the
+  # recent year's actual, the current year's actual, next year's target).
   tampered_values <- base_values
   tampered_values$measure_id <- measure_id
   tampered_values$title <- "TAMPERED TITLE"
@@ -85,7 +94,8 @@ test_that("save_measure_record locks a validated measure's definition and histor
   tampered_values$approval_status <- "Validated"
   tampered_values$submitted_for_approval_at <- as.POSIXct(NA)
   tampered_yearly <- list(
-    list(fiscal_year = fy - 1L, annual_actual = 999, annual_actual_notes = "tampered", target_value = 999, target_value_notes = "tampered"),
+    list(fiscal_year = fy - 2L, annual_actual = 999, annual_actual_notes = "tampered", target_value = 999, target_value_notes = "tampered"),
+    list(fiscal_year = fy - 1L, annual_actual = 105, annual_actual_notes = "real update - recent actual", target_value = 999, target_value_notes = "tampered"),
     list(fiscal_year = fy, annual_actual = 60, annual_actual_notes = "real update", target_value = 999, target_value_notes = "tampered"),
     list(fiscal_year = fy + 1L, annual_actual = NA_real_, annual_actual_notes = "", target_value = 130, target_value_notes = "planned")
   )
@@ -96,14 +106,20 @@ test_that("save_measure_record locks a validated measure's definition and histor
   expect_equal(reloaded$title[[1]], "Lock test measure")
   expect_equal(reloaded$formula[[1]], "Original formula")
   expect_false(reloaded$is_city[[1]])
-  # A non-admin's save on a validated measure can only ever touch the two
-  # open windows -- it must not knock the measure back to Draft the way a
+  # A non-admin's save on a validated measure can only ever touch the open
+  # windows -- it must not knock the measure back to Draft the way a
   # genuine content edit would.
   expect_equal(reloaded$approval_status[[1]], "Validated")
 
   actuals <- DBI::dbGetQuery(connection, "SELECT fiscal_year, annual_actual, target_value FROM performance.measure_actuals WHERE measure_id = $1 ORDER BY fiscal_year", params = list(measure_id))
+  fully_historic <- actuals[actuals$fiscal_year == fy - 2L, , drop = FALSE]
+  expect_equal(fully_historic$annual_actual[[1]], 80)
+  expect_equal(fully_historic$target_value[[1]], 75)
+
+  # The most recently completed year: actual is open (required to
+  # publish), but its target is still locked history.
   past <- actuals[actuals$fiscal_year == fy - 1L, , drop = FALSE]
-  expect_equal(past$annual_actual[[1]], 100)
+  expect_equal(past$annual_actual[[1]], 105)
   expect_equal(past$target_value[[1]], 90)
 
   current <- actuals[actuals$fiscal_year == fy, , drop = FALSE]

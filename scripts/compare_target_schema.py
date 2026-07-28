@@ -44,7 +44,6 @@ def canonical_to_current_location(table_name: str) -> tuple[str, str]:
         "plan_entity",
         "plan_entity_service",
         "action_plan_initiative",
-        "action_plan_measure",
     }:
         return "reference", table_name
     if table_name in {"user", "user_role", "user_agency_access", "user_functions"}:

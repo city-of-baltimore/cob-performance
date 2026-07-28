@@ -29,6 +29,7 @@ pages <- list(
   approval_queue = "Plan approval queue",
   publishing_queue = "Publishing queue",
   measure_review = "Measure review",
+  action_plan_measures = "Action Plan Measures",
   bug_fix = "Bug/Fix",
   role_preview = "Role preview",
   strategic_plan = "City action plan",
@@ -656,11 +657,27 @@ scorable_service_rows <- function(service_rows) {
   service_rows[!is_administration_service(service_rows), , drop = FALSE]
 }
 
-measure_preview_years <- function(current_fy = 2027) {
+measure_preview_years <- function(current_fy = current_fiscal_year()) {
+  # Matches the budget book: the four most recently completed actual years,
+  # then this year's target and next year's -- we're always planning one
+  # fiscal year ahead of whichever one is currently executing (e.g. FY27
+  # executing now means FY27-FY28 Target, FY23-FY26 Actual). The two
+  # ranges must not overlap (a repeated year showed up as a duplicate
+  # column).
   list(
-    actual_years = seq.int(current_fy - 5L, current_fy - 1L),
-    target_years = seq.int(current_fy - 1L, current_fy + 1L)
+    actual_years = seq.int(current_fy - 4L, current_fy - 1L),
+    target_years = seq.int(current_fy, current_fy + 1L)
   )
+}
+
+# Builds one <tr>'s cells for a kpi-history-table, highlighting the cell for
+# highlight_year -- the past fiscal year's actual and the next fiscal
+# year's target are the two boxes users most need to keep current, so they
+# get a visual callout instead of blending into the rest of the row.
+history_row_cells <- function(values, years, highlight_year) {
+  Map(function(value, year) {
+    tags$td(class = if (identical(year, highlight_year)) "kpi-history-highlight", value)
+  }, values, years)
 }
 
 service_body_output_id <- function(service_id) {
@@ -715,23 +732,27 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
-  actual_years <- preview_years$actual_years
-  target_years <- preview_years$target_years
+  preview_years <- measure_preview_years()
+  preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
     measure <- measures[measure_index, , drop = FALSE]
     history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-    actual_values <- vapply(actual_years, function(year) {
+    actual_values <- vapply(preview_all_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
-      if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
+      value <- if (nrow(row)) row$annual_actual[[1]] else NA_real_
+      format_measure_value(value, measure$format_type[1], measure$display_unit[1])
     }, character(1))
-    target_values <- vapply(target_years, function(year) {
+    target_values <- vapply(preview_all_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
-      if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
+      value <- if (nrow(row)) row$target_value[[1]] else NA_real_
+      format_measure_value(value, measure$format_type[1], measure$display_unit[1], "Not set")
     }, character(1))
     div(
       class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_metrics) "active" else ""),
       `data-measure-id` = as.character(measure$measure_id),
+      title = "Click to review or edit this measure",
       div(
         class = "kpi-preview-header",
         div(h4(measure$title)),
@@ -746,16 +767,17 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
         class = "kpi-history-wrap",
         tags$table(
           class = "kpi-history-table",
-          tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
+          tags$caption(class = "sr-only", paste(measure$title, "actuals and targets by fiscal year")),
           tags$thead(tags$tr(
             tags$th(scope = "col", "Series"),
-            lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+            lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
           )),
           tags$tbody(
-            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
-            tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
+            tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+            tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
           )
-        )
+        ),
+        p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
       )
     )
   })
@@ -1328,13 +1350,14 @@ nav_item <- function(id, label, icon_tag, section = NULL, item_class = NULL) {
 
 performance_reviewing_nav_items <- function(approval_first = FALSE) {
   measure_review <- nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item measure-review-nav-item")
+  action_plan_measures <- nav_item("action_plan_measures", "Action Plan Measures", icon("bullseye"), item_class = "performance-reviewing-nav-item action-plan-measures-nav-item")
   plan_review <- nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item")
   approval_queue <- nav_item("approval_queue", "Plan approval queue", icon("stamp"), item_class = "performance-reviewing-nav-item approval-queue-nav-item")
   publishing_queue <- nav_item("publishing_queue", "Publishing queue", icon("upload"), item_class = "performance-reviewing-nav-item publishing-nav-item")
   if (isTRUE(approval_first)) {
-    tagList(measure_review, approval_queue, plan_review, publishing_queue)
+    tagList(measure_review, action_plan_measures, approval_queue, plan_review, publishing_queue)
   } else {
-    tagList(measure_review, plan_review, approval_queue, publishing_queue)
+    tagList(measure_review, action_plan_measures, plan_review, approval_queue, publishing_queue)
   }
 }
 
@@ -1409,10 +1432,18 @@ metric_number <- function(value, unit = NULL) {
 }
 
 metric_visual <- function(metric) {
-  unit <- metric$unit
-  max_value <- max(metric$current, metric$target, na.rm = TRUE)
-  current_width <- max(3, round(metric$current / max_value * 100))
-  target_position <- min(100, max(3, round(metric$target / max_value * 100)))
+  format_type <- metric$format_type %||% "Count"
+  # format_measure_value() checks is.na(display_unit) to detect "no unit",
+  # but metric$unit is NULL (not NA) when absent -- is.na(NULL) is
+  # logical(0), which throws in an `if`, so coalesce it to NA first.
+  metric_unit <- metric$unit %||% NA_character_
+  label_for <- function(value) format_measure_value(value, format_type, metric_unit, "Not set")
+  current_value <- if (is.null(metric$current) || length(metric$current) == 0) NA_real_ else metric$current
+  target_value <- if (is.null(metric$target) || length(metric$target) == 0) NA_real_ else metric$target
+  max_value <- suppressWarnings(max(current_value, target_value, na.rm = TRUE))
+  if (!is.finite(max_value) || max_value == 0) max_value <- 1
+  current_width <- if (is.na(current_value)) 0 else max(3, round(current_value / max_value * 100))
+  target_position <- if (is.na(target_value)) 0 else min(100, max(3, round(target_value / max_value * 100)))
   current_label_position <- min(96, max(4, current_width))
   target_label_position <- min(96, max(4, target_position))
 
@@ -1428,52 +1459,33 @@ metric_visual <- function(metric) {
       div(
         class = "metric-bar-track",
         role = "img",
-        `aria-label` = paste("Current", metric_number(metric$current, unit), "target", metric_number(metric$target, unit)),
-        div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
-        div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
+        `aria-label` = paste("Current", label_for(current_value), "target", label_for(target_value)),
+        if (!is.na(current_value)) div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
+        if (!is.na(target_value)) div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
       ),
-      span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), metric_number(metric$current, unit)),
-      span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), metric_number(metric$target, unit))
+      if (!is.na(current_value)) span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), label_for(current_value)),
+      if (!is.na(target_value)) span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), label_for(target_value))
     )
   )
 }
 
-action_plan_measure_item <- function(db, metric) {
-  matched_id <- suppressWarnings(as.integer(metric$matched_measure_id %||% NA_integer_))
-  matched_measure <- if (!is.na(matched_id)) {
-    db$performance_performance_measure[db$performance_performance_measure$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  history <- if (nrow(matched_measure)) {
-    db$performance_measure_actuals[db$performance_measure_actuals$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  has_data <- nrow(history) && (any(!is.na(history$annual_actual)) || any(!is.na(history$target_value)))
-  data_summary <- NULL
-  if (has_data) {
-    actual_rows <- history[!is.na(history$annual_actual), , drop = FALSE]
-    target_rows <- history[!is.na(history$target_value), , drop = FALSE]
-    latest_actual <- actual_rows[order(actual_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    latest_target <- target_rows[order(target_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    data_summary <- div(
-      class = "action-plan-measure-data",
-      if (nrow(latest_actual)) span(tags$strong(paste0(fy_label(latest_actual$fiscal_year[[1]]), " actual: ")), format_measure_value(latest_actual$annual_actual[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]])),
-      if (nrow(latest_target)) span(tags$strong(paste0(fy_label(latest_target$fiscal_year[[1]]), " target: ")), format_measure_value(latest_target$target_value[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]], "Not set")),
-      span(class = "measure-direction-note", paste0(metric$match_type, " to measure ", matched_id))
-    )
-  }
+# Renders one Citywide measure in a pillar's "Performance Measures"
+# section: a current-vs-target bar chart (metric_visual()) once it has at
+# least one recorded value, otherwise a plain placeholder -- a measure can
+# be marked Citywide and linked to a pillar before any actual/target for
+# the current snapshot years has been entered.
+action_plan_measure_item <- function(metric) {
+  has_data <- !is.na(metric$current) || !is.na(metric$target)
+  if (has_data) return(metric_visual(metric))
   div(
     class = "action-plan-measure-item",
     div(
       tags$strong(metric$name),
       if (!is.null(metric$direction) && !is.na(metric$direction) && nzchar(trimws(metric$direction))) {
         span(class = "measure-direction-note", metric$direction)
-      },
-      data_summary
+      }
     ),
-    if (has_data) status_chip("Data linked", "success") else status_chip("Awaiting data", "warning")
+    status_chip("Awaiting data", "warning")
   )
 }
 
@@ -1598,8 +1610,12 @@ pillar_modal <- function(pillar_id, db) {
         tags$section(
           class = "modal-section-block",
           h3("Performance Measures"),
-          p("Action Plan measure names are included here. Baselines, actuals, and targets are awaiting validated data."),
-          div(class = "action-plan-measure-list", lapply(pillar$metrics, function(metric) action_plan_measure_item(db, metric)))
+          p("Citywide measures assigned to this pillar, with the most recently reported actual and current target."),
+          if (length(pillar$metrics)) {
+            div(class = "action-plan-measure-list", lapply(pillar$metrics, action_plan_measure_item))
+          } else {
+            p(class = "action-plan-measure-empty", "No measures are marked Citywide for this pillar yet.")
+          }
         ),
         tags$section(
           class = "modal-section-block",
@@ -3242,6 +3258,35 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
   unique(c(goal_measure_ids, service_measure_ids))
 }
 
+# Measures selected as this plan's goal KPIs or service metrics that are
+# missing either the most recently completed fiscal year's actual (e.g.
+# FY26 actual while FY27 is executing) or the upcoming budget year's
+# target (e.g. FY28). Both are required to publish the *plan* -- neither
+# is required to save or submit an individual measure for approval (see
+# validate_measure_submit_requirements()). Measures marked "New" this
+# cycle are exempt -- they weren't tracked yet, so there's nothing to report.
+plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services) {
+  empty <- db$performance_performance_measure[0, , drop = FALSE]
+  if (is.null(plan) || !nrow(plan)) return(empty)
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
+  if (!length(selected_measure_ids)) return(empty)
+  measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  change_mapping <- ifelse(is.na(measures$change_mapping), "", measures$change_mapping)
+  measures <- measures[change_mapping != "New", , drop = FALSE]
+  if (!nrow(measures)) return(measures)
+  actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  next_target_fy <- current_fiscal_year() + 1L
+  actuals <- db$performance_measure_actuals
+  nonblank <- function(x) !is.na(x) & nzchar(trimws(x))
+  reported_actual_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == actual_fy & !is.na(actuals$annual_actual) & nonblank(actuals$annual_actual_notes)
+  ])
+  reported_target_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == next_target_fy & !is.na(actuals$target_value) & nonblank(actuals$target_value_notes)
+  ])
+  measures[!(measures$measure_id %in% reported_actual_ids & measures$measure_id %in% reported_target_ids), , drop = FALSE]
+}
+
 plan_readiness_summary <- function(db, submitter_value, plan) {
   if (is.null(plan) || !nrow(plan)) return(list(rows = list(), has_errors = TRUE))
   services <- plan_service_rows(db, plan)
@@ -3302,13 +3347,30 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
     more_services <- if (length(missing_service_names) > 3) paste("and", length(missing_service_names) - 3, "more") else ""
     paste("Missing metrics:", listed_services, more_services)
   }
-  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures)
+  recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  next_target_fy <- current_fiscal_year() + 1L
+  missing_fiscal_data <- plan_measures_missing_required_fiscal_data(db, plan, goals, services)
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures) && !nrow(missing_fiscal_data)
+  measures_missing_notes <- c(
+    if (!length(selected_measure_ids)) "at least one plan measure",
+    if (nrow(invalid_selected_measures)) {
+      paste0(
+        "validation for ", paste(head(invalid_selected_measures$title, 3), collapse = ", "),
+        if (nrow(invalid_selected_measures) > 3) paste0(" and ", nrow(invalid_selected_measures) - 3, " more") else ""
+      )
+    },
+    if (nrow(missing_fiscal_data)) {
+      paste0(
+        fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+        paste(head(missing_fiscal_data$title, 3), collapse = ", "),
+        if (nrow(missing_fiscal_data) > 3) paste0(" and ", nrow(missing_fiscal_data) - 3, " more") else ""
+      )
+    }
+  )
   measures_detail <- if (measures_complete) {
-    paste("All", length(selected_measure_ids), "plan measures validated")
-  } else if (!length(selected_measure_ids)) {
-    "Missing: at least one plan measure"
+    paste("All", length(selected_measure_ids), "plan measures validated and reporting", fy_label(recent_actual_fy), "actual and", fy_label(next_target_fy), "target")
   } else {
-    paste("Missing validation:", paste(head(invalid_selected_measures$title, 3), collapse = ", "), if (nrow(invalid_selected_measures) > 3) paste("and", nrow(invalid_selected_measures) - 3, "more") else "")
+    paste("Missing:", paste(measures_missing_notes, collapse = "; "))
   }
   risks_complete <- nrow(risks) > 0
   rows <- list(
@@ -3363,6 +3425,28 @@ agency_selector_choices <- function(db) {
 agency_choices_only <- function(db) {
   choices <- agency_selector_choices(db)
   choices[startsWith(unname(choices), "agency:")]
+}
+
+resolve_owning_agency_id <- function(db, value) {
+  submitter <- parse_submitter_value(value)
+  if (identical(submitter$type, "entity")) {
+    entity <- db$reference_plan_entity[db$reference_plan_entity$entity_id == submitter$id, , drop = FALSE]
+    if (nrow(entity)) return(entity$parent_agency_id[[1]])
+    return(NA_character_)
+  }
+  submitter$id
+}
+
+# Default selection for the new-measure owning-agency picker: OPI when it's
+# in the choice list (it resolves to Mayoralty's agency_id, AGC4301, via
+# resolve_owning_agency_id()), else the Mayor's Office agency choice itself,
+# else just the first available choice.
+default_owning_measure_choice <- function(choices) {
+  opi_match <- unname(choices[names(choices) == "Mayor's Office of Performance and Innovation"])
+  if (length(opi_match)) return(opi_match[[1]])
+  if ("agency:AGC4301" %in% choices) return("agency:AGC4301")
+  if (length(choices)) return(unname(choices[[1]]))
+  "agency:AGC4301"
 }
 
 user_submitter_choices <- function(db, user_id) {
@@ -4962,7 +5046,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE, default_is_city = FALSE, show_owning_entity_picker = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -4998,7 +5082,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   selected_pillar_goal <- db$reference_pillar_goal[db$reference_pillar_goal$pillar_goal_id == selected_pillar_goal_id, , drop = FALSE]
   pillar_label <- if (nrow(selected_pillar)) selected_pillar$pillar_name[[1]] else "Not linked"
   pillar_goal_label <- if (nrow(selected_pillar_goal)) paste(selected_pillar_goal$goal_code[[1]], selected_pillar_goal$goal_title[[1]]) else "Not linked"
-  scope_city <- isTRUE(value("is_city", FALSE))
+  scope_city <- isTRUE(value("is_city", default_is_city))
   scope_agency <- isTRUE(value("is_agency", FALSE))
   scope_service <- if (is_new) TRUE else isTRUE(value("is_service", FALSE))
   scope_label <- paste(
@@ -5055,6 +5139,19 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Definition"),
           div(
             class = "measure-form-grid",
+            if (is_new && show_owning_entity_picker) {
+              owning_choices <- agency_selector_choices(db)
+              div(
+                class = "measure-field full-width",
+                selectInput(
+                  "measure_owning_entity",
+                  measure_label("Owning agency", "Griffin files this measure under whichever agency or entity owns it. If there's no clear single owner, leave this set to Mayor's Office (Office of Performance and Innovation).", TRUE),
+                  choices = owning_choices,
+                  selected = default_owning_measure_choice(owning_choices),
+                  selectize = FALSE
+                )
+              )
+            },
             div(class = "measure-field full-width", disable_input_tag(textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title")), definition_locked)),
             div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description")), definition_locked)),
             div(class = "measure-field", disable_input_tag(selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE), definition_locked)),
@@ -5138,8 +5235,8 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             p(
               class = "field-inline-help",
               paste0(
-                "This measure is validated: only the ", fy_label(current_fiscal_year()), " actual and the ",
-                fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
+                "This measure is validated: only the ", fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
+                " actuals and the ", fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
               )
             )
           },
@@ -5150,19 +5247,33 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
               target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
               actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
               target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
+              is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
+              is_next_target_year <- year == target_fy
               div(
                 class = "measure-year-row",
                 h4(fy_label(year)),
                 div(
+                  class = if (is_recent_actual_year) "measure-year-highlight",
                   measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
-                measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
                 div(
-                  measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  class = if (is_recent_actual_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                ),
+                div(
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year."), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
-                measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked)
+                div(
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                )
               )
             })
           )
@@ -5177,7 +5288,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", "Submit for approval currently marks this measure pending. The system admin review panel will be added in a later workflow step."),
+          p(class = "approval-workflow-note", "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
           div(
             tags$button(id = "save_measure", type = "button", class = "civic-button secondary", "Save"),
             tags$button(id = "submit_measure", type = "button", class = "civic-button primary", "Submit for approval")
@@ -5265,6 +5376,74 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     section_key = "measures",
     show_save = FALSE,
     show_status = FALSE
+  )
+}
+
+# Every measure marked Citywide (is_city = TRUE), across every agency --
+# the admin view for the Action Plan Measures feature. Reuses the same
+# measure editor modal as the regular Measures page (data-measure-id /
+# data-new-measure, handled by the same client-side click handler and
+# open_measure_id observer) rather than a separate editor. Visible to the
+# whole Performance Reviewing group; the modal's own can_edit_scope check
+# still restricts who can actually mark a measure Citywide or change its
+# pillar to SystemAdmin/OPIReviewer.
+page_action_plan_measures <- function(db) {
+  measures <- db$city_measures
+  snapshot_years <- fiscal_measure_snapshot_years()
+  missing_pillar_count <- if (nrow(measures)) sum(is.na(measures$pillar_id)) else 0L
+  awaiting_data_count <- if (nrow(measures)) sum(is.na(measures$current_value) & is.na(measures$target_value)) else 0L
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "Performance Reviewing"),
+        h1("Action Plan Measures"),
+        p("Every measure marked Citywide, across all agencies. Open a measure to update its data, targets, or Action Plan pillar alignment.")
+      )
+    ),
+    div(
+      class = "dashboard-grid reviewer-dashboard-grid",
+      metric_tile("Citywide measures", nrow(measures), "Marked is_city across all agencies"),
+      metric_tile("Missing a pillar", missing_pillar_count, "Won't appear on any pillar's Action Plan view until assigned", if (missing_pillar_count) "warning" else "success"),
+      metric_tile("Awaiting data", awaiting_data_count, paste0(fy_label(snapshot_years$actual_fy), " actual and ", fy_label(snapshot_years$target_fy), " target both blank"), if (awaiting_data_count) "warning" else "success")
+    ),
+    surface(
+      "Citywide Measures",
+      "When you add a Citywide measure, you'll pick its owning agency or entity directly in the form. Leave Mayor's Office selected for measures with no single clear owner (Office of Performance and Innovation).",
+      if (!nrow(measures)) {
+        div(class = "empty-state", h3("No measures are marked Citywide yet"), p("Open any measure and check \"Citywide measure\" (SystemAdmin/OPIReviewer only) to have it appear here."))
+      } else {
+        div(
+          class = "app-table measure-library-table action-plan-measures-table",
+          div(
+            class = "table-row table-head action-plan-measures-row",
+            span("Measure"),
+            span("Pillar"),
+            span("Owning agency"),
+            span(paste(fy_label(snapshot_years$actual_fy), "Actual /", fy_label(snapshot_years$target_fy), "Target")),
+            span("Status")
+          ),
+          lapply(seq_len(nrow(measures)), function(i) {
+            status_meta <- measure_library_status(measures[i, , drop = FALSE])
+            actual <- format_measure_value(measures$current_value[i], measures$format_type[i], measures$display_unit[i], "Not reported")
+            target <- format_measure_value(measures$target_value[i], measures$format_type[i], measures$display_unit[i], "Not set")
+            pillar_label <- if (is.na(measures$pillar_name[i])) "Not linked" else measures$pillar_name[i]
+            agency_label <- if (!is.na(measures$agency_public_name[i]) && nzchar(measures$agency_public_name[i])) measures$agency_public_name[i] else measures$agency_name[i]
+            tags$button(
+              type = "button",
+              class = "table-row action-plan-measures-row measure-library-row",
+              `data-measure-id` = measures$measure_id[i],
+              span(measures$title[i]),
+              span(class = if (is.na(measures$pillar_name[i])) "action-plan-measure-unlinked", pillar_label),
+              span(agency_label),
+              span(paste(actual, "/", target)),
+              status_chip(status_meta$label, status_meta$tone)
+            )
+          })
+        )
+      },
+      actions = tags$button(type = "button", class = "civic-button primary", `data-new-measure` = "true", `data-page` = "action_plan_measures", `data-default-city` = "true", icon("plus"), "Add a Citywide measure")
+    )
   )
 }
 
@@ -5364,9 +5543,10 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   pillar_goal_labels <- paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)
   alignment_choices <- c("Not aligned" = "", setNames(pillar_goal_codes, pillar_goal_labels))
   kpi_choices <- setNames(agency_measures$measure_id, agency_measures$title)
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
-  actual_years <- preview_years$actual_years
-  target_years <- preview_years$target_years
+  preview_years <- measure_preview_years()
+  preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
 
   goal_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4, class = NULL) {
     tags$tr(
@@ -5499,18 +5679,21 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
             kpi_previews <- lapply(seq_len(nrow(agency_measures)), function(measure_index) {
               measure <- agency_measures[measure_index, , drop = FALSE]
               history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-              actual_values <- vapply(actual_years, function(year) {
+              actual_values <- vapply(preview_all_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
-                if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
+                value <- if (nrow(row)) row$annual_actual[[1]] else NA_real_
+                format_measure_value(value, measure$format_type[1], measure$display_unit[1])
               }, character(1))
-              target_values <- vapply(target_years, function(year) {
+              target_values <- vapply(preview_all_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
-                if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
+                value <- if (nrow(row)) row$target_value[[1]] else NA_real_
+                format_measure_value(value, measure$format_type[1], measure$display_unit[1], "Not set")
               }, character(1))
 
               div(
                 class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_measure) "active" else ""),
                 `data-measure-id` = as.character(measure$measure_id),
+                title = "Click to review or edit this measure",
                 div(
                   class = "kpi-preview-header",
                   div(h4(measure$title)),
@@ -5525,16 +5708,17 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                   class = "kpi-history-wrap",
                   tags$table(
                     class = "kpi-history-table",
-                    tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
+                    tags$caption(class = "sr-only", paste(measure$title, "actuals and targets by fiscal year")),
                     tags$thead(tags$tr(
                       tags$th(scope = "col", "Series"),
-                      lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+                      lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
                     )),
                     tags$tbody(
-                      tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
-                      tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
+                      tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+                      tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
                     )
-                  )
+                  ),
+                  p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
                 )
               )
             })
@@ -5953,6 +6137,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
     publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
+    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db) else page_landing(db, agency_id, app_roles, agency_roles),
     bug_fix = if (can_view_application_admin(app_roles)) {
       page_bug_fix(
         db,
@@ -6173,6 +6358,7 @@ server <- function(input, output, session) {
   current_page <- reactiveVal("login")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
+  pending_new_measure_default_city <- reactiveVal(FALSE)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -6830,7 +7016,12 @@ server <- function(input, output, session) {
   is_blank_value <- function(value) {
     is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
   }
-  validate_measure_submit_requirements <- function(values, yearly_values, target_fy) {
+  # The next fiscal year's target and the most recently completed year's
+  # actual are required to publish the *plan* (see
+  # plan_measures_missing_required_fiscal_data()), not to save or submit an
+  # individual measure -- a measure can be fully defined and submitted for
+  # approval before that data exists.
+  validate_measure_submit_requirements <- function(values) {
     required_fields <- c(
       title = "Measure name",
       description = "Definition",
@@ -6847,11 +7038,7 @@ server <- function(input, output, session) {
       how_data_used = "How the data is used",
       why_meaningful = "Why this measure is meaningful"
     )
-    missing <- unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
-    target_row <- yearly_values[vapply(yearly_values, function(row) identical(as.integer(row$fiscal_year), as.integer(target_fy)), logical(1))]
-    target_missing <- !length(target_row) || is.na(target_row[[1]]$target_value)
-    if (target_missing) missing <- c(missing, paste(fy_label(target_fy), "Next Fiscal Year Target"))
-    missing
+    unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
   }
   collect_measure_form <- function() {
     data <- app_data()
@@ -6859,6 +7046,13 @@ server <- function(input, output, session) {
     plan <- current_plan(data, current_submitter_value())
     initial_cycle <- plan_scalar_integer(plan, "cycle_id")
     existing_id <- current_measure_id()
+    if (is.null(existing_id) || identical(existing_id, "new")) {
+      picker_value <- input$measure_owning_entity
+      if (!is.null(picker_value) && length(picker_value) == 1 && nzchar(picker_value)) {
+        resolved_owner <- resolve_owning_agency_id(data, picker_value)
+        if (!is.na(resolved_owner) && nzchar(resolved_owner)) agency_id <- resolved_owner
+      }
+    }
     existing <- if (is.null(existing_id) || identical(existing_id, "new")) data.frame() else data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
     is_validated <- nrow(existing) > 0 && identical(existing$approval_status[[1]], "Validated")
     is_admin <- current_user_can_edit_locked_measure_data()
@@ -6896,7 +7090,10 @@ server <- function(input, output, session) {
       why_meaningful = locked_or("why_meaningful", input$measure_why_meaningful),
       proxy_measure = locked_or("proxy_measure", input$measure_proxy),
       improvement_notes = locked_or("improvement_notes", input$measure_improvement_notes),
-      change_mapping = if (nrow(existing) && !is.na(existing$change_mapping[[1]])) existing$change_mapping[[1]] else "New",
+      change_mapping = measure_change_mapping_for_date(
+        if (nrow(existing)) existing$change_mapping[[1]] else NA_character_,
+        if (nrow(existing)) existing$created_date[[1]] else Sys.Date()
+      ),
       pillar_id = if (scope_editable) nullable_number(input$measure_pillar, TRUE) else existing_value("pillar_id", NA_integer_),
       pillar_goal_id = if (scope_editable) nullable_number(input$measure_pillar_goal, TRUE) else existing_value("pillar_goal_id", NA_integer_),
       is_city = if (scope_editable) input_bool(input$measure_is_city) else isTRUE(existing_value("is_city", FALSE)),
@@ -6995,8 +7192,7 @@ server <- function(input, output, session) {
         showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
         return()
       }
-      target_fy <- plan_fiscal_year + 1L
-      missing_fields <- validate_measure_submit_requirements(values, yearly_values, target_fy)
+      missing_fields <- validate_measure_submit_requirements(values)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
         return()
@@ -7041,7 +7237,14 @@ server <- function(input, output, session) {
   }
 
   observeEvent(input$open_measure_id, {
-    current_measure_id(as.character(input$open_measure_id))
+    raw_measure_id <- as.character(input$open_measure_id)
+    if (identical(raw_measure_id, "new:city")) {
+      pending_new_measure_default_city(TRUE)
+      current_measure_id("new")
+    } else {
+      pending_new_measure_default_city(FALSE)
+      current_measure_id(raw_measure_id)
+    }
   }, ignoreInit = TRUE)
 
   observeEvent(input$close_measure_modal, current_measure_id(NULL), ignoreInit = TRUE)
@@ -7718,9 +7921,33 @@ server <- function(input, output, session) {
     request <- input$publish_plan_request
     plan_id <- suppressWarnings(as.integer(request$planId))
     if (is.na(plan_id)) return()
+    data <- ensure_app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
+    services <- plan_service_rows(data, plan)
+    selected_measure_ids <- plan_selected_measure_ids(data, plan, goals, services)
+    missing_fiscal_data <- plan_measures_missing_required_fiscal_data(data, plan, goals, services)
+    if (nrow(missing_fiscal_data)) {
+      recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+      next_target_fy <- current_fiscal_year() + 1L
+      showNotification(
+        paste0(
+          "Cannot publish: missing ", fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+          paste(head(missing_fiscal_data$title, 5), collapse = ", "),
+          if (nrow(missing_fiscal_data) > 5) paste0(" and ", nrow(missing_fiscal_data) - 5, " more") else ""
+        ),
+        type = "error", duration = 10
+      )
+      return()
+    }
     current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
     result <- tryCatch(
-      publish_agency_plan(database, plan_id, current_preview_user_id),
+      publish_agency_plan(
+        database, plan_id, current_preview_user_id,
+        required_measure_ids = selected_measure_ids,
+        actual_fy = fiscal_measure_snapshot_years()$actual_fy,
+        next_target_fy = current_fiscal_year() + 1L
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
@@ -8295,7 +8522,9 @@ server <- function(input, output, session) {
       target_fy,
       current_user_can_submit_measure() || current_user_can_review_measures(),
       can_delete_measures(current_user_app_roles()),
-      current_user_can_edit_locked_measure_data()
+      current_user_can_edit_locked_measure_data(),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city()),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city())
     )
   })
 
