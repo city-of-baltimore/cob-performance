@@ -1160,7 +1160,10 @@ current_fiscal_year <- function(today = Sys.Date()) {
 # function that actually writes these rows -- a second, independent
 # guard rather than trusting a single call site to always get it right.
 measure_actual_is_locked <- function(year, is_validated) {
-  isTRUE(is_validated) && as.integer(year) < current_fiscal_year()
+  # The most recently completed fiscal year's actual stays open too (not
+  # just the current year's) -- publishing requires it be reported, so a
+  # non-admin must still be able to fill it in after validation.
+  isTRUE(is_validated) && as.integer(year) < current_fiscal_year() - 1L
 }
 
 measure_target_is_locked <- function(year, is_validated) {

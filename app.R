@@ -670,6 +670,16 @@ measure_preview_years <- function(current_fy = current_fiscal_year()) {
   )
 }
 
+# Builds one <tr>'s cells for a kpi-history-table, highlighting the cell for
+# highlight_year -- the past fiscal year's actual and the next fiscal
+# year's target are the two boxes users most need to keep current, so they
+# get a visual callout instead of blending into the rest of the row.
+history_row_cells <- function(values, years, highlight_year) {
+  Map(function(value, year) {
+    tags$td(class = if (identical(year, highlight_year)) "kpi-history-highlight", value)
+  }, values, years)
+}
+
 service_body_output_id <- function(service_id) {
   paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
 }
@@ -724,6 +734,8 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   })
   preview_years <- measure_preview_years()
   preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
     measure <- measures[measure_index, , drop = FALSE]
     history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
@@ -740,6 +752,7 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
     div(
       class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_metrics) "active" else ""),
       `data-measure-id` = as.character(measure$measure_id),
+      title = "Click to review or edit this measure",
       div(
         class = "kpi-preview-header",
         div(h4(measure$title)),
@@ -760,10 +773,11 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
             lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
           )),
           tags$tbody(
-            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td)),
-            tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td))
+            tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+            tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
           )
-        )
+        ),
+        p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
       )
     )
   })
@@ -3324,33 +3338,35 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
     more_services <- if (length(missing_service_names) > 3) paste("and", length(missing_service_names) - 3, "more") else ""
     paste("Missing metrics:", listed_services, more_services)
   }
-  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures)
-  measures_detail <- if (measures_complete) {
-    paste("All", length(selected_measure_ids), "plan measures validated")
-  } else if (!length(selected_measure_ids)) {
-    "Missing: at least one plan measure"
-  } else {
-    paste("Missing validation:", paste(head(invalid_selected_measures$title, 3), collapse = ", "), if (nrow(invalid_selected_measures) > 3) paste("and", nrow(invalid_selected_measures) - 3, "more") else "")
-  }
-  risks_complete <- nrow(risks) > 0
   recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
   missing_recent_actual <- plan_measures_missing_recent_actual(db, plan, goals, services)
-  recent_actual_complete <- !nrow(missing_recent_actual)
-  recent_actual_detail <- if (recent_actual_complete) {
-    paste("All plan measures have reported their", fy_label(recent_actual_fy), "actual")
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures) && !nrow(missing_recent_actual)
+  measures_missing_notes <- c(
+    if (!length(selected_measure_ids)) "at least one plan measure",
+    if (nrow(invalid_selected_measures)) {
+      paste0(
+        "validation for ", paste(head(invalid_selected_measures$title, 3), collapse = ", "),
+        if (nrow(invalid_selected_measures) > 3) paste0(" and ", nrow(invalid_selected_measures) - 3, " more") else ""
+      )
+    },
+    if (nrow(missing_recent_actual)) {
+      paste0(
+        fy_label(recent_actual_fy), " actual for ", paste(head(missing_recent_actual$title, 3), collapse = ", "),
+        if (nrow(missing_recent_actual) > 3) paste0(" and ", nrow(missing_recent_actual) - 3, " more") else ""
+      )
+    }
+  )
+  measures_detail <- if (measures_complete) {
+    paste("All", length(selected_measure_ids), "plan measures validated and reporting", fy_label(recent_actual_fy))
   } else {
-    paste0(
-      "Missing ", fy_label(recent_actual_fy), " actual: ",
-      paste(head(missing_recent_actual$title, 3), collapse = ", "),
-      if (nrow(missing_recent_actual) > 3) paste0(" and ", nrow(missing_recent_actual) - 3, " more") else ""
-    )
+    paste("Missing:", paste(measures_missing_notes, collapse = "; "))
   }
+  risks_complete <- nrow(risks) > 0
   rows <- list(
     list(label = "Agency overview and vision", detail = if (overview_complete) "Overview, vision, and website are complete" else paste("Missing:", paste(overview_missing, collapse = ", ")), complete = overview_complete),
     list(label = "Goals and KPIs", detail = if (goals_complete) paste(complete_goal_count, "complete goals with Action Plan alignment") else paste("Missing:", paste(goals_missing, collapse = ", ")), complete = goals_complete),
     list(label = "Services", detail = service_detail, complete = services_complete),
     list(label = "Measures", detail = measures_detail, complete = measures_complete),
-    list(label = paste(fy_label(recent_actual_fy), "actuals"), detail = recent_actual_detail, complete = recent_actual_complete),
     list(label = "Risks", detail = if (risks_complete) paste(nrow(risks), "risks registered") else "Missing: at least one risk", complete = risks_complete)
   )
   list(rows = rows, has_errors = any(!vapply(rows, function(row) isTRUE(row$complete), logical(1))))
@@ -5208,8 +5224,8 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             p(
               class = "field-inline-help",
               paste0(
-                "This measure is validated: only the ", fy_label(current_fiscal_year()), " actual and the ",
-                fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
+                "This measure is validated: only the ", fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
+                " actuals and the ", fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
               )
             )
           },
@@ -5220,16 +5236,21 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
               target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
               actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
               target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
+              is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
+              is_next_target_year <- year == target_fy
               div(
                 class = "measure-year-row",
                 h4(fy_label(year)),
                 div(
-                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  class = if (is_recent_actual_year) "measure-year-highlight",
+                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year.", is_recent_actual_year), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan."),
                   if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
                 measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
                 div(
-                  measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year.", is_next_target_year), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
                   if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
                 measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked)
@@ -5504,6 +5525,8 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   kpi_choices <- setNames(agency_measures$measure_id, agency_measures$title)
   preview_years <- measure_preview_years()
   preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
 
   goal_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4, class = NULL) {
     tags$tr(
@@ -5650,6 +5673,7 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
               div(
                 class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_measure) "active" else ""),
                 `data-measure-id` = as.character(measure$measure_id),
+                title = "Click to review or edit this measure",
                 div(
                   class = "kpi-preview-header",
                   div(h4(measure$title)),
@@ -5670,10 +5694,11 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                       lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
                     )),
                     tags$tbody(
-                      tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td)),
-                      tags$tr(tags$th(scope = "row", "Target"), lapply(target_values, tags$td))
+                      tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+                      tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
                     )
-                  )
+                  ),
+                  p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
                 )
               )
             })
