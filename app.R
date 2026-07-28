@@ -3259,10 +3259,13 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
 }
 
 # Measures selected as this plan's goal KPIs or service metrics that are
-# missing an actual for the most recently completed fiscal year (e.g.
-# FY26 actual while FY27 is executing). Measures marked "New" this cycle
-# are exempt -- they weren't tracked yet, so there's nothing to report.
-plan_measures_missing_recent_actual <- function(db, plan, goals, services) {
+# missing either the most recently completed fiscal year's actual (e.g.
+# FY26 actual while FY27 is executing) or the upcoming budget year's
+# target (e.g. FY28). Both are required to publish the *plan* -- neither
+# is required to save or submit an individual measure for approval (see
+# validate_measure_submit_requirements()). Measures marked "New" this
+# cycle are exempt -- they weren't tracked yet, so there's nothing to report.
+plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services) {
   empty <- db$performance_performance_measure[0, , drop = FALSE]
   if (is.null(plan) || !nrow(plan)) return(empty)
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
@@ -3272,10 +3275,14 @@ plan_measures_missing_recent_actual <- function(db, plan, goals, services) {
   measures <- measures[change_mapping != "New", , drop = FALSE]
   if (!nrow(measures)) return(measures)
   actual_fy <- fiscal_measure_snapshot_years()$actual_fy
-  reported_ids <- unique(db$performance_measure_actuals$measure_id[
+  next_target_fy <- current_fiscal_year() + 1L
+  reported_actual_ids <- unique(db$performance_measure_actuals$measure_id[
     db$performance_measure_actuals$fiscal_year == actual_fy & !is.na(db$performance_measure_actuals$annual_actual)
   ])
-  measures[!measures$measure_id %in% reported_ids, , drop = FALSE]
+  reported_target_ids <- unique(db$performance_measure_actuals$measure_id[
+    db$performance_measure_actuals$fiscal_year == next_target_fy & !is.na(db$performance_measure_actuals$target_value)
+  ])
+  measures[!(measures$measure_id %in% reported_actual_ids & measures$measure_id %in% reported_target_ids), , drop = FALSE]
 }
 
 plan_readiness_summary <- function(db, submitter_value, plan) {
@@ -3339,8 +3346,9 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
     paste("Missing metrics:", listed_services, more_services)
   }
   recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
-  missing_recent_actual <- plan_measures_missing_recent_actual(db, plan, goals, services)
-  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures) && !nrow(missing_recent_actual)
+  next_target_fy <- current_fiscal_year() + 1L
+  missing_fiscal_data <- plan_measures_missing_required_fiscal_data(db, plan, goals, services)
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures) && !nrow(missing_fiscal_data)
   measures_missing_notes <- c(
     if (!length(selected_measure_ids)) "at least one plan measure",
     if (nrow(invalid_selected_measures)) {
@@ -3349,15 +3357,16 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
         if (nrow(invalid_selected_measures) > 3) paste0(" and ", nrow(invalid_selected_measures) - 3, " more") else ""
       )
     },
-    if (nrow(missing_recent_actual)) {
+    if (nrow(missing_fiscal_data)) {
       paste0(
-        fy_label(recent_actual_fy), " actual for ", paste(head(missing_recent_actual$title, 3), collapse = ", "),
-        if (nrow(missing_recent_actual) > 3) paste0(" and ", nrow(missing_recent_actual) - 3, " more") else ""
+        fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+        paste(head(missing_fiscal_data$title, 3), collapse = ", "),
+        if (nrow(missing_fiscal_data) > 3) paste0(" and ", nrow(missing_fiscal_data) - 3, " more") else ""
       )
     }
   )
   measures_detail <- if (measures_complete) {
-    paste("All", length(selected_measure_ids), "plan measures validated and reporting", fy_label(recent_actual_fy))
+    paste("All", length(selected_measure_ids), "plan measures validated and reporting", fy_label(recent_actual_fy), "actual and", fy_label(next_target_fy), "target")
   } else {
     paste("Missing:", paste(measures_missing_notes, collapse = "; "))
   }
@@ -4942,11 +4951,11 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   do.call(div, c(backdrop_attrs, list(panel)))
 }
 
-measure_label <- function(text, help, required = FALSE) {
+measure_label <- function(text, help, required = FALSE, required_label = "Required") {
   tags$span(
     class = "field-label-with-help",
     span(text),
-    if (required) span(class = "required-marker", "Required"),
+    if (required) span(class = "required-marker", required_label),
     tags$span(class = "field-help-icon", tabindex = "0", title = help, `aria-label` = paste(text, "guidance"), "?")
   )
 }
@@ -5100,7 +5109,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       ),
       div(
         class = "measure-form-stack",
-        div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
+        div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete. Fields marked \"Required to publish\" are a separate check -- they gate the overall plan being published, not this measure's own save or submit."),
         if (definition_locked) {
           div(
             class = "measure-validated-lock-note",
@@ -5243,14 +5252,15 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 h4(fy_label(year)),
                 div(
                   class = if (is_recent_actual_year) "measure-year-highlight",
-                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year.", is_recent_actual_year), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
-                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan."),
+                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year.", is_recent_actual_year, required_label = "Required to publish"), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
                 measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
                 div(
                   class = if (is_next_target_year) "measure-year-highlight",
-                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year.", is_next_target_year), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year.", is_next_target_year, required_label = "Required to publish"), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
                   if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
                 ),
                 measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked)
@@ -6996,7 +7006,12 @@ server <- function(input, output, session) {
   is_blank_value <- function(value) {
     is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
   }
-  validate_measure_submit_requirements <- function(values, yearly_values, target_fy) {
+  # The next fiscal year's target and the most recently completed year's
+  # actual are required to publish the *plan* (see
+  # plan_measures_missing_required_fiscal_data()), not to save or submit an
+  # individual measure -- a measure can be fully defined and submitted for
+  # approval before that data exists.
+  validate_measure_submit_requirements <- function(values) {
     required_fields <- c(
       title = "Measure name",
       description = "Definition",
@@ -7013,11 +7028,7 @@ server <- function(input, output, session) {
       how_data_used = "How the data is used",
       why_meaningful = "Why this measure is meaningful"
     )
-    missing <- unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
-    target_row <- yearly_values[vapply(yearly_values, function(row) identical(as.integer(row$fiscal_year), as.integer(target_fy)), logical(1))]
-    target_missing <- !length(target_row) || is.na(target_row[[1]]$target_value)
-    if (target_missing) missing <- c(missing, paste(fy_label(target_fy), "Next Fiscal Year Target"))
-    missing
+    unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
   }
   collect_measure_form <- function() {
     data <- app_data()
@@ -7168,8 +7179,7 @@ server <- function(input, output, session) {
         showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
         return()
       }
-      target_fy <- plan_fiscal_year + 1L
-      missing_fields <- validate_measure_submit_requirements(values, yearly_values, target_fy)
+      missing_fields <- validate_measure_submit_requirements(values)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
         return()
@@ -7903,14 +7913,15 @@ server <- function(input, output, session) {
     goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
     services <- plan_service_rows(data, plan)
     selected_measure_ids <- plan_selected_measure_ids(data, plan, goals, services)
-    missing_recent_actual <- plan_measures_missing_recent_actual(data, plan, goals, services)
-    if (nrow(missing_recent_actual)) {
+    missing_fiscal_data <- plan_measures_missing_required_fiscal_data(data, plan, goals, services)
+    if (nrow(missing_fiscal_data)) {
       recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+      next_target_fy <- current_fiscal_year() + 1L
       showNotification(
         paste0(
-          "Cannot publish: missing ", fy_label(recent_actual_fy), " actual for ",
-          paste(head(missing_recent_actual$title, 5), collapse = ", "),
-          if (nrow(missing_recent_actual) > 5) paste0(" and ", nrow(missing_recent_actual) - 5, " more") else ""
+          "Cannot publish: missing ", fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+          paste(head(missing_fiscal_data$title, 5), collapse = ", "),
+          if (nrow(missing_fiscal_data) > 5) paste0(" and ", nrow(missing_fiscal_data) - 5, " more") else ""
         ),
         type = "error", duration = 10
       )
@@ -7921,7 +7932,8 @@ server <- function(input, output, session) {
       publish_agency_plan(
         database, plan_id, current_preview_user_id,
         required_measure_ids = selected_measure_ids,
-        actual_fy = fiscal_measure_snapshot_years()$actual_fy
+        actual_fy = fiscal_measure_snapshot_years()$actual_fy,
+        next_target_fy = current_fiscal_year() + 1L
       ),
       error = function(error) error
     )

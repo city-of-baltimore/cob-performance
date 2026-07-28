@@ -2709,18 +2709,20 @@ approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
 }
 
 # Given a set of measure_ids, returns the subset that are not marked "New"
-# (a measure added this cycle has nothing prior to report yet) and have no
-# recorded, non-null annual_actual for actual_fy. Re-queries fresh from the
-# database rather than trusting a caller-supplied "already checked" flag --
-# the goal/service *selection* logic (which measure_ids belong to a plan)
-# still lives in app.R's plan_selected_measure_ids(), since duplicating that
-# in SQL here would risk drifting out of sync with its draft/administration-
-# service handling.
-measure_ids_missing_recent_actual <- function(connection, measure_ids, actual_fy) {
+# (a measure added this cycle has nothing prior to report yet) and are
+# missing either the most recently completed year's actual (actual_fy) or
+# the upcoming budget year's target (next_target_fy) -- both required to
+# publish a *plan*, never to save or submit an individual measure. Re-
+# queries fresh from the database rather than trusting a caller-supplied
+# "already checked" flag -- the goal/service *selection* logic (which
+# measure_ids belong to a plan) still lives in app.R's
+# plan_selected_measure_ids(), since duplicating that in SQL here would
+# risk drifting out of sync with its draft/administration-service handling.
+measure_ids_missing_required_fiscal_data <- function(connection, measure_ids, actual_fy, next_target_fy) {
   measure_ids <- unique(suppressWarnings(as.integer(measure_ids)))
   measure_ids <- measure_ids[!is.na(measure_ids)]
   if (!length(measure_ids)) return(integer(0))
-  placeholders <- paste0("$", seq_along(measure_ids) + 1L, collapse = ", ")
+  placeholders <- paste0("$", seq_along(measure_ids) + 2L, collapse = ", ")
   rows <- DBI::dbGetQuery(
     connection,
     sprintf(
@@ -2728,19 +2730,25 @@ measure_ids_missing_recent_actual <- function(connection, measure_ids, actual_fy
         "SELECT pm.measure_id FROM performance.performance_measure pm",
         "WHERE pm.measure_id IN (%s)",
         "AND (pm.change_mapping IS NULL OR pm.change_mapping != 'New')",
-        "AND NOT EXISTS (",
-        "  SELECT 1 FROM performance.measure_actuals ma",
-        "  WHERE ma.measure_id = pm.measure_id AND ma.fiscal_year = $1 AND ma.annual_actual IS NOT NULL",
+        "AND (",
+        "  NOT EXISTS (",
+        "    SELECT 1 FROM performance.measure_actuals ma",
+        "    WHERE ma.measure_id = pm.measure_id AND ma.fiscal_year = $1 AND ma.annual_actual IS NOT NULL",
+        "  )",
+        "  OR NOT EXISTS (",
+        "    SELECT 1 FROM performance.measure_actuals mt",
+        "    WHERE mt.measure_id = pm.measure_id AND mt.fiscal_year = $2 AND mt.target_value IS NOT NULL",
+        "  )",
         ")"
       ),
       placeholders
     ),
-    params = c(list(as.integer(actual_fy)), as.list(measure_ids))
+    params = c(list(as.integer(actual_fy), as.integer(next_target_fy)), as.list(measure_ids))
   )
   rows$measure_id
 }
 
-publish_agency_plan <- function(connection, plan_id, published_by = NULL, required_measure_ids = NULL, actual_fy = NULL) {
+publish_agency_plan <- function(connection, plan_id, published_by = NULL, required_measure_ids = NULL, actual_fy = NULL, next_target_fy = NULL) {
   plan_id <- as.integer(plan_id)
   published_by <- if (is.null(published_by) || is.na(published_by)) NA_integer_ else as.integer(published_by)
   if (is.na(published_by)) {
@@ -2758,8 +2766,8 @@ publish_agency_plan <- function(connection, plan_id, published_by = NULL, requir
     if (!identical(plan$plan_status[[1]], "Approved")) {
       stop("Only plans in the ready-to-publish queue can be published.")
     }
-    if (length(required_measure_ids) && !is.null(actual_fy)) {
-      missing_ids <- measure_ids_missing_recent_actual(connection, required_measure_ids, actual_fy)
+    if (length(required_measure_ids) && !is.null(actual_fy) && !is.null(next_target_fy)) {
+      missing_ids <- measure_ids_missing_required_fiscal_data(connection, required_measure_ids, actual_fy, next_target_fy)
       if (length(missing_ids)) {
         id_placeholders <- paste0("$", seq_along(missing_ids), collapse = ", ")
         titles <- DBI::dbGetQuery(
@@ -2768,8 +2776,8 @@ publish_agency_plan <- function(connection, plan_id, published_by = NULL, requir
           params = as.list(as.integer(missing_ids))
         )$title
         stop(sprintf(
-          "Cannot publish: FY%02d actual missing for %s%s",
-          actual_fy %% 100L,
+          "Cannot publish: FY%02d actual or FY%02d target missing for %s%s",
+          actual_fy %% 100L, next_target_fy %% 100L,
           paste(head(titles, 5), collapse = ", "),
           if (length(titles) > 5) sprintf(" and %d more", length(titles) - 5) else ""
         ))

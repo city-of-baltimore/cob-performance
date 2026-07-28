@@ -1,13 +1,24 @@
-# Requirement added 2026-07-27: a plan's selected measures (goal KPIs and
-# service metrics) must have reported an actual for the most recently
-# completed fiscal year (e.g. FY26 actual while FY27 is executing) before
-# the plan can be published -- enforced both in the "Plan readiness"
-# checklist (plan_measures_missing_recent_actual() in app.R) and as a hard
-# server-side gate in publish_agency_plan() (measure_ids_missing_recent_actual()
-# in R/database.R). Measures marked change_mapping = "New" this cycle are
-# exempt, since they have nothing prior to report yet.
+# Requirement added 2026-07-27, clarified 2026-07-27: a plan's selected
+# measures (goal KPIs and service metrics) must have reported BOTH the
+# most recently completed fiscal year's actual (e.g. FY26 actual while
+# FY27 is executing) AND the upcoming budget year's target (e.g. FY28)
+# before the plan can be published -- enforced both in the "Plan
+# readiness" checklist (plan_measures_missing_required_fiscal_data() in
+# app.R) and as a hard server-side gate in publish_agency_plan()
+# (measure_ids_missing_required_fiscal_data() in R/database.R). Measures
+# marked change_mapping = "New" this cycle are exempt, since they have
+# nothing prior to report yet.
+#
+# Important: neither of these is required to save or submit an
+# individual measure for approval -- validate_measure_submit_requirements()
+# (a closure inside app.R's server(), not unit-testable outside a running
+# session) must not block on them. It used to take
+# (values, yearly_values, target_fy) and reject submission if the next
+# year's target was missing; that check was removed since the requirement
+# belongs to plan publish, not measure submit -- see the plan-level checks
+# exercised below instead.
 
-test_that("measure_ids_missing_recent_actual flags an unreported measure and exempts a New one", {
+test_that("measure_ids_missing_required_fiscal_data flags a measure missing either value and exempts a New one", {
   skip_if_no_test_database()
   connection <- connect_app_database()
 
@@ -16,6 +27,7 @@ test_that("measure_ids_missing_recent_actual flags an unreported measure and exe
   user_id <- DBI::dbGetQuery(connection, 'SELECT user_id FROM access."user" LIMIT 1')$user_id[[1]]
   fy <- current_fiscal_year()
   actual_fy <- fy - 1L
+  next_target_fy <- fy + 1L
 
   base_values <- list(
     measure_id = NULL, agency_id = agency_id, initial_cycle = cycle_id,
@@ -28,20 +40,30 @@ test_that("measure_ids_missing_recent_actual flags an unreported measure and exe
     is_city = FALSE, is_agency = FALSE, is_service = TRUE,
     approval_status = "Validated", submitted_for_approval_at = as.POSIXct(NA)
   )
-  missing_id <- save_measure_record(
+  missing_actual_id <- save_measure_record(
     connection,
-    c(base_values, list(title = "Recent-actual test: missing", change_mapping = "Unchanged")),
-    list(), user_id, submit = FALSE, is_admin = TRUE
+    c(base_values, list(title = "Fiscal-data test: missing actual", change_mapping = "Unchanged")),
+    list(list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "")),
+    user_id, submit = FALSE, is_admin = TRUE
+  )
+  missing_target_id <- save_measure_record(
+    connection,
+    c(base_values, list(title = "Fiscal-data test: missing target", change_mapping = "Unchanged")),
+    list(list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "", target_value = NA_real_, target_value_notes = "")),
+    user_id, submit = FALSE, is_admin = TRUE
   )
   new_id <- save_measure_record(
     connection,
-    c(base_values, list(title = "Recent-actual test: new this cycle", change_mapping = "New")),
+    c(base_values, list(title = "Fiscal-data test: new this cycle", change_mapping = "New")),
     list(), user_id, submit = FALSE, is_admin = TRUE
   )
-  reported_id <- save_measure_record(
+  complete_id <- save_measure_record(
     connection,
-    c(base_values, list(title = "Recent-actual test: reported", change_mapping = "Unchanged")),
-    list(list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "", target_value = NA_real_, target_value_notes = "")),
+    c(base_values, list(title = "Fiscal-data test: complete", change_mapping = "Unchanged")),
+    list(
+      list(fiscal_year = actual_fy, annual_actual = 42, annual_actual_notes = "", target_value = NA_real_, target_value_notes = ""),
+      list(fiscal_year = next_target_fy, annual_actual = NA_real_, annual_actual_notes = "", target_value = 10, target_value_notes = "")
+    ),
     user_id, submit = FALSE, is_admin = TRUE
   )
   # DELETEs must run before dbDisconnect() -- combined into one on.exit() so
@@ -50,7 +72,7 @@ test_that("measure_ids_missing_recent_actual flags an unreported measure and exe
   # driver state badly enough to poison later tests' own connections too.
   on.exit(
     {
-      ids <- c(missing_id, new_id, reported_id)
+      ids <- c(missing_actual_id, missing_target_id, new_id, complete_id)
       placeholders <- paste0("$", seq_along(ids), collapse = ", ")
       id_params <- as.list(as.integer(ids))
       DBI::dbExecute(connection, sprintf("DELETE FROM performance.measure_actuals WHERE measure_id IN (%s)", placeholders), params = id_params)
@@ -60,11 +82,13 @@ test_that("measure_ids_missing_recent_actual flags an unreported measure and exe
     add = TRUE
   )
 
-  missing <- measure_ids_missing_recent_actual(connection, c(missing_id, new_id, reported_id), actual_fy)
-  expect_setequal(missing, missing_id)
+  missing <- measure_ids_missing_required_fiscal_data(
+    connection, c(missing_actual_id, missing_target_id, new_id, complete_id), actual_fy, next_target_fy
+  )
+  expect_setequal(missing, c(missing_actual_id, missing_target_id))
 })
 
-test_that("publish_agency_plan rejects publishing when a required measure is missing its recent actual", {
+test_that("publish_agency_plan rejects publishing when a required measure is missing its recent actual or next target", {
   skip_if_no_test_database()
   connection <- connect_app_database()
 
@@ -73,6 +97,7 @@ test_that("publish_agency_plan rejects publishing when a required measure is mis
   user_id <- DBI::dbGetQuery(connection, 'SELECT user_id FROM access."user" LIMIT 1')$user_id[[1]]
   fy <- current_fiscal_year()
   actual_fy <- fy - 1L
+  next_target_fy <- fy + 1L
 
   plan_row <- DBI::dbGetQuery(connection, "SELECT plan_id, plan_status FROM planning.agency_plan LIMIT 1")
   plan_id <- plan_row$plan_id[[1]]
@@ -104,7 +129,7 @@ test_that("publish_agency_plan rejects publishing when a required measure is mis
   )
 
   expect_error(
-    publish_agency_plan(connection, plan_id, user_id, required_measure_ids = missing_id, actual_fy = actual_fy),
+    publish_agency_plan(connection, plan_id, user_id, required_measure_ids = missing_id, actual_fy = actual_fy, next_target_fy = next_target_fy),
     "Cannot publish"
   )
 
@@ -114,7 +139,7 @@ test_that("publish_agency_plan rejects publishing when a required measure is mis
   expect_equal(status_after, "Approved")
 })
 
-test_that("plan_measures_missing_recent_actual (readiness checklist) surfaces a goal KPI missing its recent actual", {
+test_that("plan_measures_missing_required_fiscal_data (readiness checklist) surfaces a goal KPI missing its recent actual", {
   skip_if_no_test_database()
   connection <- connect_app_database()
 
@@ -160,6 +185,6 @@ test_that("plan_measures_missing_recent_actual (readiness checklist) surfaces a 
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   services <- plan_service_rows(db, plan)
 
-  missing <- plan_measures_missing_recent_actual(db, plan, goals, services)
+  missing <- plan_measures_missing_required_fiscal_data(db, plan, goals, services)
   expect_true(measure_id %in% missing$measure_id)
 })
