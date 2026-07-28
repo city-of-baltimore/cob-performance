@@ -7090,7 +7090,10 @@ server <- function(input, output, session) {
       why_meaningful = locked_or("why_meaningful", input$measure_why_meaningful),
       proxy_measure = locked_or("proxy_measure", input$measure_proxy),
       improvement_notes = locked_or("improvement_notes", input$measure_improvement_notes),
-      change_mapping = if (nrow(existing) && !is.na(existing$change_mapping[[1]])) existing$change_mapping[[1]] else "New",
+      change_mapping = measure_change_mapping_for_date(
+        if (nrow(existing)) existing$change_mapping[[1]] else NA_character_,
+        if (nrow(existing)) existing$created_date[[1]] else Sys.Date()
+      ),
       pillar_id = if (scope_editable) nullable_number(input$measure_pillar, TRUE) else existing_value("pillar_id", NA_integer_),
       pillar_goal_id = if (scope_editable) nullable_number(input$measure_pillar_goal, TRUE) else existing_value("pillar_goal_id", NA_integer_),
       is_city = if (scope_editable) input_bool(input$measure_is_city) else isTRUE(existing_value("is_city", FALSE)),

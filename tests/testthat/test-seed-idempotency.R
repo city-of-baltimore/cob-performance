@@ -60,3 +60,21 @@ test_that("apply_user_entity_access_seed_once with a missing seed file is a harm
     expect_false(result)
   })
 })
+
+test_that("apply_change_mapping_by_created_date_once is a no-op once already marked applied", {
+  # This is exactly how the backfill reaches production: it runs
+  # automatically the next time ensure_review_schema() executes (any app
+  # restart), gated so a second restart doesn't re-run it. Marking
+  # "already applied" directly, rather than running it for real first,
+  # matches the established pattern in this file for the same reason --
+  # keeps this deterministic and avoids nesting a second transaction.
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+
+  with_rollback(connection, {
+    mark_seed_applied(connection, "change_mapping_by_created_date_backfill")
+    result <- apply_change_mapping_by_created_date_once(connection)
+    expect_false(result)
+  })
+})

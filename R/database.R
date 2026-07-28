@@ -698,6 +698,7 @@ ensure_review_schema <- function(connection) {
   }
   apply_user_entity_access_seed_once(connection)
   apply_agency_fiscal_analyst_seed_once(connection)
+  apply_change_mapping_by_created_date_once(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
@@ -1146,6 +1147,49 @@ current_fiscal_year <- function(today = Sys.Date()) {
   calendar_year <- as.integer(format(today, "%Y"))
   fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
   if (today >= fiscal_year_start) calendar_year + 1L else calendar_year
+}
+
+# July 1 of the calendar year before fiscal_year -- e.g. FY27 starts
+# 2026-07-01.
+fiscal_year_start_date <- function(fiscal_year) {
+  as.Date(sprintf("%d-07-01", as.integer(fiscal_year) - 1L))
+}
+
+# "New" means established during the current fiscal year -- not "was
+# ever marked New," which let a measure stay exempt from the recent-
+# actual/next-target publish requirement forever after its first save.
+# Only re-evaluates measures whose existing status is already New/blank;
+# a real classification (Removed, Replaced, Modified) is left alone, since
+# those track something other than "how old is this."
+measure_change_mapping_for_date <- function(existing_mapping, created_date, today = Sys.Date()) {
+  is_new_or_unset <- is.na(existing_mapping) || identical(existing_mapping, "New")
+  if (!is_new_or_unset) return(existing_mapping)
+  if (is.na(created_date)) return("New")
+  if (as.Date(created_date) >= fiscal_year_start_date(current_fiscal_year(today))) "New" else "Unchanged"
+}
+
+# One-time backfill for existing measures created before this fiscal year
+# that are still marked "New" (or never had change_mapping set at all) --
+# see measure_change_mapping_for_date() above. Gated so it runs exactly
+# once per database (including production, automatically on its next
+# deploy/restart -- direct production DB access isn't available from this
+# environment, so self-applying via the same seed_applied marker used
+# elsewhere is how this reaches prod, not a manually-run script).
+apply_change_mapping_by_created_date_once <- function(connection) {
+  seed_name <- "change_mapping_by_created_date_backfill"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  boundary <- fiscal_year_start_date(current_fiscal_year())
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.performance_measure",
+      "SET change_mapping = 'Unchanged', last_updated = now()",
+      "WHERE (change_mapping IS NULL OR change_mapping = 'New') AND created_date < $1"
+    ),
+    params = list(boundary)
+  )
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
 }
 
 # Once a measure is validated, its historic data and definition lock to
