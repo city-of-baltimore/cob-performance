@@ -5288,7 +5288,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", "Submit for approval currently marks this measure pending. The system admin review panel will be added in a later workflow step."),
+          p(class = "approval-workflow-note", "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
           div(
             tags$button(id = "save_measure", type = "button", class = "civic-button secondary", "Save"),
             tags$button(id = "submit_measure", type = "button", class = "civic-button primary", "Submit for approval")
