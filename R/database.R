@@ -699,6 +699,7 @@ ensure_review_schema <- function(connection) {
   apply_user_entity_access_seed_once(connection)
   apply_agency_fiscal_analyst_seed_once(connection)
   apply_change_mapping_by_created_date_once(connection)
+  apply_percent_value_scale_backfill_once(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
@@ -1188,6 +1189,77 @@ apply_change_mapping_by_created_date_once <- function(connection) {
     ),
     params = list(boundary)
   )
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
+# Percent measures used to be entered as decimal fractions (0.61 for 61%);
+# the app now requires whole numbers (61), and a value of exactly 1 reads
+# as "1%" instead of the "100%" it was meant to be.
+#
+# Rule: only a NON-INTEGER value (0.61, 0.9954, 1.015...) is touched here.
+# Confirmed against both local dev and production (2026-07-28): zero
+# Percent actual/target values >= 2 have any decimal precision, meaning
+# nobody has ever entered a fractional-but-not-whole percent under the
+# current whole-number rule -- so any decimal-precision value is
+# unambiguously pre-dating that rule and safe to *100 automatically.
+# A clean integer (0, 1, 2, 45, 100...) is never touched here, INCLUDING
+# the one genuinely ambiguous case, a bare "1" (could mean 1% already
+# correct, or 100% under the old convention) -- that requires comparing
+# each measure's own history and was resolved manually, per-row, not by
+# this blanket rule (see outputs/percent_*_review.xlsx from 2026-07-28).
+#
+# Scoped to measure_ids when given (tests use this -- the database also
+# holds real, already-correct tiny percentages like 0.01, and re-running
+# the unscoped version a second time would be a no-op anyway since 0.01
+# is non-integer only on the FIRST pass -- scoping just keeps a test from
+# touching unrelated rows). NULL (the production/default case) means
+# every Percent measure.
+percent_value_scale_backfill <- function(connection, measure_ids = NULL) {
+  scope_clause <- ""
+  scope_params <- list()
+  if (!is.null(measure_ids)) {
+    measure_ids <- unique(suppressWarnings(as.integer(measure_ids)))
+    measure_ids <- measure_ids[!is.na(measure_ids)]
+    if (!length(measure_ids)) return(invisible(FALSE))
+    placeholders <- paste0("$", seq_along(measure_ids), collapse = ", ")
+    scope_clause <- sprintf("AND pm.measure_id IN (%s)", placeholders)
+    scope_params <- as.list(measure_ids)
+  }
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.measure_actuals ma",
+      "SET annual_actual = round(ma.annual_actual * 100, 2), updated_at = now()",
+      "FROM performance.performance_measure pm",
+      "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+      "AND ma.annual_actual IS NOT NULL AND ma.annual_actual != round(ma.annual_actual)",
+      scope_clause
+    ),
+    params = scope_params
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.measure_actuals ma",
+      "SET target_value = round(ma.target_value * 100, 2), updated_at = now()",
+      "FROM performance.performance_measure pm",
+      "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+      "AND ma.target_value IS NOT NULL AND ma.target_value != round(ma.target_value)",
+      scope_clause
+    ),
+    params = scope_params
+  )
+  invisible(TRUE)
+}
+
+# Gated the same way as apply_change_mapping_by_created_date_once(): runs
+# once per database, automatically on next restart, reaching production
+# without needing direct DB access.
+apply_percent_value_scale_backfill_once <- function(connection) {
+  seed_name <- "percent_value_scale_backfill"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  percent_value_scale_backfill(connection)
   mark_seed_applied(connection, seed_name)
   invisible(TRUE)
 }

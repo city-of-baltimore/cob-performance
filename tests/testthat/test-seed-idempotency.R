@@ -78,3 +78,19 @@ test_that("apply_change_mapping_by_created_date_once is a no-op once already mar
     expect_false(result)
   })
 })
+
+test_that("apply_percent_value_scale_backfill_once is a no-op once already marked applied", {
+  # Same reasoning as the change_mapping backfill above: this reaches
+  # production automatically on next restart, gated so it never re-runs
+  # (re-running would incorrectly re-scale values a human has since
+  # legitimately entered as whole numbers).
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+
+  with_rollback(connection, {
+    mark_seed_applied(connection, "percent_value_scale_backfill")
+    result <- apply_percent_value_scale_backfill_once(connection)
+    expect_false(result)
+  })
+})

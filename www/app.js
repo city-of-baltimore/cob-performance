@@ -1203,12 +1203,20 @@
     if (!input || input.value === "") return;
     var value = input.value;
     if (format === "Percent") {
-      value = value.replace(/[^\d.]/g, "");
-      if (value.indexOf(".") !== -1) value = value.slice(0, value.indexOf("."));
-      var percent = Number(value);
+      var raw = value.replace(/[^\d.]/g, "");
+      var percent = Number(raw);
       if (Number.isNaN(percent)) {
         input.value = "";
         return;
+      }
+      // A value like "0.75" is a leftover habit from when percents were
+      // stored as decimal fractions -- convert to 75 instead of silently
+      // truncating everything after the decimal point (the previous
+      // behavior turned "0.75" into "0" with no warning). A bare whole
+      // number like "1" (no decimal point) is left as 1, since that's a
+      // legitimate "1%" under the current whole-number convention.
+      if (percent > 0 && percent <= 1 && raw.indexOf(".") !== -1) {
+        percent = percent * 100;
       }
       input.value = String(Math.max(0, Math.min(100, Math.round(percent))));
       return;
@@ -1266,7 +1274,14 @@
     }
     if (!event.target.matches(".measure-value-input")) return;
     var formatSelect = document.getElementById("measure_format");
-    normalizeMeasureNumberInput(event.target, formatSelect ? formatSelect.value : "Count");
+    var format = formatSelect ? formatSelect.value : "Count";
+    // Percent only normalizes on change (blur), not on every keystroke --
+    // normalizing mid-typing mangled a decimal like "0.75" before the
+    // user finished typing it (the "0." got stripped after just two
+    // characters). Letting the full value land first, then converting
+    // fractions like 0.75 -> 75 on blur, is what actually fixes it.
+    if (format === "Percent") return;
+    normalizeMeasureNumberInput(event.target, format);
   });
 
   function updateKpiPreview(control) {
