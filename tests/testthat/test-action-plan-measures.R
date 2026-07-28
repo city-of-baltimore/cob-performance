@@ -139,6 +139,25 @@ test_that("a measure marked Citywide without a pillar still appears in city_meas
   expect_false(measure_id %in% all_metric_ids)
 })
 
+test_that("owning_entity_choices doesn't list an agency's own plan-submission entity as a separate duplicate choice", {
+  # Regression guard: every plan-submitting agency has a matching
+  # plan_entity row that exists purely as its plan-submission record
+  # (parent_agency_id points back at the same agency, identical name) --
+  # e.g. agency AGC6500 "Sheriff's Office" and entity 74 "Sheriff's
+  # Office". Left in, the dropdown showed the same label twice with no
+  # way to tell them apart. Genuinely distinct entities (a quasi-agency or
+  # mayoral service grouped under a broader parent, e.g. "Mayor's Office
+  # of LGBTQ Affairs" under Mayoralty) must still appear.
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  on.exit(DBI::dbDisconnect(connection), add = TRUE)
+  db <- load_app_data(connection)
+
+  choices <- owning_entity_choices(db)
+  expect_equal(sum(duplicated(names(choices))), 0L)
+  expect_true(any(grepl("LGBTQ", names(choices))))
+})
+
 test_that("owning_entity_choices includes real agencies (regression: db$reference_agency has no active column to re-filter on)", {
   # Regression guard: load_app_data() already filters reference_agency /
   # reference_plan_entity to active rows in their SQL query, so they carry

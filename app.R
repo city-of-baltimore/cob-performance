@@ -3374,7 +3374,18 @@ owning_entity_choices <- function(db) {
   entities <- db$reference_plan_entity
   entity_choices <- character(0)
   if (!is.null(entities) && nrow(entities)) {
-    entity_choices <- setNames(paste0("entity:", entities$entity_id), entities$public_name)
+    # Every plan-submitting agency has a matching plan_entity row purely as
+    # its plan-submission record (parent_agency_id points right back at it,
+    # same name) -- alongside plan_entity rows for genuinely distinct
+    # quasi-agencies/mayoral services grouped under a broader parent (e.g.
+    # "Mayor's Office of LGBTQ Affairs" under Mayoralty). Only the latter
+    # belong here; the former just duplicate an agency choice already listed.
+    parent_labels <- agency_labels[match(entities$parent_agency_id, agencies$agency_id)]
+    is_shadow_of_parent <- !is.na(parent_labels) & parent_labels == entities$public_name
+    entities <- entities[!is_shadow_of_parent, , drop = FALSE]
+    if (nrow(entities)) {
+      entity_choices <- setNames(paste0("entity:", entities$entity_id), entities$public_name)
+    }
   }
   choices <- c(agency_choices, entity_choices)
   choices[order(names(choices))]
