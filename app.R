@@ -3437,6 +3437,20 @@ resolve_owning_agency_id <- function(db, value) {
   submitter$id
 }
 
+# A brand-new measure created via the owning-entity picker (measure_modal_ui's
+# show_owning_entity_picker) must have its measure_entity_link scoped to
+# whichever entity the picker selected, not to whatever plan the current user
+# happens to be viewing -- e.g. a SystemAdmin looking at Mayoralty's own plan
+# who picks "OPI" as the owner must link the new measure to OPI, not to
+# Mayoralty. Editing an existing measure (no picker involved) keeps the prior
+# current-submitter behavior.
+resolve_link_submitter_value <- function(existing_measure_id, owning_picker_value, current_submitter_value) {
+  is_new <- is.null(existing_measure_id) || identical(existing_measure_id, "new")
+  picker_usable <- !is.null(owning_picker_value) && length(owning_picker_value) == 1 && nzchar(owning_picker_value)
+  if (is_new && picker_usable) return(owning_picker_value)
+  current_submitter_value
+}
+
 # Default selection for the new-measure owning-agency picker: OPI when it's
 # in the choice list (it resolves to Mayoralty's agency_id, AGC4301, via
 # resolve_owning_agency_id()), else the Mayor's Office agency choice itself,
@@ -7166,6 +7180,7 @@ server <- function(input, output, session) {
       showNotification("You do not have permission to submit measures for approval.", type = "error", duration = 8)
       return()
     }
+    existing_measure_id <- current_measure_id()
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
     locked_changes_missing_note <- Filter(
@@ -7226,7 +7241,8 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, current_submitter_value())), error = function(error) error)
+    link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
+    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, link_submitter_value)), error = function(error) error)
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
