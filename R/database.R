@@ -1022,7 +1022,7 @@ load_app_data <- function(connection) {
       paste(
         "SELECT pm.measure_id, pm.pillar_id, pm.pillar_goal_id, pm.title, pm.desired_direction,",
         "pm.display_unit, pm.format_type, pm.approval_status, pm.agency_id,",
-        "a.agency_name, a.public_name AS agency_public_name,",
+        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name,",
         "p.pillar_name, pg.goal_code AS pillar_goal_code, pg.goal_title AS pillar_goal_title,",
         "actual_row.annual_actual AS current_value, target_row.target_value AS target_value",
         "FROM performance.performance_measure pm",
@@ -1031,6 +1031,16 @@ load_app_data <- function(connection) {
         "LEFT JOIN reference.pillar_goal pg ON pg.pillar_goal_id = pm.pillar_goal_id",
         "LEFT JOIN performance.measure_actuals actual_row ON actual_row.measure_id = pm.measure_id AND actual_row.fiscal_year = %d",
         "LEFT JOIN performance.measure_actuals target_row ON target_row.measure_id = pm.measure_id AND target_row.fiscal_year = %d",
+        # A Citywide measure's entity_link (if any) names the specific
+        # mayoral service/quasi-agency that actually owns it -- e.g. OPI,
+        # not just the shared parent agency (Mayor's Office) every mayoral
+        # suboffice measure is otherwise indistinguishable under. Pick one
+        # deterministically since a measure could in principle have more
+        # than one link row.
+        "LEFT JOIN LATERAL (",
+        "  SELECT mel.public_name FROM performance.measure_entity_link mel",
+        "  WHERE mel.measure_id = pm.measure_id ORDER BY mel.updated_at DESC LIMIT 1",
+        ") mel ON TRUE",
         "WHERE pm.is_city AND pm.active",
         "ORDER BY p.pillar_name NULLS FIRST, pm.title"
       ),
