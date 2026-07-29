@@ -1,0 +1,13 @@
+# Keep binary assets byte-exact. Without this, core.autocrlf=true rewrites line
+# endings inside them on checkout and corrupts the files.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.potx binary
+*.dotx binary

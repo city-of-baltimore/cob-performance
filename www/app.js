@@ -33,10 +33,149 @@
 
   function setActivePage(page) {
     var navPage = page === "plan_review_detail" ? "reviewer_dashboard" : page;
+    if (page === "cls_request_detail") navPage = "cls_requests";
     document.querySelectorAll("[data-page]").forEach(function (button) {
       button.classList.toggle("active", button.getAttribute("data-page") === navPage);
     });
   }
+
+  // ---- CLS request page controller -------------------------------------
+  function clsPageRoot() { return document.querySelector(".cls-detail-shell"); }
+  function clsFieldInput(container) { return container.querySelector("input, textarea, select"); }
+  function clsWordCount(s) { s = (s || "").trim(); return s ? s.split(/\s+/).length : 0; }
+  function clsLineTotal() {
+    var total = 0;
+    document.querySelectorAll(".cls-line-table .cls-line-row[data-cls-line-amount]").forEach(function (row) {
+      var v = parseFloat(row.getAttribute("data-cls-line-amount"));
+      if (!isNaN(v)) total += v;
+    });
+    return total;
+  }
+  function clsRequestAmount() {
+    var el = document.getElementById("cls_form_amount");
+    if (!el) return 0;
+    var v = parseFloat(el.value);
+    return isNaN(v) ? 0 : v;
+  }
+  function clsMoney(n) {
+    try { return "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    catch (e) { return "$" + n; }
+  }
+  function clsUpdateWordCount() {
+    var ta = document.getElementById("cls_form_summary");
+    var box = document.getElementById("cls_summary_wordcount");
+    if (!ta || !box) return;
+    var wc = clsWordCount(ta.value);
+    var over = wc - 300;
+    if (over > 0) {
+      ta.classList.add("cls-over-limit");
+      box.classList.add("cls-over-limit");
+      box.textContent = "This response is " + over + " word" + (over === 1 ? "" : "s") + " over the 300-word limit. Anything beyond 300 words will be cut off for review.";
+    } else {
+      ta.classList.remove("cls-over-limit");
+      box.classList.remove("cls-over-limit");
+      box.textContent = wc + " / 300 words";
+    }
+  }
+  function clsUpdateRemaining() {
+    var note = document.querySelector(".cls-remaining-note");
+    if (!note) return;
+    var text = note.querySelector(".cls-remaining-text");
+    if (!text) return;
+    var amt = clsRequestAmount();
+    var total = clsLineTotal();
+    var remaining = amt - total;
+    note.classList.remove("cls-remaining-ok", "cls-remaining-over");
+    if (amt <= 0) {
+      text.textContent = "Enter the request amount above, then use the Add Details button to break it out by expenditure object.";
+      return;
+    }
+    if (Math.abs(remaining) < 0.005) {
+      note.classList.add("cls-remaining-ok");
+      text.textContent = "The line totals match the request amount of " + clsMoney(amt) + ". This request is fully broken out.";
+    } else if (remaining > 0) {
+      text.textContent = "Use the Add Details button to describe the remaining " + clsMoney(remaining) + " in this request. The line totals should equal the request amount.";
+    } else {
+      note.classList.add("cls-remaining-over");
+      text.textContent = "The line totals exceed the request amount by " + clsMoney(Math.abs(remaining)) + ". Reduce the line items or increase the request amount.";
+    }
+  }
+  function clsUpdateRequired() {
+    document.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+      var el = clsFieldInput(c);
+      var empty = !el || !(el.value || "").trim();
+      c.classList.toggle("cls-field-missing", empty);
+    });
+  }
+  function clsValidate() { clsUpdateWordCount(); clsUpdateRemaining(); clsUpdateRequired(); }
+  function clsRequestIsComplete() {
+    if (!clsPageRoot()) return false;
+    var ok = true;
+    document.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+      var el = clsFieldInput(c);
+      if (!el || !(el.value || "").trim()) ok = false;
+    });
+    var ta = document.getElementById("cls_form_summary");
+    if (ta && clsWordCount(ta.value) > 300) ok = false;
+    var amt = clsRequestAmount();
+    if (amt <= 0 || Math.abs(amt - clsLineTotal()) >= 0.005) ok = false;
+    return ok;
+  }
+  function clsApplyOneTime() {
+    var cb = document.getElementById("cls_form_one_time");
+    if (!cb) return;
+    var hide = cb.checked;
+    document.querySelectorAll(".cls-outyear-field").forEach(function (f) { f.style.display = hide ? "none" : ""; });
+    if (hide) {
+      ["cls_form_amount_next", "cls_form_amount_2next"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && el.value !== "") { el.value = ""; el.dispatchEvent(new Event("change", { bubbles: true })); }
+      });
+    }
+  }
+  function clsApplyPositionsToggle() {
+    var cb = document.getElementById("cls_add_positions_toggle");
+    var body = document.getElementById("cls_positions_body");
+    if (cb && body) body.style.display = cb.checked ? "" : "none";
+  }
+  function clsSyncTitle() {
+    var name = document.getElementById("cls_form_name");
+    var title = document.querySelector(".cls-detail-title");
+    if (name && title) {
+      var v = (name.value || "").trim();
+      title.textContent = v || "New CLS request";
+    }
+  }
+  function clsInitPage() {
+    if (!clsPageRoot()) return;
+    clsApplyOneTime();
+    clsApplyPositionsToggle();
+    clsSyncTitle();
+    clsValidate();
+  }
+  var clsAutosaveTimer = null;
+  function clsScheduleAutosave() {
+    if (!document.getElementById("cls_save_status")) return; // edit mode only
+    var span = document.getElementById("cls_save_status");
+    if (span) span.textContent = "Saving…";
+    if (clsAutosaveTimer) window.clearTimeout(clsAutosaveTimer);
+    clsAutosaveTimer = window.setTimeout(function () {
+      if (window.Shiny) window.Shiny.setInputValue("cls_autosave", Date.now(), { priority: "event" });
+    }, 900);
+  }
+  document.addEventListener("input", function (event) {
+    if (event.target && event.target.id === "cls_form_name") clsSyncTitle();
+    if (event.target && event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
+    if (event.target && event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
+  });
+  document.addEventListener("change", function (event) {
+    if (!event.target) return;
+    if (event.target.id === "cls_form_one_time") { clsApplyOneTime(); clsValidate(); }
+    if (event.target.id === "cls_add_positions_toggle") { clsApplyPositionsToggle(); }
+    if (event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
+    if (event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
+  });
+  document.addEventListener("shiny:value", function () { window.setTimeout(clsInitPage, 0); });
 
   function closeMobileNav() {
     document.body.classList.remove("mobile-nav-open");
@@ -200,6 +339,10 @@
     var showPublishingQueue = Boolean(message && message.showPublishingQueue);
     var hidePerformancePlanning = Boolean(message && message.hidePerformancePlanning);
     var showApplicationAdmin = Boolean(message && message.showApplicationAdmin);
+    var showClsRequests = Boolean(message && message.showClsRequests);
+    var showClsReview = Boolean(message && message.showClsReview);
+    document.body.classList.toggle("hide-cls-requests", !showClsRequests);
+    document.body.classList.toggle("hide-cls-review", !showClsReview);
     document.body.classList.toggle("hide-services-page", hideServices);
     document.body.classList.toggle("hide-performance-reviewing", !showPerformanceReviewing);
     document.body.classList.toggle("hide-measure-review", !showMeasureReview);
@@ -239,6 +382,16 @@
     }
     if (!showApplicationAdmin) {
       document.querySelectorAll('[data-page="bug_fix"].active').forEach(function () {
+        setActivePage("landing");
+      });
+    }
+    if (!showClsRequests) {
+      document.querySelectorAll('[data-page="cls_requests"].active').forEach(function () {
+        setActivePage("landing");
+      });
+    }
+    if (!showClsReview) {
+      document.querySelectorAll('[data-page="cls_review"].active').forEach(function () {
         setActivePage("landing");
       });
     }
@@ -396,6 +549,10 @@
     window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
     window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
     window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
+    window.Shiny.addCustomMessageHandler("cls-save-status", function (msg) {
+      var span = document.getElementById("cls_save_status");
+      if (span) span.textContent = msg;
+    });
     window.Shiny.addCustomMessageHandler("set-auth-state", setAuthState);
     window.Shiny.addCustomMessageHandler("auth-session-issued", storeAuthSession);
     window.Shiny.addCustomMessageHandler("auth-session-expired", clearAuthSession);
@@ -637,6 +794,101 @@
     if (signOutButton) {
       event.preventDefault();
       requestSignOut();
+      return;
+    }
+    var clsSubmitOne = event.target.closest("[data-cls-submit]");
+    if (clsSubmitOne && window.Shiny) {
+      window.Shiny.setInputValue("cls_submit_one", {
+        clsId: clsSubmitOne.getAttribute("data-cls-submit"),
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsSendBbmr = event.target.closest("[data-cls-send-bbmr]");
+    if (clsSendBbmr && window.Shiny) {
+      window.Shiny.setInputValue("cls_send_bbmr_one", {
+        clsId: clsSendBbmr.getAttribute("data-cls-send-bbmr"),
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsReviewSave = event.target.closest("[data-cls-review-save]");
+    if (clsReviewSave && window.Shiny) {
+      window.Shiny.setInputValue("cls_review_save", {
+        clsId: clsReviewSave.getAttribute("data-cls-review-save"),
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsSort = event.target.closest("[data-cls-sort]");
+    if (clsSort) {
+      var table = clsSort.closest(".cls-request-table");
+      if (table) {
+        var key = clsSort.getAttribute("data-cls-sort");
+        var asc = clsSort.getAttribute("data-sort-dir") !== "asc";
+        table.querySelectorAll("[data-cls-sort]").forEach(function (b) {
+          if (b !== clsSort) b.removeAttribute("data-sort-dir");
+        });
+        clsSort.setAttribute("data-sort-dir", asc ? "asc" : "desc");
+        var sortRows = Array.prototype.slice.call(table.querySelectorAll(".cls-request-row:not(.table-head)"));
+        sortRows.sort(function (a, b) {
+          if (key === "amount") {
+            var an = parseFloat(a.getAttribute("data-sort-amount"));
+            var bn = parseFloat(b.getAttribute("data-sort-amount"));
+            if (isNaN(an)) an = -Infinity;
+            if (isNaN(bn)) bn = -Infinity;
+            return asc ? an - bn : bn - an;
+          }
+          var av = a.getAttribute("data-sort-" + key) || "";
+          var bv = b.getAttribute("data-sort-" + key) || "";
+          return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+        });
+        sortRows.forEach(function (r) { table.appendChild(r); });
+      }
+      return;
+    }
+    var clsBackLink = event.target.closest(".cls-back-link");
+    if (clsBackLink && clsRequestIsComplete()) {
+      window.alert("This request has been justified.");
+      // fall through to the [data-page] navigation below
+    }
+    var clsOpen = event.target.closest("[data-cls-open]");
+    if (clsOpen && window.Shiny) {
+      window.Shiny.setInputValue("cls_open_detail", {
+        clsId: clsOpen.getAttribute("data-cls-open"),
+        nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsDelete = event.target.closest("[data-cls-delete]");
+    if (clsDelete && window.Shiny) {
+      var clsName = clsDelete.getAttribute("data-cls-name") || "this request";
+      if (window.confirm('Delete "' + clsName + '"? This also removes its line items and positions.')) {
+        window.Shiny.setInputValue("cls_delete", {
+          clsId: clsDelete.getAttribute("data-cls-delete"),
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return;
+    }
+    var clsDeleteLine = event.target.closest("[data-cls-delete-line]");
+    if (clsDeleteLine && window.Shiny) {
+      if (window.confirm("Remove this line item?")) {
+        window.Shiny.setInputValue("cls_delete_line", {
+          lineId: clsDeleteLine.getAttribute("data-cls-delete-line"),
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return;
+    }
+    var clsDeletePosition = event.target.closest("[data-cls-delete-position]");
+    if (clsDeletePosition && window.Shiny) {
+      if (window.confirm("Remove this position request?")) {
+        window.Shiny.setInputValue("cls_delete_position", {
+          posId: clsDeletePosition.getAttribute("data-cls-delete-position"),
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
       return;
     }
     var button = event.target.closest("[data-page]");

@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # R package dependencies (sodium: password hashing; curl: SMTP for reset links)
-RUN R -q -e "options(repos = c(CRAN = 'https://cloud.r-project.org')); pkgs <- c('shiny', 'DBI', 'RPostgres', 'jsonlite', 'sodium', 'curl'); for (pkg in pkgs) { if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg); library(pkg, character.only = TRUE) }"
+RUN R -q -e "options(repos = c(CRAN = 'https://cloud.r-project.org')); pkgs <- c('shiny', 'DBI', 'RPostgres', 'jsonlite', 'sodium', 'curl', 'writexl'); for (pkg in pkgs) { if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg); library(pkg, character.only = TRUE) }"
 
 # Python environment for PDF/PowerPoint plan exports
 COPY scripts/requirements.txt /opt/plan-export/requirements.txt
@@ -29,6 +29,7 @@ WORKDIR /app
 COPY app.R ./
 COPY R/ R/
 COPY scripts/build_plan_export.py scripts/
+COPY scripts/build_cls_pdf.py scripts/
 COPY scripts/import_entity_role_assignments.R scripts/
 COPY scripts/apply_user_entity_access_cleanup.R scripts/
 COPY database/seed/entity_role_assignments.csv database/seed/entity_role_assignments.csv
