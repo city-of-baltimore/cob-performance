@@ -2157,6 +2157,45 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
   invisible(overall_score)
 }
 
+# The autosave path deliberately skips a full refresh_app_data() (see the
+# comment on the plan_review_save_request observer in app.R) since
+# reloading the entire database on every debounced keystroke visibly
+# collapses/scrolls the page. But that leaves app_data()'s in-memory
+# review_plan_review/review_section_score rows stale until the next full
+# refresh -- so if anything else causes output$page to re-render in the
+# meantime, it reads back the pre-save data and content that was just
+# cleared appears to "come back". This re-fetches only the one plan's
+# review + scores, matching load_app_data()'s own queries/columns, so the
+# caller can patch just those rows into app_data() in place.
+plan_review_snapshot_for_plan <- function(connection, plan_id) {
+  plan_id <- as.integer(plan_id)
+  review <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT pr.review_id, pr.plan_id, pr.reviewer_id, u.full_name AS reviewer_name,",
+      "pr.review_started_at, pr.feedback_released_at, pr.overall_score, pr.internal_notes, pr.review_complete",
+      "FROM review.plan_review pr JOIN access.\"user\" u ON u.user_id = pr.reviewer_id",
+      "WHERE pr.plan_id = $1",
+      "ORDER BY pr.review_started_at DESC NULLS LAST, pr.review_id DESC"
+    ),
+    params = list(plan_id)
+  )
+  scores <- if (nrow(review)) {
+    DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT score_id, review_id, section_code, criterion_code, COALESCE(target_type, 'plan') AS target_type, target_id, score, weight, weighted_score, justification",
+        "FROM review.section_score WHERE review_id IN (SELECT review_id FROM review.plan_review WHERE plan_id = $1)",
+        "ORDER BY review_id, section_code, target_type, target_id, criterion_code"
+      ),
+      params = list(plan_id)
+    )
+  } else {
+    data.frame()
+  }
+  list(review = review, scores = scores)
+}
+
 approve_plan_review <- function(connection, plan_id, reviewer_id = NULL, next_status = "DeputyMayorReview", routed_by = NULL) {
   plan_id <- as.integer(plan_id)
   reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)

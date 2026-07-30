@@ -202,6 +202,17 @@ can_view_performance_reviewing <- function(app_roles) {
   has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
 }
 
+# The Budget Planning (CLS) section just merged and isn't ready for its
+# intended audience yet -- restricted to SystemAdmin only across nav
+# visibility, the auto-redirect-away logic, and page access, until that
+# changes. The role functions below (can_view_cls_requests(),
+# can_review_cls(), etc.) still encode the real long-term permission
+# model; this is a single override to remove once the feature is ready to
+# open up.
+can_access_budget_planning <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
 # CLS requests are an agency-facing budget tool. Viewers can see them; writers,
 # writers and submitters (agency leadership) can create/edit/delete. SystemAdmin
 # has access for support and testing. AgencySubmitter is the approving role -
@@ -7306,9 +7317,9 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     goals = page_goals(db, agency_id, can_edit_plan),
     services = page_services(db, agency_id, can_edit_plan),
     risks = page_risks(db, agency_id, can_edit_plan),
-    cls_requests = page_cls_requests(db, agency_id, app_roles),
-    cls_request_detail = page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin),
-    cls_review = page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0)),
+    cls_requests = if (can_access_budget_planning(app_roles)) page_cls_requests(db, agency_id, app_roles) else page_landing(db, agency_id, app_roles, agency_roles),
+    cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin) else page_landing(db, agency_id, app_roles, agency_roles),
+    cls_review = if (can_access_budget_planning(app_roles)) page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0)) else page_landing(db, agency_id, app_roles, agency_roles),
     page_landing(db, agency_id, app_roles, agency_roles)
   )
 }
@@ -8024,6 +8035,7 @@ server <- function(input, output, session) {
     review_admin_mode <- uses_review_administration_mode(current_user_app_roles())
     can_view_approval_context <- can_view_plan_approval_queue_context(data, current_user_app_roles(), current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_)
     can_view_reviewing_context <- can_view_performance_reviewing(current_user_app_roles()) || can_view_approval_context
+    budget_planning_access <- can_access_budget_planning(current_user_app_roles())
     session$sendCustomMessage("set-navigation-scope", list(
       hideServices = hide_services,
       showPerformanceReviewing = can_view_reviewing_context,
@@ -8032,19 +8044,19 @@ server <- function(input, output, session) {
       showPublishingQueue = can_finalize_plans(current_user_app_roles()),
       hidePerformancePlanning = review_admin_mode,
       showApplicationAdmin = current_user_can_view_application_admin(),
-      showClsRequests = can_view_cls_requests(current_user_app_roles()),
-      showClsReview = can_review_cls(current_user_app_roles())
+      showClsRequests = budget_planning_access && can_view_cls_requests(current_user_app_roles()),
+      showClsReview = budget_planning_access && can_review_cls(current_user_app_roles())
     ))
-    if (!can_view_cls_requests(current_user_app_roles()) && identical(current_page(), "cls_requests")) {
-      next_page <- if (can_review_cls(current_user_app_roles())) "cls_review" else "landing"
+    if (!(budget_planning_access && can_view_cls_requests(current_user_app_roles())) && identical(current_page(), "cls_requests")) {
+      next_page <- if (budget_planning_access && can_review_cls(current_user_app_roles())) "cls_review" else "landing"
       current_page(next_page)
       session$sendCustomMessage("set-page", next_page)
     }
-    if (!can_open_cls_request(current_user_app_roles()) && identical(current_page(), "cls_request_detail")) {
+    if (!(budget_planning_access && can_open_cls_request(current_user_app_roles())) && identical(current_page(), "cls_request_detail")) {
       current_page("landing")
       session$sendCustomMessage("set-page", "landing")
     }
-    if (!can_review_cls(current_user_app_roles()) && identical(current_page(), "cls_review")) {
+    if (!(budget_planning_access && can_review_cls(current_user_app_roles())) && identical(current_page(), "cls_review")) {
       current_page("landing")
       session$sendCustomMessage("set-page", "landing")
     }
@@ -9330,6 +9342,26 @@ server <- function(input, output, session) {
     # Terminal workflow actions on this plan (approve/route/publish) already
     # call refresh_app_data() on their own, so app_data() is guaranteed fresh
     # by the time it actually gates a workflow decision.
+    #
+    # But leaving app_data() fully stale in the meantime has its own bug:
+    # if anything else causes output$page to re-render before the next full
+    # refresh (a different input changing, a periodic session tick), it
+    # reads back the pre-save review_plan_review/review_section_score rows
+    # -- making content the reviewer just cleared appear to reappear. Patch
+    # just this plan's rows in place instead of a full reload.
+    snapshot <- tryCatch(plan_review_snapshot_for_plan(database, plan_id), error = function(error) NULL)
+    if (!is.null(snapshot)) {
+      old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
+      data$review_plan_review <- rbind(
+        data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
+        snapshot$review
+      )
+      data$review_section_score <- rbind(
+        data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
+        snapshot$scores
+      )
+      app_data(data)
+    }
     session$sendCustomMessage("plan-review-save-result", list(
       ok = TRUE,
       source = source,

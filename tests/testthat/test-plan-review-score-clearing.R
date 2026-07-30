@@ -117,3 +117,59 @@ test_that("save_plan_review_scores clears a previously-saved score and justifica
   expect_true(is.na(saved_after_clear$score[[1]]))
   expect_equal(saved_after_clear$justification[[1]], "")
 })
+
+test_that("plan_review_snapshot_for_plan reflects a just-cleared score, matching what should patch into app_data()", {
+  # This is the query the plan_review_save_request observer in app.R uses
+  # to patch app_data() in place after a save, instead of leaving the
+  # in-memory review_plan_review/review_section_score rows stale until the
+  # next full refresh_app_data() (see the comment there).
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+
+  cycle_id <- DBI::dbGetQuery(connection, "SELECT cycle_id FROM planning.plan_cycle LIMIT 1")$cycle_id[[1]]
+  user_id <- DBI::dbGetQuery(connection, 'SELECT user_id FROM access."user" LIMIT 1')$user_id[[1]]
+  agency_id <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT a.agency_id FROM reference.agency a",
+      "WHERE NOT EXISTS (SELECT 1 FROM planning.agency_plan ap WHERE ap.agency_id = a.agency_id AND ap.cycle_id = $1)",
+      "LIMIT 1"
+    ),
+    params = list(cycle_id)
+  )$agency_id[[1]]
+
+  plan <- DBI::dbGetQuery(
+    connection,
+    "INSERT INTO planning.agency_plan (agency_id, cycle_id, plan_status, budget_status) VALUES ($1, $2, 'Submitted', 'Draft') RETURNING plan_id",
+    params = list(agency_id, cycle_id)
+  )
+  plan_id <- plan$plan_id[[1]]
+  on.exit(
+    {
+      DBI::dbExecute(connection, "DELETE FROM review.section_score WHERE review_id IN (SELECT review_id FROM review.plan_review WHERE plan_id = $1)", params = list(plan_id))
+      DBI::dbExecute(connection, "DELETE FROM review.plan_review WHERE plan_id = $1", params = list(plan_id))
+      DBI::dbExecute(connection, "DELETE FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+      DBI::dbDisconnect(connection)
+    },
+    add = TRUE
+  )
+
+  save_plan_review_scores(
+    connection, plan_id, user_id,
+    list(list(section_code = "S1", criterion_code = "C1", target_type = "plan", target_id = NA_integer_, score = 2, weight = 10, justification = "Initial")),
+    "notes"
+  )
+  save_plan_review_scores(
+    connection, plan_id, user_id,
+    list(list(section_code = "S1", criterion_code = "C1", target_type = "plan", target_id = NA_integer_, score = NA_integer_, weight = 10, justification = "")),
+    "notes"
+  )
+
+  snapshot <- plan_review_snapshot_for_plan(connection, plan_id)
+  expect_equal(nrow(snapshot$review), 1)
+  expect_equal(snapshot$review$plan_id[[1]], plan_id)
+  row <- snapshot$scores[snapshot$scores$section_code == "S1" & snapshot$scores$criterion_code == "C1", , drop = FALSE]
+  expect_equal(nrow(row), 1)
+  expect_true(is.na(row$score[[1]]))
+  expect_equal(row$justification[[1]], "")
+})
