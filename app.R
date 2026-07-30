@@ -7530,6 +7530,21 @@ server <- function(input, output, session) {
   cls_last_save <- reactiveVal(NULL)
   cls_applied_status <- reactiveVal(NULL)
   cls_applied_agency <- reactiveVal(NULL)
+  # Mirror the Bug/Fix and Measures page filter/search widgets in their own
+  # reactiveVals rather than reading input$feedback_search etc. directly.
+  # update*Input() only works on a widget that's currently mounted in the
+  # DOM -- if a user signs out and a different user signs in without ever
+  # visiting the page that widget lives on, the reset call silently no-ops
+  # and the next time that page renders, it rebuilds its `value =`/
+  # `selected =` from the still-stale input$..., leaking the previous
+  # user's filter into the new user's session. These reactiveVals are
+  # reset unconditionally in complete_sign_in(), independent of whatever
+  # page happens to be showing at that moment.
+  feedback_search_value <- reactiveVal("")
+  feedback_category_filter_value <- reactiveVal(character(0))
+  feedback_priority_filter_value <- reactiveVal(character(0))
+  feedback_status_filter_value <- reactiveVal(character(0))
+  measure_status_filter_value <- reactiveVal("All except deprecated")
   service_open_flags <- new.env(parent = emptyenv())
   service_body_outputs_registered <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
@@ -7635,6 +7650,37 @@ server <- function(input, output, session) {
     updateSelectInput(session, "role_preview_user_id", selected = user_id)
     updateSelectInput(session, "role_preview_app_role", selected = defaults$app_role)
     updateSelectInput(session, "role_preview_agency_role", selected = if (length(defaults$agency_roles)) defaults$agency_roles else "None")
+    # Shiny persists input values for the life of the browser session/tab,
+    # not per signed-in user -- signing out and a different user signing
+    # back in on the same tab (no page reload) would otherwise leave the
+    # previous user's page filters/search terms in place, silently
+    # filtering the new user's own view. Reset the authoritative
+    # reactiveVals (read by output$page regardless of which page is
+    # currently mounted -- see the declarations above) on every completed
+    # sign-in, including a restored session, so a new user always starts
+    # from a clean slate. Also nudge the widgets directly via
+    # update*Input() in case the relevant page happens to already be
+    # mounted; that call alone is NOT sufficient, since update*Input() is a
+    # no-op against a widget that isn't currently in the DOM, which is
+    # exactly the case that let this bug slip through the first time.
+    feedback_search_value("")
+    feedback_category_filter_value(character(0))
+    feedback_priority_filter_value(character(0))
+    feedback_status_filter_value(character(0))
+    measure_status_filter_value("All except deprecated")
+    # Same reasoning for the CLS workspace: the applied CLS Review filters, the
+    # request that happened to be open, and its "last saved by" note are all
+    # per-user state held in session-level reactiveVals.
+    cls_applied_status(NULL)
+    cls_applied_agency(NULL)
+    current_cls_id(NA_integer_)
+    cls_detail_origin(NULL)
+    cls_last_save(NULL)
+    updateTextInput(session, "feedback_search", value = "")
+    updateSelectInput(session, "feedback_category_filter", selected = character(0))
+    updateSelectInput(session, "feedback_priority_filter", selected = character(0))
+    updateSelectInput(session, "feedback_status_filter", selected = character(0))
+    updateSelectInput(session, "measure_status_filter", selected = "All except deprecated")
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
       update_submitter_selectors(data, submitter_value)
@@ -10020,14 +10066,24 @@ server <- function(input, output, session) {
     current_pillar_modal(NULL)
   }, ignoreInit = TRUE)
 
+  # Keep the filter reactiveVals (declared above, see the comment there) in
+  # sync with the actual widgets whenever the signed-in user changes them.
+  # ignoreNULL = FALSE is required: clearing a multi-select filter down to
+  # zero selections reports input$... as NULL, and the default
+  # ignoreNULL = TRUE would silently skip that update, leaving the
+  # reactiveVal (and therefore server-side filtering) stuck on the
+  # previous, non-empty selection even within the same user's session.
+  observeEvent(input$feedback_search, feedback_search_value(input$feedback_search %||% ""), ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$feedback_category_filter, feedback_category_filter_value(input$feedback_category_filter %||% character(0)), ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$feedback_priority_filter, feedback_priority_filter_value(input$feedback_priority_filter %||% character(0)), ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$feedback_status_filter, feedback_status_filter_value(input$feedback_status_filter %||% character(0)), ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$measure_status_filter, measure_status_filter_value(input$measure_status_filter %||% "All except deprecated"), ignoreInit = TRUE, ignoreNULL = FALSE)
+
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
       state <- auth_state()
       login_data <- if (identical(state$view %||% "login", "access_request")) ensure_app_data() else NULL
       return(page_login(state, login_data))
-    }
-    feedback_filter_values <- function(value) {
-      if (is.null(value) || length(value) == 0) character(0) else as.character(value)
     }
     page_data <- ensure_app_data()
     if (current_page() %in% c("overview", "goals", "services")) {
@@ -10040,7 +10096,7 @@ server <- function(input, output, session) {
       current_page(),
       page_data,
       current_submitter_value(),
-      input$measure_status_filter %||% "All except deprecated",
+      measure_status_filter_value(),
       current_user_can_manage_team(),
       current_user_can_submit_plan(),
       current_user_app_roles(),
@@ -10049,10 +10105,10 @@ server <- function(input, output, session) {
       current_history_plan_id() %||% NA_integer_,
       current_history_include_review(),
       feedback_filters = list(
-        search = if (is.null(input$feedback_search) || length(input$feedback_search) == 0) "" else input$feedback_search[[1]],
-        category = feedback_filter_values(input$feedback_category_filter),
-        priority = feedback_filter_values(input$feedback_priority_filter),
-        status = feedback_filter_values(input$feedback_status_filter)
+        search = feedback_search_value(),
+        category = feedback_category_filter_value(),
+        priority = feedback_priority_filter_value(),
+        status = feedback_status_filter_value()
       ),
       selected_cls_id = current_cls_id(),
       cls_detail_origin = cls_detail_origin(),
