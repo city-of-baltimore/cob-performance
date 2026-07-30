@@ -6572,3 +6572,32 @@ body.desktop-nav-collapsed .app-footer {
 
 .cls-chart-toggle.is-collapsed .fa,
 .cls-chart-toggle.is-collapsed svg { transform: rotate(180deg); }
+
+
+/* The request title gets its own line, clear of the eyebrow and the save
+   indicator (analyst feedback round 1). */
+.cls-summary-head-stacked {
+  display: block;
+  width: 100%;
+}
+
+.cls-summary-head-stacked .eyebrow {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.cls-summary-head-stacked .cls-detail-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Lock in place of Delete once a request has gone to BBMR. */
+.cls-delete-locked {
+  color: var(--lp-text-secondary);
+  font-size: 0.85rem;
+  padding: 0 0.35rem;
+  cursor: help;
+}

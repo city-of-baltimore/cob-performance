@@ -6189,6 +6189,86 @@ cls_truncate <- function(text, max = 90) {
   if (nchar(text) > max) paste0(substr(text, 1, max - 1), "…") else text
 }
 
+# CLS is organised by AGENCY, never by entity. A user can be routed into an
+# entity's plan (Mayoralty alone has nine), but every request they create or see
+# belongs to the parent agency, and all of that agency's entities show together.
+# The agency's own name, used for the CLS heading and notice even when the user
+# arrived through one of its entities.
+cls_agency_display_name <- function(db, agency_id) {
+  agency_id <- as.character(agency_id %||% "")
+  if (!nzchar(agency_id) || is.na(agency_id)) return("Agency")
+  a <- db$reference_agency
+  if (!is.null(a) && nrow(a)) {
+    row <- a[!is.na(a$agency_id) & a$agency_id == agency_id, , drop = FALSE]
+    if (nrow(row)) return(as.character(row$agency_name[[1]]))
+  }
+  agency_id
+}
+
+cls_agency_id_for_submitter <- function(db, submitter_value) {
+  submitter <- parse_submitter_value(submitter_value)
+  if (identical(submitter$type, "agency")) return(as.character(submitter$id))
+  pe <- db$reference_plan_entity
+  if (is.null(pe) || !nrow(pe)) return(NA_character_)
+  row <- pe[!is.na(pe$entity_id) & pe$entity_id == submitter$id, , drop = FALSE]
+  if (!nrow(row)) return(NA_character_)
+  as.character(row$parent_agency_id[[1]])
+}
+
+# Every FY2027 plan that rolls up to this agency: the agency's own plan plus the
+# plans of any entity whose parent_agency_id matches.
+cls_plan_ids_for_agency <- function(db, agency_id) {
+  agency_id <- as.character(agency_id %||% "")
+  if (!nzchar(agency_id) || is.na(agency_id)) return(integer(0))
+  ap <- db$planning_agency_plan
+  if (is.null(ap) || !nrow(ap)) return(integer(0))
+  ap <- ap[!is.na(ap$fiscal_year) & ap$fiscal_year == 2027, , drop = FALSE]
+  own <- ap$plan_id[!is.na(ap$agency_id) & ap$agency_id == agency_id]
+  pe <- db$reference_plan_entity
+  ent <- integer(0)
+  if (!is.null(pe) && nrow(pe)) {
+    kids <- pe$entity_id[!is.na(pe$parent_agency_id) & pe$parent_agency_id == agency_id]
+    if (length(kids)) ent <- ap$plan_id[!is.na(ap$entity_id) & ap$entity_id %in% kids]
+  }
+  sort(unique(as.integer(c(own, ent))))
+}
+
+# Requests across every plan that rolls up to the agency.
+cls_requests_for_agency <- function(db, agency_id) {
+  requests <- db$budget_cls_request
+  if (is.null(requests) || !nrow(requests)) return(if (is.null(requests)) data.frame() else requests[0, , drop = FALSE])
+  ids <- cls_plan_ids_for_agency(db, agency_id)
+  if (!length(ids)) return(requests[0, , drop = FALSE])
+  requests[!is.na(requests$plan_id) & requests$plan_id %in% ids, , drop = FALSE]
+}
+
+# Services to choose from when creating a request: every service on every plan
+# that rolls up to the agency, labelled with its entity when there is more than
+# one plan so two identically-named services stay distinguishable.
+cls_agency_service_choices <- function(db, agency_id) {
+  ids <- cls_plan_ids_for_agency(db, agency_id)
+  if (!length(ids)) return(character(0))
+  ap <- db$planning_agency_plan
+  out <- character(0)
+  labels <- character(0)
+  multi <- length(ids) > 1
+  for (pid in ids) {
+    plan <- ap[ap$plan_id == pid, , drop = FALSE]
+    if (!nrow(plan)) next
+    ch <- cls_plan_service_choices(db, plan)
+    if (!length(ch)) next
+    lab <- names(ch)
+    if (multi && !is.na(plan$entity_id[[1]])) {
+      lab <- paste0(lab, " — ", plan_display_name(db, plan))
+    }
+    out <- c(out, unname(ch))
+    labels <- c(labels, lab)
+  }
+  if (!length(out)) return(character(0))
+  ord <- order(labels)
+  stats::setNames(out[ord], labels[ord])
+}
+
 cls_requests_for_plan <- function(db, plan) {
   requests <- db$budget_cls_request
   if (is.null(requests) || !nrow(requests)) return(if (is.null(requests)) data.frame() else requests[0, , drop = FALSE])
@@ -6462,12 +6542,18 @@ cls_spend_category_options <- function(db) {
 # Every Agency Submitter for this agency, named in the submission notice. Plural
 # because an agency can have more than one person with final sign-off.
 cls_submitter_names <- function(db, plan) {
+  if (is.null(plan) || !nrow(plan)) return("Your Agency Submitter")
+  cls_submitter_names_for_agency(db, plan$agency_id[[1]])
+}
+
+cls_submitter_names_for_agency <- function(db, agency_id) {
   fallback <- "Your Agency Submitter"
-  if (is.null(plan) || !nrow(plan) || is.na(plan$agency_id[[1]])) return(fallback)
+  agency_id <- as.character(agency_id %||% "")
+  if (!nzchar(agency_id) || is.na(agency_id)) return(fallback)
   ur <- db$access_user_role
   if (is.null(ur) || !nrow(ur)) return(fallback)
   rows <- ur[!is.na(ur$app_role) & ur$app_role == "AgencySubmitter" &
-               !is.na(ur$agency_id) & ur$agency_id == plan$agency_id[[1]], , drop = FALSE]
+               !is.na(ur$agency_id) & ur$agency_id == agency_id, , drop = FALSE]
   if (!nrow(rows)) return(fallback)
   names <- db$access_user$full_name[match(rows$user_id, db$access_user$user_id)]
   names <- unique(trimws(as.character(names)))
@@ -6489,10 +6575,13 @@ cls_submitter_name <- function(db, plan) {
 }
 
 page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
+  # Whichever entity the user was routed into, CLS works at the agency level.
+  cls_agency <- cls_agency_id_for_submitter(db, agency_id)
+  plan_ids <- cls_plan_ids_for_agency(db, cls_agency)
   plan <- current_plan(db, agency_id)
   can_edit <- can_edit_cls_requests(app_roles)
-  has_plan <- !is.null(plan) && nrow(plan) && !is.na(plan$plan_id[[1]])
-  requests <- cls_requests_for_plan(db, plan)
+  has_plan <- length(plan_ids) > 0
+  requests <- cls_requests_for_agency(db, cls_agency)
   request_count <- if (is.null(requests)) 0L else nrow(requests)
 
   create_action <- if (can_edit && has_plan) {
@@ -6574,7 +6663,15 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
                 `aria-label` = paste("Submit", r$request_name, "for approval"),
                 icon("paper-plane"), "Submit")
             },
-            if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete` = r$cls_id, `data-cls-name` = r$request_name, icon("trash-can"), "Delete"),
+            # A request that has reached BBMR is a submitted record; it can no
+            # longer be deleted by anyone.
+            if (can_edit && !cls_status_is_complete(status)) {
+              tags$button(type = "button", class = "civic-button danger small",
+                `data-cls-delete` = r$cls_id, `data-cls-name` = r$request_name, icon("trash-can"), "Delete")
+            } else if (can_edit) {
+              tags$span(class = "cls-delete-locked", title = "Sent for BBMR review - this request can no longer be deleted",
+                icon("lock"))
+            },
             tags$button(type = "button", class = "civic-button primary small cls-enter-arrow", `data-cls-open` = r$cls_id, `aria-label` = paste("Modify request", r$request_name), "Modify", icon("arrow-right"))
           )
         )
@@ -6606,8 +6703,8 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
     )
   } else NULL
 
-  agency_label <- if (has_plan) plan_display_name(db, plan) else "Agency"
-  submitter_names <- cls_submitter_names(db, plan)
+  agency_label <- cls_agency_display_name(db, cls_agency)
+  submitter_names <- cls_submitter_names_for_agency(db, cls_agency)
   # "needs" when one person holds final sign-off, "need" when several do.
   needs_verb <- if (identical(submitter_names, "Your Agency Submitter") ||
                     grepl(" and ", submitter_names, fixed = TRUE)) "need" else "needs"
@@ -7112,7 +7209,12 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   # the request from CLS Review returns to CLS Review even if they also hold an
   # agency role, and a reviewer with no agency list access never gets offered it.
   came_from_review <- identical(as.character(origin_page %||% ""), "cls_review")
-  reviewer_view <- can_review_cls(app_roles) &&
+  # Deliberately keyed on BBMRReviewer, not can_review_cls(): that predicate also
+  # covers SystemAdmin, and since Budget Planning is currently SystemAdmin-only a
+  # broader test would make every request read-only for the one role that can
+  # reach the page at all.
+  is_bbmr_reviewer <- has_any_role(app_roles, "BBMRReviewer")
+  reviewer_view <- is_bbmr_reviewer &&
     (came_from_review || !can_view_cls_requests(app_roles) ||
        !has_any_role(app_roles, c("AgencyWriter", "AgencySubmitter")))
   back_link <- if (reviewer_view) {
@@ -7139,7 +7241,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   # longer change it, and BBMR reviewers see it read-only too - their decision is
   # recorded on the CLS Review page, not by editing the agency's submission.
   locked_status <- !is_new && cls_status_is_complete(cls_status_label(request))
-  read_only_reason <- if (reviewer_view) {
+  read_only_reason <- if (is_bbmr_reviewer) {
     "BBMR reviewers open requests read-only. Record your decision on the CLS Review page."
   } else if (locked_status) {
     "This request has been sent for BBMR review, so it can no longer be changed."
@@ -7147,7 +7249,14 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   if (!is.null(read_only_reason)) can_edit <- FALSE
 
   plan <- if (is_new) current_plan(db, agency_id) else db$planning_agency_plan[db$planning_agency_plan$plan_id == request$plan_id[[1]], , drop = FALSE]
-  service_choices <- cls_plan_service_choices(db, plan)
+  # Services come from every plan rolling up to the agency, so a request can be
+  # filed against any of its entities' services.
+  cls_agency <- if (is_new) cls_agency_id_for_submitter(db, agency_id) else {
+    if (nrow(plan) && !is.na(plan$agency_id[[1]])) as.character(plan$agency_id[[1]])
+    else cls_agency_id_for_submitter(db, paste0("entity:", plan$entity_id[[1]]))
+  }
+  service_choices <- cls_agency_service_choices(db, cls_agency)
+  if (!length(service_choices)) service_choices <- cls_plan_service_choices(db, plan)
   cur_ps <- if (is_new) NULL else as.character(request$plan_service_id[[1]])
   if (!is_new && !is.null(cur_ps) && !cur_ps %in% unname(service_choices)) {
     service_choices <- c(stats::setNames(cur_ps, cls_service_label(db, request$service_id)), service_choices)
@@ -7257,7 +7366,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
 
   summary_section <- tags$section(
     class = "section-surface cls-summary-surface",
-    div(class = "cls-summary-head",
+    div(class = "cls-summary-head cls-summary-head-stacked",
       div(class = "eyebrow", "Budget proposal • CLS request"),
       h2(class = "cls-detail-title", page_title)
     ),
@@ -7318,7 +7427,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
               span(if (nzchar(as.character(li$justification %||% ""))) li$justification else "—"),
               div(class = "cls-request-actions",
                 if (can_edit) tags$button(type = "button", class = "civic-button ghost small cls-row-edit",
-                  `data-cls-edit-line` = li$line_id, `aria-label` = "Edit this object", title = "Edit this object", icon("pencil")),
+                  `data-cls-edit-line` = li$line_id, `aria-label` = "Edit this object", title = "Edit this object", icon("pen")),
                 if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-line` = li$line_id, icon("trash-can"), "Remove")))
           }
         }))
@@ -7399,7 +7508,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
               span(if (nzchar(as.character(po$justification %||% ""))) po$justification else "—"),
               div(class = "cls-request-actions",
                 if (can_edit) tags$button(type = "button", class = "civic-button ghost small cls-row-edit",
-                  `data-cls-edit-position` = po$pos_id, `aria-label` = "Edit this position", title = "Edit this position", icon("pencil")),
+                  `data-cls-edit-position` = po$pos_id, `aria-label` = "Edit this position", title = "Edit this position", icon("pen")),
                 if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-position` = po$pos_id, icon("trash-can"), "Remove")))
           }
         }))

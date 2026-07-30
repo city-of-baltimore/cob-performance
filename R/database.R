@@ -1608,6 +1608,12 @@ save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
 delete_cls_request <- function(connection, cls_id) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
+  # Server-side guard to match the UI: once a request has gone to BBMR it is a
+  # submitted record and cannot be deleted, however the call arrives.
+  st <- DBI::dbGetQuery(connection, "SELECT status FROM budget.cls_request WHERE cls_id = $1", params = list(cls_id))
+  if (nrow(st) && cls_status_is_complete(st$status[[1]])) {
+    stop("This request has been sent for BBMR review and can no longer be deleted.")
+  }
   # Remove children explicitly rather than relying on ON DELETE CASCADE: the FK
   # cascade is only present on freshly created tables, and databases where the
   # CLS tables predate the cascade would otherwise block the delete.
