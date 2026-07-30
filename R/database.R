@@ -1991,6 +1991,28 @@ review_measure_record <- function(connection, measure_id, decision, feedback = "
   invisible(TRUE)
 }
 
+# SystemAdmin escape hatch for a measure Validated by mistake or that needs
+# further edits: unlocks its definition fields again (see
+# measure_definition_is_locked()) by moving it back to Draft. Scoped to
+# WHERE approval_status = 'Validated' so it's a deliberate no-op (and
+# raises, rather than silently "succeeding") if the measure's status
+# already changed under the admin -- e.g. a second admin reverted it, or a
+# reviewer action landed, between the modal opening and this being clicked.
+revert_measure_to_draft <- function(connection, measure_id) {
+  measure_id <- as.integer(measure_id)
+  changed <- DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.performance_measure",
+      "SET approval_status = 'Draft', validated = false, submitted_for_approval_at = NULL, last_updated = now()",
+      "WHERE measure_id = $1 AND approval_status = 'Validated'"
+    ),
+    params = list(measure_id)
+  )
+  if (changed != 1) stop("Measure not found or is not currently Validated.")
+  invisible(TRUE)
+}
+
 save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, internal_notes = "") {
   plan_id <- as.integer(plan_id)
   reviewer_id <- if (is.null(reviewer_id) || is.na(reviewer_id)) NA_integer_ else as.integer(reviewer_id)

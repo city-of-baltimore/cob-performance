@@ -1549,6 +1549,18 @@
     if (dialog && dialog.open) dialog.close();
   });
 
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#request_measure_revert_to_draft")) return;
+    var dialog = document.getElementById("revert_measure_to_draft_dialog");
+    if (dialog && dialog.showModal) dialog.showModal();
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#cancel_measure_revert_to_draft")) return;
+    var dialog = document.getElementById("revert_measure_to_draft_dialog");
+    if (dialog && dialog.open) dialog.close();
+  });
+
   function measureValueInputs() {
     return Array.from(document.querySelectorAll(".measure-value-input"));
   }

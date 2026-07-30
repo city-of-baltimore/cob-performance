@@ -5337,7 +5337,8 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         div(
           if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", icon("trash-can"), "Delete measure"),
           if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", icon("ban"), "Make inactive"),
-          if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small")
+          if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small"),
+          if (!is_new && is_measure_validated && isTRUE(can_edit_locked_data)) tags$button(id = "request_measure_revert_to_draft", type = "button", class = "civic-button secondary small", icon("rotate-left"), "Revert to Draft")
         ),
         div(
           class = "measure-submit-group",
@@ -5352,6 +5353,11 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         id = "deactivate_measure_dialog",
         class = "confirmation-dialog",
         div(class = "confirmation-dialog-panel", div(class = "confirmation-dialog-icon", icon("triangle-exclamation")), h2("Are you sure you want to make this measure inactive?"), p("It will no longer be available for new Goal KPI or Service Metric selections. Its history will be retained."), div(class = "confirmation-dialog-actions", tags$button(id = "cancel_measure_deactivate", type = "button", class = "civic-button secondary small", "Cancel"), actionButton("confirm_deactivate_measure", "Make inactive", class = "civic-button danger small")))
+      ),
+      tags$dialog(
+        id = "revert_measure_to_draft_dialog",
+        class = "confirmation-dialog",
+        div(class = "confirmation-dialog-panel", div(class = "confirmation-dialog-icon", icon("triangle-exclamation")), h2("Are you sure you want to revert this measure to Draft?"), p("This measure is currently Validated. Reverting to Draft unlocks its definition fields for editing and removes its validated status until it's resubmitted and re-approved."), div(class = "confirmation-dialog-actions", tags$button(id = "cancel_measure_revert_to_draft", type = "button", class = "civic-button secondary small", "Cancel"), actionButton("confirm_measure_revert_to_draft", "Revert to Draft", class = "civic-button secondary small")))
       )
     )
   )
@@ -8983,6 +8989,22 @@ server <- function(input, output, session) {
     set_measure_active(database, current_measure_id(), current_agency_id(), TRUE)
     refresh_app_data(after = function() {
       showNotification("Measure reactivated.", type = "message")
+    })
+  }, ignoreInit = TRUE)
+  observeEvent(input$confirm_measure_revert_to_draft, {
+    if (!current_user_can_edit_locked_measure_data()) {
+      showNotification("Only System Admins can revert a measure's status.", type = "error", duration = 8)
+      return()
+    }
+    measure_id <- current_measure_id()
+    if (is.null(measure_id) || identical(measure_id, "new")) return()
+    result <- tryCatch(revert_measure_to_draft(database, measure_id), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data(after = function() {
+      showNotification("Measure reverted to Draft.", type = "message")
     })
   }, ignoreInit = TRUE)
 
