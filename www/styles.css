@@ -6378,22 +6378,49 @@ body.desktop-nav-collapsed .app-footer {
 }
 
 
-/* Review table gains Service and Positions columns. */
+/* Review table: Service and Positions columns, Positions left of FY28 so the
+   status chip is never squeezed off the end. Values wrap rather than truncate -
+   nothing on this row should be hidden (analyst feedback round 1). */
 .cls-rv-head,
 .cls-rv-header-row {
-  grid-template-columns: 1.2rem minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 0.9fr);
+  grid-template-columns:
+    1.1rem minmax(0, 1.7fr) minmax(0, 1.1fr) minmax(0, 1.2fr)
+    minmax(3.5rem, 0.5fr) minmax(6.5rem, 0.8fr) minmax(7rem, 0.8fr);
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .cls-rv-service,
 .cls-rv-positions {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--lp-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cls-rv-positions { text-align: right; }
+
+.cls-rv-name,
+.cls-rv-agency {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cls-rv-amount {
+  min-width: 0;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* The chip gets its own room and is never clipped. */
+.cls-rv-status {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cls-rv-status .status-chip { white-space: nowrap; }
 
 /* Type line with its definition behind a tooltip. */
 .cls-rv-meta { margin-bottom: 0.85rem; }
@@ -6504,3 +6531,44 @@ body.desktop-nav-collapsed .app-footer {
   font-size: 0.82rem;
   color: var(--lp-text-secondary);
 }
+
+
+/* Inline editor: every field stays readable, and the actions shrink to icons so
+   the justification input keeps its width (analyst feedback round 1). */
+.cls-line-table .cls-line-row.cls-row-editing {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(5.5rem, 0.55fr) minmax(0, 1.5fr) auto;
+}
+
+.cls-position-table .cls-position-row.cls-row-editing {
+  grid-template-columns: minmax(0, 1.1fr) minmax(4.5rem, 0.45fr) minmax(6rem, 0.6fr) minmax(0, 1.5fr) auto;
+}
+
+.cls-row-editing { padding-top: 0.45rem; padding-bottom: 0.45rem; }
+
+.cls-row-editing input[type="text"],
+.cls-row-editing input[type="number"],
+.cls-row-editing select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: clip;
+}
+
+.cls-edit-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: nowrap;
+}
+
+.civic-button.cls-icon-only {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  min-width: 2rem;
+  justify-content: center;
+}
+
+/* Collapsible chart surface. */
+.cls-chart-toggle .fa,
+.cls-chart-toggle svg { transition: transform 120ms ease; }
+
+.cls-chart-toggle.is-collapsed .fa,
+.cls-chart-toggle.is-collapsed svg { transform: rotate(180deg); }

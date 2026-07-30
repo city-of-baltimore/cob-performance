@@ -6416,6 +6416,26 @@ cls_status_tone <- function(status) {
 # that isn't on the list yet, and describes it in the justification.
 CLS_NEW_SPEND_CATEGORY <- "Create Spend Category"
 
+# A chart surface the user can fold away - the cards above it are often all
+# someone needs, and the chart is tall (analyst feedback round 1).
+cls_collapsible_chart <- function(key, title, description, body) {
+  panel_id <- paste0("cls_chart_body_", key)
+  tags$section(
+    class = "section-surface cls-chart-surface",
+    div(
+      class = "surface-header",
+      div(h2(title), p(description)),
+      div(class = "surface-actions",
+        tags$button(
+          type = "button", class = "civic-button secondary small cls-chart-toggle",
+          `data-cls-chart-toggle` = panel_id, `aria-expanded` = "true", `aria-controls` = panel_id,
+          icon("chevron-up"), tags$span(class = "cls-chart-toggle-label", "Hide chart")
+        ))
+    ),
+    div(id = panel_id, class = "cls-chart-body", body)
+  )
+}
+
 # The definition + example for a request type, reused as a tooltip on CLS Review
 # so a reviewer does not have to open the request to recall what a type means.
 cls_request_type_tooltip <- function(request_type) {
@@ -6577,7 +6597,8 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
         metric_tile("Total requested", cls_format_km(if (nrow(mine)) sum(mine$request_amount, na.rm = TRUE) else 0)),
         metric_tile("Total positions", if (nrow(mine)) sum(mine$position_count, na.rm = TRUE) else 0L)
       ),
-      surface(
+      cls_collapsible_chart(
+        "agency",
         "Request volume",
         "How this agency's requested dollars are distributed across its services.",
         cls_review_chart(mine, group_col = "service", group_noun = "service")
@@ -6604,8 +6625,8 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
   surface(
     paste(agency_label, "Requests"),
     subtext,
-    create_bar,
     agency_summary,
+    create_bar,
     table_body,
     export_bar,
     actions = header_actions
@@ -6869,9 +6890,9 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
         span(class = "cls-rv-name", r$request_name),
         span(class = "cls-rv-agency", r$agency),
         span(class = "cls-rv-service", r$service),
+        span(class = "cls-rv-positions", r$position_count),
         # Unrounded at the rolled-up level: BBMR needs to trace the exact figure.
         span(class = "cls-rv-amount", cls_format_dollars(r$request_amount)),
-        span(class = "cls-rv-positions", r$position_count),
         span(class = "cls-rv-status", status_chip(r$status, cls_status_tone(r$status)))
       ),
       div(
@@ -7011,7 +7032,8 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
         metric_tile("Total requested", cls_format_km(total_dollars)),
         metric_tile("Total positions", total_positions)
       ),
-      surface("Request volume", "How requested dollars are distributed across agencies.", cls_review_chart(rows))
+      cls_collapsible_chart("review", "Request volume",
+        "How requested dollars are distributed across agencies.", cls_review_chart(rows))
     ),
     div(
       class = "cls-review-divider",
@@ -7051,8 +7073,8 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
             span(class = "cls-rv-name", "Request"),
             span(class = "cls-rv-agency", "Agency"),
             span(class = "cls-rv-service", "Service"),
-            span(class = "cls-rv-amount", "FY28"),
             span(class = "cls-rv-positions", "Positions"),
+            span(class = "cls-rv-amount", "FY28"),
             span(class = "cls-rv-status", "Status")
           ),
           review_rows_ui
@@ -7283,9 +7305,11 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
                 selected = spend, selectize = FALSE, width = "100%"),
               numericInput("cls_line_edit_amount", NULL, value = if (is.na(amt)) NA else amt, min = 0, step = 1000),
               textInput("cls_line_edit_justification", NULL, value = as.character(li$justification %||% ""), width = "100%"),
-              div(class = "cls-request-actions",
-                actionButton("cls_line_edit_save", label = tagList(icon("check"), "Save"), class = "civic-button primary small"),
-                tags$button(type = "button", class = "civic-button ghost small", `data-cls-cancel-edit` = "line", icon("xmark"), "Cancel")))
+              div(class = "cls-request-actions cls-edit-actions",
+                actionButton("cls_line_edit_save", label = icon("check"), class = "civic-button primary small cls-icon-only",
+                  title = "Save this object"),
+                tags$button(type = "button", class = "civic-button ghost small cls-icon-only",
+                  `data-cls-cancel-edit` = "line", title = "Cancel", `aria-label` = "Cancel", icon("xmark"))))
           } else {
             div(class = "table-row cls-line-row", `data-cls-line-amount` = if (is.na(amt)) "" else as.character(amt),
               span(if (nzchar(as.character(li$object_category %||% ""))) li$object_category else "—"),
@@ -7362,9 +7386,11 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
               numericInput("cls_position_edit_count", NULL, value = suppressWarnings(as.integer(po$position_count %||% 0)), min = 0, step = 1),
               numericInput("cls_position_edit_salary", NULL, value = if (is.na(amt)) NA else amt, min = 0, step = 1000),
               textInput("cls_position_edit_justification", NULL, value = as.character(po$justification %||% ""), width = "100%"),
-              div(class = "cls-request-actions",
-                actionButton("cls_position_edit_save", label = tagList(icon("check"), "Save"), class = "civic-button primary small"),
-                tags$button(type = "button", class = "civic-button ghost small", `data-cls-cancel-edit` = "position", icon("xmark"), "Cancel")))
+              div(class = "cls-request-actions cls-edit-actions",
+                actionButton("cls_position_edit_save", label = icon("check"), class = "civic-button primary small cls-icon-only",
+                  title = "Save this position"),
+                tags$button(type = "button", class = "civic-button ghost small cls-icon-only",
+                  `data-cls-cancel-edit` = "position", title = "Cancel", `aria-label` = "Cancel", icon("xmark"))))
           } else {
             div(class = "table-row cls-position-row", `data-cls-position-amount` = if (is.na(amt)) "" else as.character(amt),
               span(po$classification),

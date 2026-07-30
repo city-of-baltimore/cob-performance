@@ -1026,6 +1026,20 @@
       return;
     }
     // Analyst feedback: pencil opens the row's inline editor; Cancel closes it.
+    // Fold the chart away; the label and caret follow the state.
+    var clsChartToggle = event.target.closest("[data-cls-chart-toggle]");
+    if (clsChartToggle) {
+      var panel = document.getElementById(clsChartToggle.getAttribute("data-cls-chart-toggle"));
+      if (panel) {
+        var hidden = window.getComputedStyle(panel).display === "none";
+        panel.style.display = hidden ? "block" : "none";
+        clsChartToggle.setAttribute("aria-expanded", hidden ? "true" : "false");
+        var lbl = clsChartToggle.querySelector(".cls-chart-toggle-label");
+        if (lbl) lbl.textContent = hidden ? "Hide chart" : "Show chart";
+        clsChartToggle.classList.toggle("is-collapsed", !hidden);
+      }
+      return;
+    }
     var clsBulk = event.target.closest("[data-cls-bulk-approve]");
     if (clsBulk && window.Shiny) {
       window.Shiny.setInputValue("cls_bulk_approve_open", Date.now(), { priority: "event" });
@@ -1126,11 +1140,8 @@
         if (summaryGaps.length) {
           event.preventDefault();
           event.stopPropagation();
-          window.alert("You have missing fields. Complete these before leaving this request:
-
-• " +
-            summaryGaps.join("
-• "));
+          window.alert("You have missing fields. Complete these before leaving this request:\n\n\u2022 " +
+            summaryGaps.join("\n\u2022 "));
           return;
         }
         window.alert(clsRequestIsComplete(backShell)
