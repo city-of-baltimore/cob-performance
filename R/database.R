@@ -119,11 +119,11 @@ consolidate_user_performance_roles <- function(connection) {
   invisible(consolidated)
 }
 
-apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
+apply_agency_budget_analyst_seed <- function(connection, path = file.path("database", "seed", "agency_budget_analyst_seed.csv")) {
   if (!file.exists(path)) return(invisible(FALSE))
   seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
   if (!all(c("agency_id", "analyst_name") %in% names(seed))) {
-    warning("Skipping agency fiscal analyst seed; missing agency_id/analyst_name columns")
+    warning("Skipping agency budget analyst seed; missing agency_id/analyst_name columns")
     return(invisible(FALSE))
   }
   for (i in seq_len(nrow(seed))) {
@@ -132,17 +132,27 @@ apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("datab
     if (!nzchar(agency_id) || !nzchar(analyst_name)) next
     DBI::dbExecute(
       connection,
-      "UPDATE reference.agency SET fiscal_analyst = $2 WHERE agency_id = $1",
+      "UPDATE reference.agency SET budget_analyst = $2 WHERE agency_id = $1",
       params = list(agency_id, analyst_name)
     )
   }
   invisible(TRUE)
 }
 
-apply_agency_fiscal_analyst_seed_once <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
-  seed_name <- "agency_fiscal_analyst_seed"
+apply_agency_budget_analyst_seed_once <- function(connection, path = file.path("database", "seed", "agency_budget_analyst_seed.csv")) {
+  seed_name <- "agency_budget_analyst_seed"
   if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
-  apply_agency_fiscal_analyst_seed(connection, path)
+  # Renamed 2026-07-30 from "agency_fiscal_analyst_seed" (the column was
+  # reference.agency.fiscal_analyst, now .budget_analyst). If the old seed
+  # already ran, carry that forward as already-applied under the new name
+  # rather than re-running it -- re-running would blindly overwrite the
+  # column with the CSV's values again, silently reverting any manual edit
+  # an admin has made through the app since the original seed ran.
+  if (seed_already_applied(connection, "agency_fiscal_analyst_seed")) {
+    mark_seed_applied(connection, seed_name)
+    return(invisible(FALSE))
+  }
+  apply_agency_budget_analyst_seed(connection, path)
   mark_seed_applied(connection, seed_name)
   invisible(TRUE)
 }
@@ -483,7 +493,13 @@ ensure_review_schema <- function(connection) {
   # from that file than documented). Declared here too so a fresh install
   # matches reality instead of erroring the first time a risk is edited.
   DBI::dbExecute(connection, "ALTER TABLE performance.service_risk ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
-  DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS fiscal_analyst varchar(200)")
+  # Renamed 2026-07-30: reference.agency.fiscal_analyst -> budget_analyst.
+  # Postgres has no "RENAME COLUMN IF EXISTS", so check first -- this is a
+  # no-op once the rename has already happened on a given database.
+  if (nrow(DBI::dbGetQuery(connection, "SELECT 1 FROM information_schema.columns WHERE table_schema = 'reference' AND table_name = 'agency' AND column_name = 'fiscal_analyst'"))) {
+    DBI::dbExecute(connection, "ALTER TABLE reference.agency RENAME COLUMN fiscal_analyst TO budget_analyst")
+  }
+  DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS budget_analyst varchar(200)")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
     connection,
@@ -751,7 +767,7 @@ ensure_review_schema <- function(connection) {
     mark_seed_applied(connection, "entity_access_legacy_reconciliation")
   }
   apply_user_entity_access_seed_once(connection)
-  apply_agency_fiscal_analyst_seed_once(connection)
+  apply_agency_budget_analyst_seed_once(connection)
   apply_change_mapping_by_created_date_once(connection)
   apply_percent_value_scale_backfill_once(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
@@ -944,7 +960,7 @@ load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
     reference_agency = query(
-      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan, fiscal_analyst FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
+      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan, budget_analyst FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
     ),
     reference_pillar = query(
       "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"

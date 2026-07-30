@@ -219,7 +219,7 @@ def pdf_meta_table(payload, review, styles):
         ("Status", payload.get("status")),
         ("Version", payload.get("version")),
         ("Submitter", payload.get("submitter")),
-        ("Fiscal Analyst", payload.get("fiscal_analyst")),
+        ("Budget Analyst", payload.get("budget_analyst")),
         ("Performance Analyst", payload.get("performance_analyst")),
         ("Deputy Mayor", payload.get("deputy_mayor")),
         ("CA Office Approver", payload.get("ca_office")),
@@ -427,7 +427,7 @@ def build_pptx(payload, output, template=None):
     add_textbox(slide, f"{raw(payload.get('status'))} | Version {raw(payload.get('version'))}", Inches(0.68), Inches(2.2), Inches(8.4), Inches(0.35), 13, False, (63, 69, 74))
     contact_rows = [
         ("Submitter", payload.get("submitter")),
-        ("Fiscal Analyst", payload.get("fiscal_analyst")),
+        ("Budget Analyst", payload.get("budget_analyst")),
         ("Performance Analyst", payload.get("performance_analyst")),
         ("Deputy Mayor", payload.get("deputy_mayor")),
         ("CA Office Approver", payload.get("ca_office")),

@@ -562,18 +562,18 @@ plan_accounting_agency_id <- function(db, plan) {
   if (nrow(entity)) entity$parent_agency_id[[1]] else NA_character_
 }
 
-plan_fiscal_analyst <- function(db, plan) {
+plan_budget_analyst <- function(db, plan) {
   agency_id <- plan_accounting_agency_id(db, plan)
-  if (is.na(agency_id) || !"reference_agency" %in% names(db) || !"fiscal_analyst" %in% names(db$reference_agency)) return(NA_character_)
+  if (is.na(agency_id) || !"reference_agency" %in% names(db) || !"budget_analyst" %in% names(db$reference_agency)) return(NA_character_)
   agency <- db$reference_agency[db$reference_agency$agency_id == agency_id, , drop = FALSE]
   if (!nrow(agency)) return(NA_character_)
-  value <- trimws(as.character(agency$fiscal_analyst[[1]] %||% ""))
+  value <- trimws(as.character(agency$budget_analyst[[1]] %||% ""))
   if (!nzchar(value)) return(NA_character_)
   value
 }
 
-plan_fiscal_analyst_label <- function(db, plan) {
-  value <- plan_fiscal_analyst(db, plan)
+plan_budget_analyst_label <- function(db, plan) {
+  value <- plan_budget_analyst(db, plan)
   if (is.na(value)) "Unassigned" else value
 }
 
@@ -4372,7 +4372,7 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
     submitter = plan_submitter_label(db, plan),
-    fiscal_analyst = plan_fiscal_analyst_label(db, plan),
+    budget_analyst = plan_budget_analyst_label(db, plan),
     performance_analyst = plan_reviewer_label(db, plan),
     deputy_mayor = plan_deputy_mayor_label(db, plan),
     ca_office = plan_ca_office_label(db, plan),
@@ -4471,7 +4471,7 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
     div(
       class = "history-modal-contact-stack history-card-contacts",
       p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
-      p(class = "history-modal-contact", tags$strong("Fiscal Analyst: "), plan_fiscal_analyst_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Budget Analyst: "), plan_budget_analyst_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("CA Office Approver: "), plan_ca_office_label(db, plan))
