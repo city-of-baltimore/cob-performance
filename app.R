@@ -7567,6 +7567,7 @@ server <- function(input, output, session) {
   service_open_flags <- new.env(parent = emptyenv())
   service_body_outputs_registered <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
+  review_snapshot_cache <- new.env(parent = emptyenv())
 
   register_service_body_outputs <- function(data) {
     if (is.null(data) || !"reference_service" %in% names(data) || !nrow(data$reference_service)) {
@@ -7785,6 +7786,38 @@ server <- function(input, output, session) {
         drafts <- rbind(drafts, cached_row[, names(drafts), drop = FALSE])
       }
       data$planning_plan_section_draft <- drafts
+    }
+    data
+  }
+  # Same non-reactive-cache pattern as section_draft_cache/
+  # data_with_cached_section_draft() above, applied to plan review
+  # scoring: the autosave observer (plan_review_save_request) writes here
+  # instead of into app_data(), and output$page reads the cache back in at
+  # render time. Writing to app_data() on every debounced scoring keystroke
+  # would force a full page_plan_review_detail() re-render, which collapses
+  # every goal/service scoring drawer back to closed -- the same problem
+  # already solved for Goals/Services drafts.
+  update_cached_review_snapshot <- function(plan_id, snapshot) {
+    review_snapshot_cache[[as.character(as.integer(plan_id))]] <- snapshot
+    invisible(TRUE)
+  }
+  data_with_cached_review_snapshot <- function(data, plan_id) {
+    key <- as.character(as.integer(plan_id))
+    if (!exists(key, envir = review_snapshot_cache, inherits = FALSE)) return(data)
+    snapshot <- get(key, envir = review_snapshot_cache, inherits = FALSE)
+    plan_id <- as.integer(plan_id)
+    if ("review_plan_review" %in% names(data)) {
+      old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
+      data$review_plan_review <- rbind(
+        data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
+        snapshot$review
+      )
+      if ("review_section_score" %in% names(data)) {
+        data$review_section_score <- rbind(
+          data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
+          snapshot$scores
+        )
+      }
     }
     data
   }
@@ -9347,21 +9380,20 @@ server <- function(input, output, session) {
     # if anything else causes output$page to re-render before the next full
     # refresh (a different input changing, a periodic session tick), it
     # reads back the pre-save review_plan_review/review_section_score rows
-    # -- making content the reviewer just cleared appear to reappear. Patch
-    # just this plan's rows in place instead of a full reload.
+    # -- making content the reviewer just cleared appear to reappear.
+    #
+    # Patching app_data() itself (an earlier version of this fix) traded
+    # that bug for a worse one: writing to app_data() re-invalidates
+    # output$page on every autosave tick, which re-renders
+    # page_plan_review_detail() from scratch and collapses every open
+    # goal/service scoring drawer back to closed -- the exact problem
+    # already solved for Goals/Services autosave via section_draft_cache/
+    # data_with_cached_section_draft(). Mirror that pattern here: write to
+    # the non-reactive review_snapshot_cache instead, and
+    # data_with_cached_review_snapshot() reads it back in at render time
+    # (see output$page) without ever touching app_data().
     snapshot <- tryCatch(plan_review_snapshot_for_plan(database, plan_id), error = function(error) NULL)
-    if (!is.null(snapshot)) {
-      old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
-      data$review_plan_review <- rbind(
-        data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
-        snapshot$review
-      )
-      data$review_section_score <- rbind(
-        data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
-        snapshot$scores
-      )
-      app_data(data)
-    }
+    if (!is.null(snapshot)) update_cached_review_snapshot(plan_id, snapshot)
     session$sendCustomMessage("plan-review-save-result", list(
       ok = TRUE,
       source = source,
@@ -10146,6 +10178,12 @@ server <- function(input, output, session) {
       plan <- current_plan(page_data, current_submitter_value())
       if (!is.null(plan) && nrow(plan)) {
         page_data <- data_with_cached_section_draft(page_data, plan$plan_id[[1]], current_page())
+      }
+    }
+    if (identical(current_page(), "plan_review_detail")) {
+      review_plan_id <- suppressWarnings(as.integer(current_history_plan_id() %||% NA_integer_))
+      if (!is.na(review_plan_id)) {
+        page_data <- data_with_cached_review_snapshot(page_data, review_plan_id)
       }
     }
     page_ui(
