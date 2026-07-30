@@ -6412,6 +6412,23 @@ cls_status_tone <- function(status) {
 
 # The placeholder list plus anything agencies have created through the
 # "Create a spend category" field, so a new one is reusable straight away.
+# Sentinel option in the spend-category dropdown: the agency needs a category
+# that isn't on the list yet, and describes it in the justification.
+CLS_NEW_SPEND_CATEGORY <- "Create Spend Category"
+
+# The definition + example for a request type, reused as a tooltip on CLS Review
+# so a reviewer does not have to open the request to recall what a type means.
+cls_request_type_tooltip <- function(request_type) {
+  rt <- as.character(request_type %||% "")
+  if (!nzchar(rt)) return(NULL)
+  for (entry in cls_adjustment_type_guidance) {
+    if (identical(entry[[1]], rt)) {
+      return(paste0(rt, ". ", entry[[2]], " Example: ", entry[[3]]))
+    }
+  }
+  rt
+}
+
 cls_spend_category_options <- function(db) {
   used <- character(0)
   lines <- db$budget_cls_request_line
@@ -6420,6 +6437,25 @@ cls_spend_category_options <- function(db) {
     used <- used[!is.na(used) & nzchar(used)]
   }
   sort(unique(c(cls_spend_category_choices, used)))
+}
+
+# Every Agency Submitter for this agency, named in the submission notice. Plural
+# because an agency can have more than one person with final sign-off.
+cls_submitter_names <- function(db, plan) {
+  fallback <- "Your Agency Submitter"
+  if (is.null(plan) || !nrow(plan) || is.na(plan$agency_id[[1]])) return(fallback)
+  ur <- db$access_user_role
+  if (is.null(ur) || !nrow(ur)) return(fallback)
+  rows <- ur[!is.na(ur$app_role) & ur$app_role == "AgencySubmitter" &
+               !is.na(ur$agency_id) & ur$agency_id == plan$agency_id[[1]], , drop = FALSE]
+  if (!nrow(rows)) return(fallback)
+  names <- db$access_user$full_name[match(rows$user_id, db$access_user$user_id)]
+  names <- unique(trimws(as.character(names)))
+  names <- names[!is.na(names) & nzchar(names)]
+  if (!length(names)) return(fallback)
+  if (length(names) == 1) return(names[[1]])
+  if (length(names) == 2) return(paste(names, collapse = " and "))
+  paste0(paste(names[-length(names)], collapse = ", "), ", and ", names[[length(names)]])
 }
 
 cls_submitter_name <- function(db, plan) {
@@ -6444,7 +6480,10 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
   } else {
     NULL
   }
-  header_actions <- create_action
+  # Analyst feedback: the create button sits in its own bar under the subtext so
+  # it never rides up beside the heading on a narrow screen.
+  create_bar <- if (!is.null(create_action)) div(class = "cls-create-bar", create_action) else NULL
+  header_actions <- NULL
 
   export_bar <- if (has_plan && request_count) {
     div(
@@ -6478,7 +6517,7 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
         status <- cls_status_label(r)
         gaps <- cls_request_gaps(db, r)
         missing_tip <- if (length(gaps)) {
-          paste0("This request has missing information. Still needed: ", paste(gaps, collapse = ", "), ".")
+          paste0("This request is not properly detailed. Still needed: ", paste(gaps, collapse = ", "), ".")
         } else NULL
         div(
           class = paste("table-row cls-request-row", if (length(gaps)) "cls-request-row-missing" else ""),
@@ -6494,7 +6533,7 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
               title = missing_tip,
               `aria-label` = missing_tip,
               tabindex = "0",
-              icon("circle-exclamation"), "Missing info"
+              icon("circle-exclamation"), "Not detailed"
             )
           ),
           span(cls_service_label(db, r$service_id)),
@@ -6523,17 +6562,50 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
     )
   }
 
+  # Analyst feedback: agencies get the same cards and chart BBMR has, scoped to
+  # their own requests, with the bar chart broken out by service rather than agency.
+  agency_summary <- if (has_plan && request_count) {
+    all_rows <- cls_review_rows(db)
+    mine <- if (nrow(all_rows)) all_rows[all_rows$cls_id %in% requests$cls_id, , drop = FALSE] else all_rows
+    sent <- if (nrow(mine)) mine[mine$completed, , drop = FALSE] else mine
+    div(
+      class = "cls-agency-summary",
+      div(
+        class = "dashboard-grid cls-review-grid",
+        metric_tile("Requests in progress", if (nrow(mine)) sum(!mine$completed) else 0L),
+        metric_tile("Sent for BBMR review", nrow(sent), tone = "success"),
+        metric_tile("Total requested", cls_format_km(if (nrow(mine)) sum(mine$request_amount, na.rm = TRUE) else 0)),
+        metric_tile("Total positions", if (nrow(mine)) sum(mine$position_count, na.rm = TRUE) else 0L)
+      ),
+      surface(
+        "Request volume",
+        "How this agency's requested dollars are distributed across its services.",
+        cls_review_chart(mine, group_col = "service", group_noun = "service")
+      )
+    )
+  } else NULL
+
   agency_label <- if (has_plan) plan_display_name(db, plan) else "Agency"
-  subtext <- paste(
-    "CLS requests will be summarized by initiative/project rather than broken out by individual spend category.",
-    "For each request you will provide the total amount and then break out the request by expenditure object.",
-    "Feel free to work collaboratively across the agency to complete these submissions.",
-    "Only items approved by Agency Submitters will be reviewed."
+  submitter_names <- cls_submitter_names(db, plan)
+  # "needs" when one person holds final sign-off, "need" when several do.
+  needs_verb <- if (identical(submitter_names, "Your Agency Submitter") ||
+                    grepl(" and ", submitter_names, fixed = TRUE)) "need" else "needs"
+  subtext <- tagList(
+    span(class = "cls-subtext-line",
+      "CLS requests will be summarized by initiative/project.",
+      " Feel free to work collaboratively across the agency to complete these submissions."),
+    span(class = "cls-subtext-line",
+      tags$strong(submitter_names), " ", needs_verb, " to have final review to submit entries on behalf of ",
+      tags$strong(agency_label), ". Plan to give enough time for review.",
+      " The deadline for requests is ", tags$strong("September 15th COB (4:30pm)"),
+      ". After this date the system will be locked.")
   )
 
   surface(
     paste(agency_label, "Requests"),
     subtext,
+    create_bar,
+    agency_summary,
     table_body,
     export_bar,
     actions = header_actions
@@ -6596,13 +6668,17 @@ cls_review_rows <- function(db) {
   out$analyst_notes <- vapply(out$cls_id, function(id) as.character(pick(id, "analyst_notes", "")), character(1))
   out$analyst_approval <- vapply(out$cls_id, function(id) as.character(pick(id, "analyst_approval", "")), character(1))
   out$bbmr_approval <- vapply(out$cls_id, function(id) as.character(pick(id, "bbmr_approval", "")), character(1))
+  out$approved_amount <- vapply(out$cls_id, function(id) suppressWarnings(as.numeric(pick(id, "approved_amount", NA_real_))), numeric(1))
+  out$approved_positions <- vapply(out$cls_id, function(id) suppressWarnings(as.integer(pick(id, "approved_positions", NA_integer_))), integer(1))
 
   out[order(-as.integer(out$completed), tolower(out$agency), tolower(out$request_name)), , drop = FALSE]
 }
 
-# Dependency-free stacked bar chart: requested dollars per agency, split by how
+# Dependency-free stacked bar chart: requested dollars per group, split by how
 # far each request has got through approval. Tooltips are native SVG <title>.
-cls_review_chart <- function(rows) {
+# group_col is "agency" for BBMR's citywide view and "service" for an agency's
+# own view of its requests (analyst feedback round 1).
+cls_review_chart <- function(rows, group_col = "agency", group_noun = "agency") {
   if (is.null(rows) || !nrow(rows)) {
     return(div(class = "cls-empty-state", p(class = "empty-state-copy", "No CLS request data to chart yet.")))
   }
@@ -6618,8 +6694,9 @@ cls_review_chart <- function(rows) {
   bucket_of <- function(status) if (status %in% c("Approved", "Partially Approved", "Denied")) status else "__pending__"
   buckets <- vapply(rows$status, bucket_of, character(1))
 
-  agencies <- unique(rows$agency)
-  totals <- vapply(agencies, function(a) sum(amounts[rows$agency == a]), numeric(1))
+  group_values <- as.character(rows[[group_col]])
+  agencies <- unique(group_values)
+  totals <- vapply(agencies, function(a) sum(amounts[group_values == a]), numeric(1))
   ord <- order(-totals)
   agencies <- agencies[ord]; totals <- totals[ord]
   if (length(agencies) > 10) { agencies <- agencies[seq_len(10)]; totals <- totals[seq_len(10)] }
@@ -6636,7 +6713,7 @@ cls_review_chart <- function(rows) {
     x <- label_w
     pieces <- list()
     for (seg in segments) {
-      keep <- rows$agency == a & buckets == seg$key
+      keep <- group_values == a & buckets == seg$key
       value <- sum(amounts[keep])
       if (value <= 0) next
       w <- max(1, value / max_total * plot_w)
@@ -6665,12 +6742,14 @@ cls_review_chart <- function(rows) {
     class = "cls-chart-wrap",
     tags$svg(
       class = "cls-chart", viewBox = paste("0 0", chart_w, height),
-      role = "img", `aria-label` = "Requested dollars by agency, split by approval decision",
+      role = "img", `aria-label` = paste("Requested dollars by", group_noun, "split by approval decision"),
       preserveAspectRatio = "xMinYMin meet",
       bars
     ),
     div(class = "cls-chart-legend", legend_items),
-    p(class = "cls-chart-caption", "Requested dollars by agency (top 10), split by approval decision. Hover a segment for its amount and request count.")
+    p(class = "cls-chart-caption", sprintf(
+      "Requested dollars by %s (top 10), split by approval decision. Hover a segment for its amount and request count.",
+      group_noun))
   )
 }
 
@@ -6750,7 +6829,8 @@ cls_review_export_sheets <- function(db) {
   list(`Requests and decisions` = requests_df, `Line items` = lines_df, `Personnel` = pos_df)
 }
 
-page_cls_review <- function(db, app_roles = character(0), status_filter = character(0), agency_filter = character(0)) {
+page_cls_review <- function(db, app_roles = character(0), status_filter = character(0), agency_filter = character(0),
+                            service_filter = character(0)) {
   rows <- cls_review_rows(db)
   total_pending <- if (nrow(rows)) nrow(rows) else 0L
   complete_rows <- if (nrow(rows)) rows[rows$completed, , drop = FALSE] else rows
@@ -6759,9 +6839,11 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
   total_positions <- if (nrow(complete_rows)) sum(complete_rows$position_count, na.rm = TRUE) else 0
 
   agency_choices <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
+  service_choices_rv <- if (nrow(rows)) sort(unique(rows$service)) else character(0)
   status_choices <- cls_status_choices
   sel_status <- if (length(status_filter)) status_filter else status_choices
   sel_agency <- if (length(agency_filter)) agency_filter else agency_choices
+  sel_service <- if (length(service_filter)) service_filter else service_choices_rv
 
   view_rows <- rows
   if (nrow(view_rows) && length(sel_status)) {
@@ -6769,6 +6851,9 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
   }
   if (nrow(view_rows) && length(sel_agency)) {
     view_rows <- view_rows[view_rows$agency %in% sel_agency, , drop = FALSE]
+  }
+  if (nrow(view_rows) && length(sel_service)) {
+    view_rows <- view_rows[view_rows$service %in% sel_service, , drop = FALSE]
   }
 
   approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
@@ -6783,23 +6868,33 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
         span(class = "cls-rv-caret", icon("chevron-right")),
         span(class = "cls-rv-name", r$request_name),
         span(class = "cls-rv-agency", r$agency),
-        span(class = "cls-rv-amount", cls_format_km(r$request_amount)),
+        span(class = "cls-rv-service", r$service),
+        # Unrounded at the rolled-up level: BBMR needs to trace the exact figure.
+        span(class = "cls-rv-amount", cls_format_dollars(r$request_amount)),
+        span(class = "cls-rv-positions", r$position_count),
         span(class = "cls-rv-status", status_chip(r$status, cls_status_tone(r$status)))
       ),
       div(
         id = paste0("cls_rv_body_", id), class = "cls-rv-body", style = "display:none;",
-        div(
-          class = "cls-rv-submitted",
-          cls_detail_field("Service", r$service),
-          cls_detail_field("Type", if (nzchar(r$request_type)) r$request_type else "—"),
-          cls_detail_field("FY28", cls_format_dollars(r$request_amount)),
-          cls_detail_field("FY29", cls_format_dollars(r$amount_next_fy)),
-          cls_detail_field("FY30", cls_format_dollars(r$amount_2next_fy)),
-          cls_detail_field("Duration", if (isTRUE(r$one_time)) "One-time" else "Recurring"),
-          cls_detail_field("Objects", paste0(r$line_count, " (", cls_format_km(r$line_total), ")")),
-          cls_detail_field("Positions", paste0(r$position_count, if (r$position_salary > 0) paste0(" (", cls_format_km(r$position_salary), ")") else ""))
-        ),
+        # Agency, Service, FY28, Positions and Status are already on the collapsed
+        # row, so the panel adds only what isn't there: summary, type with its
+        # definition, duration, and the out-years.
         if (nzchar(r$overall_summary)) div(class = "cls-rv-summary", tags$strong("Summary. "), r$overall_summary),
+        div(
+          class = "cls-rv-meta",
+          div(class = "cls-rv-meta-line",
+            span(class = "cls-detail-label", "Type:"),
+            span(class = "cls-rv-type", title = cls_request_type_tooltip(r$request_type),
+              if (nzchar(r$request_type)) r$request_type else "—",
+              tags$span(class = "cls-rv-type-hint", icon("circle-info")))),
+          div(class = "cls-rv-meta-line",
+            span(class = "cls-detail-label", "Duration:"),
+            span(if (isTRUE(r$one_time)) "One-time" else "Recurring")),
+          div(class = "cls-rv-submitted",
+            cls_detail_field("FY28", cls_format_dollars(r$request_amount)),
+            cls_detail_field("FY29", cls_format_dollars(r$amount_next_fy)),
+            cls_detail_field("FY30", cls_format_dollars(r$amount_2next_fy)))
+        ),
         # Objects and positions, laid out like the request page so reviewers see
         # the same breakdown the agency entered.
         {
@@ -6857,12 +6952,35 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
           )
         },
         div(
-          class = "cls-review-fields",
+          class = "cls-review-fields cls-analyst-panel",
+          div(class = "cls-analyst-panel-title", "Analyst review"),
           div(class = "cls-review-field-grid",
-            # Analyst approval is advisory and does not change the request status.
-            selectInput(paste0("cls_rv_analyst_", id), "Analyst approval (advisory)", choices = approval_choices, selected = r$analyst_approval, selectize = FALSE),
-            # BBMR approval sets the request's final status.
-            selectInput(paste0("cls_rv_bbmr_", id), "BBMR approval (sets status)", choices = approval_choices, selected = r$bbmr_approval, selectize = FALSE)
+            # Advisory only - deliberately not wired to the request status.
+            selectInput(paste0("cls_rv_analyst_", id), "Analyst recommendation", choices = approval_choices, selected = r$analyst_approval, selectize = FALSE),
+            # This one does set the status, which is why it is called out in red.
+            div(class = "cls-bbmr-approval-field",
+              selectInput(paste0("cls_rv_bbmr_", id), "BBMR approval", choices = approval_choices, selected = r$bbmr_approval, selectize = FALSE),
+              div(class = "cls-status-warning", "THIS STATUS IS SENT TO AGENCIES"))
+          ),
+          # Approved prefills from the request; Partial starts blank so the
+          # reviewer types what was actually approved.
+          div(
+            class = "cls-approved-fields",
+            `data-cls-approved-for` = id,
+            style = if (r$bbmr_approval %in% c("Approved", "Partial")) NULL else "display:none;",
+            div(class = "cls-review-field-grid",
+              # A stored decision always wins; otherwise Approved prefills from
+              # the request and Partial starts blank for the reviewer to fill.
+              numericInput(paste0("cls_rv_appr_amount_", id), "Approved FY28",
+                value = if (!is.na(r$approved_amount)) r$approved_amount
+                        else if (identical(r$bbmr_approval, "Approved")) suppressWarnings(as.numeric(r$request_amount))
+                        else NA,
+                min = 0, step = 1000),
+              numericInput(paste0("cls_rv_appr_positions_", id), "Approved positions",
+                value = if (!is.na(r$approved_positions)) r$approved_positions
+                        else if (identical(r$bbmr_approval, "Approved")) suppressWarnings(as.integer(r$position_count))
+                        else NA,
+                min = 0, step = 1))
           ),
           div(class = "cls-field-full", textAreaInput(paste0("cls_rv_notes_", id), "Analyst notes", value = r$analyst_notes, width = "100%", rows = 2, resize = "vertical")),
           div(class = "cls-rv-actions",
@@ -6901,15 +7019,19 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
     ),
     surface(
       "Review requests",
-      "Filter by status and agency, then expand a request to record its approval.",
+      "Filter by status, agency or service, then expand a request to record its approval.",
+      actions = tags$button(type = "button", class = "civic-button primary small",
+        `data-cls-bulk-approve` = "open", icon("table-list"), "Bulk Approve"),
+      # Analyst feedback: the filters had an Apply step that made them look
+      # broken. They now filter the table as soon as a selection changes.
       div(
         class = "cls-review-filters",
         div(class = "measure-field", selectInput("cls_review_status_filter", "Status", choices = status_choices, selected = sel_status, multiple = TRUE, selectize = TRUE)),
         div(class = "measure-field", selectInput("cls_review_agency_filter", "Agency", choices = agency_choices, selected = sel_agency, multiple = TRUE, selectize = TRUE)),
+        div(class = "measure-field", selectInput("cls_review_service_filter", "Service", choices = service_choices_rv, selected = sel_service, multiple = TRUE, selectize = TRUE)),
         div(
           class = "cls-review-filter-actions",
-          actionButton("cls_review_apply_filters", "Apply filters", class = "civic-button primary small"),
-          actionButton("cls_review_reset_filters", "Reset", class = "civic-button secondary small")
+          actionButton("cls_review_reset_filters", "Reset filters", class = "civic-button secondary small")
         )
       ),
       div(
@@ -6928,7 +7050,9 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
             span(class = "cls-rv-caret"),
             span(class = "cls-rv-name", "Request"),
             span(class = "cls-rv-agency", "Agency"),
+            span(class = "cls-rv-service", "Service"),
             span(class = "cls-rv-amount", "FY28"),
+            span(class = "cls-rv-positions", "Positions"),
             span(class = "cls-rv-status", "Status")
           ),
           review_rows_ui
@@ -6949,8 +7073,11 @@ cls_detail_field <- function(label, value) {
   )
 }
 
-page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency_id = NULL, origin_page = NULL) {
+page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency_id = NULL, origin_page = NULL,
+                                    editing_line_id = NA_integer_, editing_position_id = NA_integer_) {
   can_edit <- can_edit_cls_requests(app_roles)
+  editing_line_id <- suppressWarnings(as.integer(editing_line_id))
+  editing_position_id <- suppressWarnings(as.integer(editing_position_id))
   cls_id_int <- suppressWarnings(as.integer(cls_id))
   is_new <- is.na(cls_id_int)
   num_value <- function(x) {
@@ -6985,6 +7112,17 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     }
     request <- request[1, , drop = FALSE]
   }
+
+  # Analyst feedback, round 1: once a request has gone to BBMR the agency can no
+  # longer change it, and BBMR reviewers see it read-only too - their decision is
+  # recorded on the CLS Review page, not by editing the agency's submission.
+  locked_status <- !is_new && cls_status_is_complete(cls_status_label(request))
+  read_only_reason <- if (reviewer_view) {
+    "BBMR reviewers open requests read-only. Record your decision on the CLS Review page."
+  } else if (locked_status) {
+    "This request has been sent for BBMR review, so it can no longer be changed."
+  } else NULL
+  if (!is.null(read_only_reason)) can_edit <- FALSE
 
   plan <- if (is_new) current_plan(db, agency_id) else db$planning_agency_plan[db$planning_agency_plan$plan_id == request$plan_id[[1]], , drop = FALSE]
   service_choices <- cls_plan_service_choices(db, plan)
@@ -7087,8 +7225,11 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
         textAreaInput("cls_form_summary", "Summarize the request", value = v_summary, width = "100%", rows = 4, resize = "vertical",
           placeholder = "Provide a 3-4 sentence explanation of the CLS request for review. This field is mandatory for all requests. 150 word limit."),
         div(id = "cls_summary_wordcount", class = "cls-wordcount")),
-      if (is_new) div(class = "cls-form-actions",
-        actionButton("cls_submit_create", label = tagList(icon("check"), "Create request"), class = "civic-button primary"))
+      # No create button: filling in the name and service is enough for autosave
+      # to create the request, after which details and positions unlock below.
+      if (is_new) div(class = "cls-new-hint",
+        span(class = "cls-reminder-icon", icon("circle-info")),
+        span("Fill in the request name and service and this request saves itself — then break it out by object and positions below."))
     )
   }
 
@@ -7133,26 +7274,45 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
           li <- lines[i, , drop = FALSE]
           amt <- suppressWarnings(as.numeric(li$amount))
           spend <- as.character(li$spend_category %||% "")
-          div(class = "table-row cls-line-row", `data-cls-line-amount` = if (is.na(amt)) "" else as.character(amt),
-            span(if (nzchar(as.character(li$object_category %||% ""))) li$object_category else "—"),
-            span(if (nzchar(spend)) spend else "—"),
-            span(class = "cls-request-amount", cls_format_dollars(li$amount)),
-            span(if (nzchar(as.character(li$justification %||% ""))) li$justification else "—"),
-            div(class = "cls-request-actions", if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-line` = li$line_id, icon("trash-can"), "Remove")))
+          if (can_edit && !is.na(editing_line_id) && identical(as.integer(li$line_id[[1]]), editing_line_id)) {
+            # Edit in place: the same four fields, pre-filled, with Save/Cancel.
+            div(class = "table-row cls-line-row cls-row-editing",
+              selectInput("cls_line_edit_category", NULL, choices = c("(select an object)" = "", cls_object_choices),
+                selected = as.character(li$object_category %||% ""), selectize = FALSE, width = "100%"),
+              selectInput("cls_line_edit_spend_category", NULL, choices = c("(select a spend category)" = "", cls_spend_category_options(db), CLS_NEW_SPEND_CATEGORY),
+                selected = spend, selectize = FALSE, width = "100%"),
+              numericInput("cls_line_edit_amount", NULL, value = if (is.na(amt)) NA else amt, min = 0, step = 1000),
+              textInput("cls_line_edit_justification", NULL, value = as.character(li$justification %||% ""), width = "100%"),
+              div(class = "cls-request-actions",
+                actionButton("cls_line_edit_save", label = tagList(icon("check"), "Save"), class = "civic-button primary small"),
+                tags$button(type = "button", class = "civic-button ghost small", `data-cls-cancel-edit` = "line", icon("xmark"), "Cancel")))
+          } else {
+            div(class = "table-row cls-line-row", `data-cls-line-amount` = if (is.na(amt)) "" else as.character(amt),
+              span(if (nzchar(as.character(li$object_category %||% ""))) li$object_category else "—"),
+              span(if (nzchar(spend)) spend else "—"),
+              span(class = "cls-request-amount", cls_format_dollars(li$amount)),
+              span(if (nzchar(as.character(li$justification %||% ""))) li$justification else "—"),
+              div(class = "cls-request-actions",
+                if (can_edit) tags$button(type = "button", class = "civic-button ghost small cls-row-edit",
+                  `data-cls-edit-line` = li$line_id, `aria-label` = "Edit this object", title = "Edit this object", icon("pencil")),
+                if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-line` = li$line_id, icon("trash-can"), "Remove")))
+          }
         }))
     }
     line_add <- if (can_edit) div(class = "cls-add-form",
       div(class = "cls-add-form-title", "Add an object to this request"),
       div(class = "cls-form-grid",
         selectInput("cls_line_category", "Object", choices = c("(select an object)" = "", cls_object_choices), selectize = FALSE),
-        selectInput("cls_line_spend_category", "Spend category", choices = c("(select a spend category)" = "", cls_spend_category_options(db)), selectize = FALSE),
+        selectInput("cls_line_spend_category", "Spend category",
+          choices = c("(select a spend category)" = "", cls_spend_category_options(db), CLS_NEW_SPEND_CATEGORY), selectize = FALSE),
         numericInput("cls_line_amount", "Amount", value = NA, min = 0, step = 1000)),
-      # The spend-category list is not yet the real chart of accounts, so agencies
-      # need a way to name one that is missing. A typed value wins over the list.
-      div(class = "cls-field-full cls-new-category-field",
-        textInput("cls_line_new_spend_category", "Create a spend category", width = "100%",
-          placeholder = "Only if the spend category you need is not in the list above")),
-      div(class = "cls-field-full", textInput("cls_line_justification", "Justification", width = "100%", placeholder = "Explain the anticipated amount (one line).")),
+      div(class = "cls-field-full",
+        tags$label(`for` = "cls_line_justification", class = "control-label", "Justification",
+          # Shown only while "Create Spend Category" is picked - the justification
+          # is where the new category gets described.
+          tags$span(id = "cls_new_category_note", class = "cls-field-note", style = "display:none;",
+            "Please describe the new spend category.")),
+        textInput("cls_line_justification", label = NULL, width = "100%", placeholder = "Explain the anticipated amount (one line).")),
       div(class = "cls-form-actions", actionButton("cls_submit_line", label = tagList(icon("plus"), "Add Details"), class = "civic-button secondary small"))
     ) else NULL
 
@@ -7196,12 +7356,26 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
         lapply(seq_len(position_count), function(i) {
           po <- positions[i, , drop = FALSE]
           amt <- suppressWarnings(as.numeric(po$estimated_salary))
-          div(class = "table-row cls-position-row", `data-cls-position-amount` = if (is.na(amt)) "" else as.character(amt),
-            span(po$classification),
-            span(as.character(po$position_count %||% 0)),
-            span(class = "cls-request-amount", cls_format_dollars(po$estimated_salary)),
-            span(if (nzchar(as.character(po$justification %||% ""))) po$justification else "—"),
-            div(class = "cls-request-actions", if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-position` = po$pos_id, icon("trash-can"), "Remove")))
+          if (can_edit && !is.na(editing_position_id) && identical(as.integer(po$pos_id[[1]]), editing_position_id)) {
+            div(class = "table-row cls-position-row cls-row-editing",
+              textInput("cls_position_edit_classification", NULL, value = as.character(po$classification %||% ""), width = "100%"),
+              numericInput("cls_position_edit_count", NULL, value = suppressWarnings(as.integer(po$position_count %||% 0)), min = 0, step = 1),
+              numericInput("cls_position_edit_salary", NULL, value = if (is.na(amt)) NA else amt, min = 0, step = 1000),
+              textInput("cls_position_edit_justification", NULL, value = as.character(po$justification %||% ""), width = "100%"),
+              div(class = "cls-request-actions",
+                actionButton("cls_position_edit_save", label = tagList(icon("check"), "Save"), class = "civic-button primary small"),
+                tags$button(type = "button", class = "civic-button ghost small", `data-cls-cancel-edit` = "position", icon("xmark"), "Cancel")))
+          } else {
+            div(class = "table-row cls-position-row", `data-cls-position-amount` = if (is.na(amt)) "" else as.character(amt),
+              span(po$classification),
+              span(as.character(po$position_count %||% 0)),
+              span(class = "cls-request-amount", cls_format_dollars(po$estimated_salary)),
+              span(if (nzchar(as.character(po$justification %||% ""))) po$justification else "—"),
+              div(class = "cls-request-actions",
+                if (can_edit) tags$button(type = "button", class = "civic-button ghost small cls-row-edit",
+                  `data-cls-edit-position` = po$pos_id, `aria-label` = "Edit this position", title = "Edit this position", icon("pencil")),
+                if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-position` = po$pos_id, icon("trash-can"), "Remove")))
+          }
         }))
     }
     position_add <- if (can_edit) div(class = "cls-add-form",
@@ -7228,7 +7402,10 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
       if (!can_edit && !show_positions) div(class = "cls-empty-state", p(class = "empty-state-copy", "No position requests were included.")) else positions_body)
   }
 
-  reminder <- if (can_edit) div(class = "cls-reminder",
+  reminder <- if (!is.null(read_only_reason)) div(class = "cls-reminder cls-reminder-locked",
+    span(class = "cls-reminder-icon", icon("lock")),
+    span(read_only_reason)
+  ) else if (can_edit) div(class = "cls-reminder",
     span(class = "cls-reminder-icon", icon("circle-info")),
     span("This request must be sent to ", tags$strong(submitter), ", the Agency Submitter, and submitted before your agency's CLS deadline.")
   ) else NULL
@@ -7247,7 +7424,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   )
 }
 
-page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list(), cls_detail_origin = NULL) {
+page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list(), cls_detail_origin = NULL, editing_line_id = NA_integer_, editing_position_id = NA_integer_) {
   if (identical(page, "services") && submitter_is_mayoral_service(db, agency_id)) {
     page <- "metrics"
   }
@@ -7318,8 +7495,8 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     services = page_services(db, agency_id, can_edit_plan),
     risks = page_risks(db, agency_id, can_edit_plan),
     cls_requests = if (can_access_budget_planning(app_roles)) page_cls_requests(db, agency_id, app_roles) else page_landing(db, agency_id, app_roles, agency_roles),
-    cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin) else page_landing(db, agency_id, app_roles, agency_roles),
-    cls_review = if (can_access_budget_planning(app_roles)) page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0)) else page_landing(db, agency_id, app_roles, agency_roles),
+    cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin, editing_line_id, editing_position_id) else page_landing(db, agency_id, app_roles, agency_roles),
+    cls_review = if (can_access_budget_planning(app_roles)) page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0), cls_review_filters$service %||% character(0)) else page_landing(db, agency_id, app_roles, agency_roles),
     page_landing(db, agency_id, app_roles, agency_roles)
   )
 }
@@ -7328,8 +7505,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260730-1"),
-    tags$script(src = "app.js?v=20260730-1", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260730-2"),
+    tags$script(src = "app.js?v=20260730-2", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -7546,9 +7723,13 @@ server <- function(input, output, session) {
   current_cls_id <- reactiveVal(NA_integer_)
   # Which page the open request was reached from, so Back returns there.
   cls_detail_origin <- reactiveVal(NULL)
+  # Which object / position row is open in the inline editor (analyst feedback).
+  cls_editing_line <- reactiveVal(NA_integer_)
+  cls_editing_position <- reactiveVal(NA_integer_)
   cls_last_save <- reactiveVal(NULL)
   cls_applied_status <- reactiveVal(NULL)
   cls_applied_agency <- reactiveVal(NULL)
+  cls_applied_service <- reactiveVal(NULL)
   # Mirror the Bug/Fix and Measures page filter/search widgets in their own
   # reactiveVals rather than reading input$feedback_search etc. directly.
   # update*Input() only works on a widget that's currently mounted in the
@@ -8568,9 +8749,42 @@ server <- function(input, output, session) {
   observeEvent(input$cls_autosave, {
     if (!can_edit_cls_requests(current_user_app_roles())) return()
     cls_id <- suppressWarnings(as.integer(current_cls_id()))
-    if (is.na(cls_id)) return()
     if (!nzchar(trimws(as.character(input$cls_form_name %||% "")))) {
       session$sendCustomMessage("cls-save-status", "Add a request name to save")
+      return()
+    }
+    # The "Create request" button is gone (analyst feedback): a brand-new request
+    # is created by its first autosave, once it has a name and a service, and
+    # from then on autosaves as an update like any other.
+    if (is.na(cls_id)) {
+      service_id <- suppressWarnings(as.integer(input$cls_form_service))
+      if (is.na(service_id)) {
+        session$sendCustomMessage("cls-save-status", "Choose a service to save")
+        return()
+      }
+      created <- tryCatch(
+        create_cls_request(
+          database,
+          plan_service_id = service_id,
+          request_name = input$cls_form_name,
+          request_type = input$cls_form_type,
+          request_amount = input$cls_form_amount,
+          one_time = isTRUE(input$cls_form_one_time),
+          overall_summary = input$cls_form_summary,
+          amount_next_fy = input$cls_form_amount_next,
+          amount_2next_fy = input$cls_form_amount_2next,
+          modified_by = cls_user_id()
+        ),
+        error = function(error) error
+      )
+      if (inherits(created, "error")) {
+        session$sendCustomMessage("cls-save-status", "Could not autosave")
+        return()
+      }
+      current_cls_id(as.integer(created))
+      cls_last_save(list(at = Sys.time(), by = cls_user_label()))
+      # Re-render once so the details and positions sections unlock.
+      refresh_app_data()
       return()
     }
     result <- tryCatch(
@@ -8634,11 +8848,30 @@ server <- function(input, output, session) {
     if (!nrow(row)) return("this request")
     as.character(row$request_name[[1]] %||% "this request")
   }
+  # A request cannot move to the next pair of hands until it is fully described.
+  cls_block_if_incomplete <- function(data, cls_id) {
+    reqs <- data$budget_cls_request
+    row <- if (is.null(reqs) || !nrow(reqs)) NULL else reqs[reqs$cls_id == cls_id, , drop = FALSE]
+    if (is.null(row) || !nrow(row)) return(TRUE)
+    gaps <- cls_request_gaps(data, row)
+    if (!length(gaps)) return(FALSE)
+    showModal(modalDialog(
+      title = "This request is not ready to send",
+      div(class = "cls-submit-dialog",
+        p(paste0("“", cls_request_name_for(data, cls_id), "” still needs:")),
+        tags$ul(lapply(gaps, tags$li)),
+        p("Open the request and complete it, then send it on.")),
+      footer = modalButton("Close"),
+      easyClose = TRUE
+    ))
+    TRUE
+  }
   observeEvent(input$cls_submit_one, {
     if (!cls_guard_edit()) return()
     cls_id <- suppressWarnings(as.integer(input$cls_submit_one$clsId))
     if (is.na(cls_id)) return()
     data <- ensure_app_data()
+    if (cls_block_if_incomplete(data, cls_id)) return()
     plan <- current_plan(data, current_submitter_value())
     cls_pending_submit(list(cls_id = cls_id, mode = "approval"))
     showModal(modalDialog(
@@ -8656,7 +8889,7 @@ server <- function(input, output, session) {
     if (!cls_guard_edit()) return()
     data <- ensure_app_data()
     plan <- current_plan(data, current_submitter_value())
-    result <- tryCatch(set_cls_status(database, pending$cls_id, "Agency Review", cls_user_label()), error = function(error) error)
+    result <- tryCatch(set_cls_status(database, pending$cls_id, "Agency Review", cls_user_id()), error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -8686,18 +8919,108 @@ server <- function(input, output, session) {
       }
     }
   )
-  observeEvent(input$cls_review_apply_filters, {
-    cls_applied_status(if (is.null(input$cls_review_status_filter)) character(0) else as.character(input$cls_review_status_filter))
-    cls_applied_agency(if (is.null(input$cls_review_agency_filter)) character(0) else as.character(input$cls_review_agency_filter))
-  }, ignoreInit = TRUE)
+  # Filters apply as soon as they change - no Apply step (analyst feedback).
+  observeEvent(input$cls_review_status_filter, {
+    cls_applied_status(as.character(input$cls_review_status_filter %||% character(0)))
+  }, ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$cls_review_agency_filter, {
+    cls_applied_agency(as.character(input$cls_review_agency_filter %||% character(0)))
+  }, ignoreInit = TRUE, ignoreNULL = FALSE)
+  observeEvent(input$cls_review_service_filter, {
+    cls_applied_service(as.character(input$cls_review_service_filter %||% character(0)))
+  }, ignoreInit = TRUE, ignoreNULL = FALSE)
   observeEvent(input$cls_review_reset_filters, {
     cls_applied_status(NULL)
     cls_applied_agency(NULL)
+    cls_applied_service(NULL)
     data <- ensure_app_data()
     rows <- cls_review_rows(data)
     agencies <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
+    services <- if (nrow(rows)) sort(unique(rows$service)) else character(0)
     updateSelectInput(session, "cls_review_status_filter", choices = cls_status_choices, selected = cls_status_choices)
     updateSelectInput(session, "cls_review_agency_filter", choices = agencies, selected = agencies)
+    updateSelectInput(session, "cls_review_service_filter", choices = services, selected = services)
+  }, ignoreInit = TRUE)
+
+  # --- Bulk Approve: a spreadsheet-style grid over every request in view ---
+  cls_bulk_rows <- reactiveVal(NULL)
+  observeEvent(input$cls_bulk_approve_open, {
+    if (!can_review_cls(current_user_app_roles())) return()
+    data <- ensure_app_data()
+    rows <- cls_review_rows(data)
+    if (length(cls_applied_status())) rows <- rows[rows$status %in% cls_applied_status(), , drop = FALSE]
+    if (length(cls_applied_agency())) rows <- rows[rows$agency %in% cls_applied_agency(), , drop = FALSE]
+    if (length(cls_applied_service())) rows <- rows[rows$service %in% cls_applied_service(), , drop = FALSE]
+    if (!nrow(rows)) {
+      showNotification("No requests in the current view to approve.", type = "warning", duration = 6)
+      return()
+    }
+    cls_bulk_rows(rows)
+    approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
+    showModal(modalDialog(
+      title = paste("Bulk Approve -", nrow(rows), if (nrow(rows) == 1) "request" else "requests"),
+      size = "l",
+      div(
+        class = "cls-bulk-grid",
+        div(class = "cls-bulk-row cls-bulk-head",
+          span("Request"), span("Agency"), span("FY28"), span("BBMR approval"),
+          span("Approved FY28"), span("Approved positions")),
+        lapply(seq_len(nrow(rows)), function(i) {
+          r <- rows[i, , drop = FALSE]
+          id <- r$cls_id
+          div(class = "cls-bulk-row",
+            span(class = "cls-bulk-name", r$request_name),
+            span(r$agency),
+            span(class = "cls-request-amount", cls_format_dollars(r$request_amount)),
+            selectInput(paste0("cls_bulk_bbmr_", id), NULL, choices = approval_choices,
+              selected = r$bbmr_approval, selectize = FALSE, width = "100%"),
+            numericInput(paste0("cls_bulk_amount_", id), NULL,
+              value = if (!is.na(r$approved_amount)) r$approved_amount else NA, min = 0, step = 1000),
+            numericInput(paste0("cls_bulk_positions_", id), NULL,
+              value = if (!is.na(r$approved_positions)) r$approved_positions else NA, min = 0, step = 1))
+        })
+      ),
+      p(class = "cls-bulk-hint",
+        "Leave a row's approval blank to skip it. Approved FY28 and Approved positions are what the agency will see."),
+      footer = tagList(modalButton("Cancel"),
+        actionButton("cls_bulk_approve_save", "Save all", class = "civic-button primary")),
+      easyClose = FALSE
+    ))
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_bulk_approve_save, {
+    if (!can_review_cls(current_user_app_roles())) return()
+    rows <- cls_bulk_rows()
+    if (is.null(rows) || !nrow(rows)) { removeModal(); return() }
+    saved <- 0L
+    failed <- character(0)
+    for (i in seq_len(nrow(rows))) {
+      id <- rows$cls_id[[i]]
+      decision <- as.character(input[[paste0("cls_bulk_bbmr_", id)]] %||% "")
+      if (!nzchar(decision)) next
+      result <- tryCatch(
+        save_cls_review(
+          database, id,
+          analyst_notes = rows$analyst_notes[[i]],
+          analyst_approval = rows$analyst_approval[[i]],
+          bbmr_approval = decision,
+          reviewed_by = cls_user_id(),
+          approved_amount = input[[paste0("cls_bulk_amount_", id)]],
+          approved_positions = input[[paste0("cls_bulk_positions_", id)]]
+        ),
+        error = function(error) error
+      )
+      if (inherits(result, "error")) failed <- c(failed, rows$request_name[[i]]) else saved <- saved + 1L
+    }
+    removeModal()
+    cls_bulk_rows(NULL)
+    refresh_app_data()
+    if (length(failed)) {
+      showNotification(paste0("Saved ", saved, ". Could not save: ", paste(failed, collapse = ", "), "."),
+                       type = "error", duration = 10)
+    } else {
+      showNotification(paste0("Recorded decisions on ", saved, if (saved == 1) " request." else " requests."),
+                       type = "message", duration = 7)
+    }
   }, ignoreInit = TRUE)
   observeEvent(input$cls_review_save, {
     if (!can_review_cls(current_user_app_roles())) {
@@ -8712,7 +9035,9 @@ server <- function(input, output, session) {
         analyst_notes = input[[paste0("cls_rv_notes_", cls_id)]],
         analyst_approval = input[[paste0("cls_rv_analyst_", cls_id)]],
         bbmr_approval = input[[paste0("cls_rv_bbmr_", cls_id)]],
-        reviewed_by = cls_user_id()
+        reviewed_by = cls_user_id(),
+        approved_amount = input[[paste0("cls_rv_appr_amount_", cls_id)]],
+        approved_positions = input[[paste0("cls_rv_appr_positions_", cls_id)]]
       ),
       error = function(error) error
     )
@@ -8728,12 +9053,18 @@ server <- function(input, output, session) {
     cls_id <- suppressWarnings(as.integer(input$cls_send_bbmr_one$clsId))
     if (is.na(cls_id)) return()
     data <- ensure_app_data()
+    if (cls_block_if_incomplete(data, cls_id)) return()
     cls_pending_submit(list(cls_id = cls_id, mode = "bbmr"))
     showModal(modalDialog(
       title = "Send for BBMR Review",
       div(class = "cls-submit-dialog",
-        p(paste0("Send “", cls_request_name_for(data, cls_id), "” to BBMR for review? This marks the request complete."))),
-      footer = tagList(modalButton("Cancel"), actionButton("cls_send_bbmr_confirm", "Send for BBMR Review", class = "civic-button submit-agency")),
+        # Named attestation: the submitter is putting their name to this.
+        p(class = "cls-attestation",
+          "I, ", tags$strong(cls_user_label()),
+          ", have reviewed this request and submit for review."),
+        p(class = "cls-attestation-detail",
+          paste0("Request: “", cls_request_name_for(data, cls_id), "”. This marks the request complete and sends it to BBMR."))),
+      footer = tagList(modalButton("Cancel"), actionButton("cls_send_bbmr_confirm", "Submit for review", class = "civic-button submit-agency")),
       easyClose = TRUE
     ))
   }, ignoreInit = TRUE)
@@ -8742,7 +9073,7 @@ server <- function(input, output, session) {
     pending <- cls_pending_submit()
     if (is.null(pending) || !identical(pending$mode, "bbmr")) return()
     if (!can_approve_cls(current_user_app_roles())) return()
-    result <- tryCatch(set_cls_status(database, pending$cls_id, "BBMR Review", cls_user_label()), error = function(error) error)
+    result <- tryCatch(set_cls_status(database, pending$cls_id, "BBMR Review", cls_user_id()), error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -8760,34 +9091,6 @@ server <- function(input, output, session) {
     cls_last_save(NULL)
     current_page("cls_request_detail")
     session$sendCustomMessage("set-page", "cls_request_detail")
-  }, ignoreInit = TRUE)
-  observeEvent(input$cls_submit_create, {
-    if (!cls_guard_edit()) return()
-    result <- tryCatch(
-      create_cls_request(
-        database,
-        plan_service_id = input$cls_form_service,
-        request_name = input$cls_form_name,
-        request_type = input$cls_form_type,
-        request_amount = input$cls_form_amount,
-        one_time = isTRUE(input$cls_form_one_time),
-        overall_summary = input$cls_form_summary,
-        amount_next_fy = input$cls_form_amount_next,
-        amount_2next_fy = input$cls_form_amount_2next,
-        modified_by = cls_user_id()
-      ),
-      error = function(error) error
-    )
-    if (inherits(result, "error")) {
-      showNotification(conditionMessage(result), type = "error", duration = 8)
-      return()
-    }
-    refresh_app_data()
-    current_cls_id(as.integer(result))
-    cls_last_save(NULL)
-    current_page("cls_request_detail")
-    session$sendCustomMessage("set-page", "cls_request_detail")
-    showNotification("CLS request created. Add line items and positions below.", type = "message", duration = 6)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_submit_update, {
     if (!cls_guard_edit()) return()
@@ -8814,18 +9117,37 @@ server <- function(input, output, session) {
     refresh_app_data()
     showNotification("CLS request saved.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
+  # Analyst feedback: nothing lands in the table until every field is filled.
+  cls_missing_fields <- function(fields) {
+    missing <- character(0)
+    for (label in names(fields)) {
+      v <- fields[[label]]
+      ok <- if (is.numeric(v)) length(v) == 1 && !is.na(v) && v > 0 else nzchar(trimws(as.character(v %||% "")))
+      if (!isTRUE(ok)) missing <- c(missing, label)
+    }
+    missing
+  }
+  cls_warn_missing <- function(missing, what) {
+    showNotification(
+      paste0("Add ", what, " needs: ", paste(missing, collapse = ", "), "."),
+      type = "error", duration = 7
+    )
+  }
   observeEvent(input$cls_submit_line, {
     if (!cls_guard_edit()) return()
     cls_id <- suppressWarnings(as.integer(current_cls_id()))
     if (is.na(cls_id)) return()
+    missing <- cls_missing_fields(list(
+      Object = input$cls_line_category,
+      `Spend category` = input$cls_line_spend_category,
+      Amount = suppressWarnings(as.numeric(input$cls_line_amount)),
+      Justification = input$cls_line_justification
+    ))
+    if (length(missing)) { cls_warn_missing(missing, "an object"); return() }
     result <- tryCatch(
       add_cls_request_line(database, cls_id, input$cls_line_category, input$cls_line_amount,
                            input$cls_line_justification,
-                           # A typed category takes precedence over the picked one.
-                           spend_category = {
-                             typed <- trimws(as.character(input$cls_line_new_spend_category %||% ""))
-                             if (nzchar(typed)) typed else input$cls_line_spend_category
-                           }),
+                           spend_category = input$cls_line_spend_category),
       error = function(error) error
     )
     if (inherits(result, "error")) {
@@ -8839,6 +9161,14 @@ server <- function(input, output, session) {
     if (!cls_guard_edit()) return()
     cls_id <- suppressWarnings(as.integer(current_cls_id()))
     if (is.na(cls_id)) return()
+    missing <- cls_missing_fields(list(
+      `Job classification` = input$cls_position_classification,
+      `Number of positions` = suppressWarnings(as.numeric(input$cls_position_count)),
+      `Estimated Cost` = suppressWarnings(as.numeric(input$cls_position_salary)),
+      Justification = input$cls_position_justification,
+      Explanation = input$cls_position_explanation
+    ))
+    if (length(missing)) { cls_warn_missing(missing, "a position"); return() }
     result <- tryCatch(
       add_cls_request_position(
         database, cls_id,
@@ -8856,6 +9186,80 @@ server <- function(input, output, session) {
     }
     refresh_app_data()
     showNotification("Position request added.", type = "message", duration = 5)
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_edit_line, {
+    if (!cls_guard_edit()) return()
+    cls_editing_position(NA_integer_)
+    cls_editing_line(suppressWarnings(as.integer(input$cls_edit_line$lineId)))
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_edit_position, {
+    if (!cls_guard_edit()) return()
+    cls_editing_line(NA_integer_)
+    cls_editing_position(suppressWarnings(as.integer(input$cls_edit_position$posId)))
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_cancel_edit, {
+    cls_editing_line(NA_integer_)
+    cls_editing_position(NA_integer_)
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_line_edit_save, {
+    if (!cls_guard_edit()) return()
+    line_id <- suppressWarnings(as.integer(cls_editing_line()))
+    if (is.na(line_id)) return()
+    missing <- cls_missing_fields(list(
+      Object = input$cls_line_edit_category,
+      `Spend category` = input$cls_line_edit_spend_category,
+      Amount = suppressWarnings(as.numeric(input$cls_line_edit_amount)),
+      Justification = input$cls_line_edit_justification
+    ))
+    if (length(missing)) { cls_warn_missing(missing, "an object"); return() }
+    result <- tryCatch(
+      update_cls_request_line(
+        database, line_id,
+        object_category = input$cls_line_edit_category,
+        amount = input$cls_line_edit_amount,
+        justification = input$cls_line_edit_justification,
+        spend_category = input$cls_line_edit_spend_category,
+        modified_by = cls_user_id()
+      ),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    cls_editing_line(NA_integer_)
+    refresh_app_data()
+    showNotification("Object updated.", type = "message", duration = 5)
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_position_edit_save, {
+    if (!cls_guard_edit()) return()
+    pos_id <- suppressWarnings(as.integer(cls_editing_position()))
+    if (is.na(pos_id)) return()
+    missing <- cls_missing_fields(list(
+      `Job classification` = input$cls_position_edit_classification,
+      `Number of positions` = suppressWarnings(as.numeric(input$cls_position_edit_count)),
+      `Estimated Cost` = suppressWarnings(as.numeric(input$cls_position_edit_salary)),
+      Justification = input$cls_position_edit_justification
+    ))
+    if (length(missing)) { cls_warn_missing(missing, "a position"); return() }
+    result <- tryCatch(
+      update_cls_request_position(
+        database, pos_id,
+        classification = input$cls_position_edit_classification,
+        position_count = input$cls_position_edit_count,
+        estimated_salary = input$cls_position_edit_salary,
+        justification = input$cls_position_edit_justification,
+        modified_by = cls_user_id()
+      ),
+      error = function(error) error
+    )
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    cls_editing_position(NA_integer_)
+    refresh_app_data()
+    showNotification("Position updated.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_delete, {
     if (!cls_guard_edit()) return()
@@ -10168,10 +10572,13 @@ server <- function(input, output, session) {
       ),
       selected_cls_id = current_cls_id(),
       cls_detail_origin = cls_detail_origin(),
+      editing_line_id = cls_editing_line(),
+      editing_position_id = cls_editing_position(),
       # Filters apply only when Apply is pressed (NULL = show everything).
       cls_review_filters = list(
         status = cls_applied_status() %||% character(0),
-        agency = cls_applied_agency() %||% character(0)
+        agency = cls_applied_agency() %||% character(0),
+        service = cls_applied_service() %||% character(0)
       )
     )
   })

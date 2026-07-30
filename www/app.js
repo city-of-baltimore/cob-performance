@@ -97,6 +97,17 @@
       box.textContent = wc + " / " + limit + " words";
     }
   }
+  // The justification doubles as the description when a new spend category is
+  // being created, so the prompt only appears for that option.
+  var CLS_NEW_SPEND_CATEGORY = "Create Spend Category";
+  function clsUpdateNewCategoryNote(scope) {
+    var root = scope || clsPageRoot() || document;
+    var sel = root.querySelector("#cls_line_spend_category");
+    var note = root.querySelector("#cls_new_category_note");
+    if (!note) return;
+    var isNew = !!sel && sel.value === CLS_NEW_SPEND_CATEGORY;
+    note.style.display = isNew ? "inline" : "none";
+  }
   function clsUpdateRemaining(scope) {
     var root = scope || document;
     var note = root.querySelector(".cls-remaining-note");
@@ -146,6 +157,23 @@
   // Scoped to one request shell: the page can contain more than one form
   // (and a "new" form with empty fields must not make a saved request look
   // incomplete).
+  // The mandatory fields in the request's first container, by label.
+  function clsSummaryGaps(scope) {
+    var root = scope || clsPageRoot();
+    var gaps = [];
+    if (!root) return gaps;
+    root.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+      var el = clsFieldInput(c);
+      if (el && (el.value || "").trim()) return;
+      var lab = c.querySelector(".control-label, label");
+      gaps.push(lab ? lab.textContent.trim().replace(/\s+/g, " ") : "a required field");
+    });
+    var ta = root.querySelector("#cls_form_summary, [id$='cls_form_summary']");
+    if (ta && clsWordCount(ta.value) > CLS_SUMMARY_WORD_LIMIT) {
+      gaps.push("Summarize the request (over the " + CLS_SUMMARY_WORD_LIMIT + "-word limit)");
+    }
+    return gaps;
+  }
   function clsRequestIsComplete(scope) {
     var root = scope || clsPageRoot();
     if (!root) return false;
@@ -230,6 +258,7 @@
     clsApplyOneTimeLabel();
     clsApplyPositionsToggle();
     clsSyncTitle();
+    clsUpdateNewCategoryNote();
     clsValidate();
   }
   var clsAutosaveTimer = null;
@@ -247,10 +276,35 @@
     if (event.target && event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
     if (event.target && event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
   });
+  // CLS Review: the approved-amount pair appears for Approved and Partial only.
+  // Approved prefills from the request; Partial is left blank on purpose.
+  function clsApplyApprovedFields(sel) {
+    if (!sel || !/^cls_rv_bbmr_/.test(sel.id)) return;
+    var id = sel.id.replace("cls_rv_bbmr_", "");
+    var wrap = document.querySelector('[data-cls-approved-for="' + id + '"]');
+    if (!wrap) return;
+    var show = sel.value === "Approved" || sel.value === "Partial";
+    wrap.style.display = show ? "block" : "none";
+    if (sel.value !== "Approved") return;
+    var row = sel.closest(".cls-rv-row");
+    if (!row) return;
+    var amt = document.getElementById("cls_rv_appr_amount_" + id);
+    var pos = document.getElementById("cls_rv_appr_positions_" + id);
+    var srcAmt = row.querySelector(".cls-rv-amount");
+    var srcPos = row.querySelector(".cls-rv-positions");
+    if (amt && !(amt.value || "").trim() && srcAmt) {
+      amt.value = (srcAmt.textContent || "").replace(/[^0-9.]/g, "");
+    }
+    if (pos && !(pos.value || "").trim() && srcPos) {
+      pos.value = (srcPos.textContent || "").replace(/[^0-9]/g, "");
+    }
+  }
   document.addEventListener("change", function (event) {
     if (!event.target) return;
+    if (/^cls_rv_bbmr_/.test(event.target.id || "")) clsApplyApprovedFields(event.target);
     if (event.target.id === "cls_form_one_time") { clsApplyOneTime(); clsApplyOneTimeLabel(); clsValidate(); }
     if (event.target.id === "cls_add_positions_toggle") { clsApplyPositionsToggle(); }
+    if (event.target.id === "cls_line_spend_category") { clsUpdateNewCategoryNote(); }
     if (event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
     if (event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
   });
@@ -971,6 +1025,33 @@
       }
       return;
     }
+    // Analyst feedback: pencil opens the row's inline editor; Cancel closes it.
+    var clsBulk = event.target.closest("[data-cls-bulk-approve]");
+    if (clsBulk && window.Shiny) {
+      window.Shiny.setInputValue("cls_bulk_approve_open", Date.now(), { priority: "event" });
+      return;
+    }
+    var clsEditLine = event.target.closest("[data-cls-edit-line]");
+    if (clsEditLine && window.Shiny) {
+      window.Shiny.setInputValue("cls_edit_line", {
+        lineId: clsEditLine.getAttribute("data-cls-edit-line"), nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsEditPos = event.target.closest("[data-cls-edit-position]");
+    if (clsEditPos && window.Shiny) {
+      window.Shiny.setInputValue("cls_edit_position", {
+        posId: clsEditPos.getAttribute("data-cls-edit-position"), nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
+    var clsCancelEdit = event.target.closest("[data-cls-cancel-edit]");
+    if (clsCancelEdit && window.Shiny) {
+      window.Shiny.setInputValue("cls_cancel_edit", {
+        what: clsCancelEdit.getAttribute("data-cls-cancel-edit"), nonce: Date.now()
+      }, { priority: "event" });
+      return;
+    }
     var clsInfoBtn = event.target.closest("[data-cls-info]");
     if (clsInfoBtn) {
       event.preventDefault();
@@ -1039,9 +1120,22 @@
       var backShell = clsBackLink.closest(".cls-detail-shell");
       // Only nag when there is actually a request being edited.
       if (backShell && backShell.querySelector("#cls_form_amount")) {
+        // Analyst feedback: the summary fields are mandatory, so an incomplete
+        // first container blocks navigation rather than just warning.
+        var summaryGaps = clsSummaryGaps(backShell);
+        if (summaryGaps.length) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.alert("You have missing fields. Complete these before leaving this request:
+
+• " +
+            summaryGaps.join("
+• "));
+          return;
+        }
         window.alert(clsRequestIsComplete(backShell)
           ? "This request has been justified."
-          : "You have missing fields.");
+          : "You have missing fields. This request is not fully described by object and positions.");
       }
       // fall through to the [data-page] navigation below
     }
