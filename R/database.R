@@ -50,6 +50,7 @@ performance_role_rank <- function(role) {
   ranks <- c(
     AgencyViewer = 10L,
     AgencyWriter = 20L,
+    # Retired role, kept only so any legacy row still ranks. Not assignable.
     AgencyApprover = 30L,
     AgencySubmitter = 40L,
     BBMRReviewer = 50L,
@@ -339,6 +340,59 @@ ensure_measure_identity_sequences <- function(connection) {
   reset_identity_sequence(connection, "performance.measure_entity_link", "link_id")
   reset_identity_sequence(connection, "performance.pm_service_link", "link_id")
   reset_identity_sequence(connection, "performance.pm_goal_link", "link_id")
+  invisible(TRUE)
+}
+
+# Small introspection helpers so migrations can be conditional on what a given
+# database already has, rather than relying on ALTER ... IF EXISTS alone.
+column_exists <- function(connection, schema, table, column) {
+  nrow(DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT 1 FROM information_schema.columns",
+      "WHERE table_schema = $1 AND table_name = $2 AND column_name = $3"
+    ),
+    params = list(schema, table, column)
+  )) > 0
+}
+
+column_type <- function(connection, schema, table, column) {
+  row <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT data_type FROM information_schema.columns",
+      "WHERE table_schema = $1 AND table_name = $2 AND column_name = $3"
+    ),
+    params = list(schema, table, column)
+  )
+  if (!nrow(row)) NA_character_ else as.character(row$data_type[[1]])
+}
+
+# Convert a text "who touched this" column that stored a display name into an
+# integer FK to access.user. Postgres rejects a subquery inside
+# ALTER COLUMN ... USING, so this goes add -> backfill by name -> swap.
+retype_modified_by_to_user_id <- function(connection, schema, table, column) {
+  qualified <- paste0(schema, ".", table)
+  if (!column_exists(connection, schema, table, column)) {
+    DBI::dbExecute(connection, sprintf("ALTER TABLE %s ADD COLUMN %s integer", qualified, column))
+  }
+  if (!identical(column_type(connection, schema, table, column), "text")) {
+    return(invisible(FALSE))
+  }
+  tmp <- paste0(column, "_uid")
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s integer", qualified, tmp))
+  DBI::dbExecute(
+    connection,
+    sprintf(
+      paste(
+        "UPDATE %1$s SET %2$s = u.user_id FROM access.\"user\" u",
+        "WHERE u.full_name = %1$s.%3$s AND %1$s.%3$s IS NOT NULL"
+      ),
+      qualified, tmp, column
+    )
+  )
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s DROP COLUMN %s", qualified, column))
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", qualified, tmp, column))
   invisible(TRUE)
 }
 
@@ -725,6 +779,117 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "ALTER TABLE application.feedback_request ALTER COLUMN status SET DEFAULT 'New'")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_status ON application.feedback_request(status, priority, category)")
 
+  # Current Level of Service (CLS) budget requests. Mirrors the CLS_REQUEST /
+  # CLS_REQUEST_LINE / CLS_REQUEST_POSITION spec, translated to Postgres and
+  # placed in the budget schema alongside the other plan_service-linked tables.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS budget.cls_request (",
+      "cls_id serial PRIMARY KEY,",
+      "plan_service_id integer NOT NULL REFERENCES performance.plan_service(plan_service_id),",
+      "request_name varchar(500) NOT NULL,",
+      "request_type varchar(100),",
+      "request_amount numeric(18,2),",
+      "one_time boolean NOT NULL DEFAULT false,",
+      "overall_summary text,",
+      "status varchar(30) NOT NULL DEFAULT 'In Progress',",
+      "amount_next_fy numeric(18,2),",
+      "amount_2next_fy numeric(18,2),",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer REFERENCES access.user(user_id)",
+      ")"
+    )
+  )
+  # `status` is the single source of truth for where a request sits in the
+  # workflow. It replaced the target schema's `completed` BIT, which could only
+  # express two of the six states the workflow needs.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request ADD COLUMN IF NOT EXISTS status varchar(30) NOT NULL DEFAULT 'In Progress'")
+  if (column_exists(connection, "budget", "cls_request", "completed")) {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "UPDATE budget.cls_request SET status = CASE WHEN completed THEN 'BBMR Review' ELSE 'In Progress' END",
+        "WHERE status IS NULL OR status NOT IN ('In Progress','Agency Review','BBMR Review','Approved','Denied','Partially Approved')"
+      )
+    )
+    DBI::dbExecute(connection, "ALTER TABLE budget.cls_request DROP COLUMN completed")
+  }
+  # Retired: `justified` was an early validation flag with no UI and no meaning
+  # now that gaps are computed from the line items.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request DROP COLUMN IF EXISTS justified")
+  # modified_by holds the user id; the display name is resolved from
+  # access.user.full_name at render time rather than copied in here.
+  retype_modified_by_to_user_id(connection, "budget", "cls_request", "modified_by")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_plan_service ON budget.cls_request(plan_service_id)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS budget.cls_request_line (",
+      "line_id serial PRIMARY KEY,",
+      "cls_id integer NOT NULL REFERENCES budget.cls_request(cls_id) ON DELETE CASCADE,",
+      "object_category varchar(200),",
+      "spend_category varchar(200),",
+      "amount numeric(18,2),",
+      "justification text,",
+      "sort_order integer NOT NULL DEFAULT 0",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request_line ADD COLUMN IF NOT EXISTS spend_category varchar(200)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_line_cls ON budget.cls_request_line(cls_id)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS budget.cls_request_position (",
+      "pos_id serial PRIMARY KEY,",
+      "cls_id integer NOT NULL REFERENCES budget.cls_request(cls_id) ON DELETE CASCADE,",
+      "classification varchar(200) NOT NULL,",
+      "position_count integer NOT NULL DEFAULT 0,",
+      "estimated_salary numeric(18,2),",
+      "justification text,",
+      "explanation text",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_position_cls ON budget.cls_request_position(cls_id)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS budget.cls_review (",
+      "review_id serial PRIMARY KEY,",
+      "cls_id integer NOT NULL UNIQUE REFERENCES budget.cls_request(cls_id) ON DELETE CASCADE,",
+      "analyst_notes text,",
+      "analyst_approval varchar(20),",
+      "bbmr_approval varchar(20),",
+      "reviewed_by integer REFERENCES access.user(user_id),",
+      "updated_at timestamptz NOT NULL DEFAULT now()",
+      ")"
+    )
+  )
+  # Retired: the evaluation score came off the CLS Review page, so the column had
+  # no writer left.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review DROP COLUMN IF EXISTS evaluation_score")
+  retype_modified_by_to_user_id(connection, "budget", "cls_review", "reviewed_by")
+  # USER_ROLE.assigned_by from the target schema: which admin granted the role.
+  DBI::dbExecute(connection, "ALTER TABLE access.user_role ADD COLUMN IF NOT EXISTS assigned_by integer REFERENCES access.user(user_id)")
+  # AgencyApprover is retired (AgencySubmitter is the approving agency role).
+  # target_schema.sql only runs on a fresh database, so the CHECK constraint on
+  # an already-provisioned one has to be replaced here or it keeps accepting a
+  # role nothing can assign. Any surviving row is moved over first so the new
+  # constraint can be validated.
+  DBI::dbExecute(connection, "UPDATE access.user_role SET app_role = 'AgencySubmitter' WHERE app_role = 'AgencyApprover'")
+  DBI::dbExecute(connection, "ALTER TABLE access.user_role DROP CONSTRAINT IF EXISTS user_role_app_role_check")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "ALTER TABLE access.user_role ADD CONSTRAINT user_role_app_role_check CHECK (app_role IN (",
+      "'AgencySubmitter', 'AgencyWriter', 'OPIReviewer', 'BBMRReviewer',",
+      "'DeputyMayor', 'CAOffice', 'SystemAdmin', 'AgencyViewer'))"
+    )
+  )
+
   # Foreign-key columns with no covering index (found via a live pg_constraint
   # audit). target_schema.sql only runs on a fresh database, so already-
   # provisioned databases (local Docker, Fly Postgres) need these applied here.
@@ -996,6 +1161,42 @@ load_app_data <- function(connection) {
         "LEFT JOIN access.\"user\" assigned_admin ON assigned_admin.user_id = fr.assigned_admin_id",
         "ORDER BY fr.created_at DESC, fr.feedback_id DESC"
       )
+    ),
+    budget_cls_request = query(
+      paste(
+        "SELECT cr.cls_id, cr.plan_service_id, cr.request_name, cr.request_type, cr.request_amount,",
+        "cr.one_time, cr.overall_summary, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
+        "cr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
+        "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at,",
+        "cr.modified_by, modifier.full_name AS modified_by_name,",
+        "ps.plan_id, ps.service_id, agp.agency_id",
+        "FROM budget.cls_request cr",
+        "JOIN performance.plan_service ps ON ps.plan_service_id = cr.plan_service_id",
+        "LEFT JOIN planning.agency_plan agp ON agp.plan_id = ps.plan_id",
+        "LEFT JOIN access.\"user\" modifier ON modifier.user_id = cr.modified_by",
+        "ORDER BY cr.created_at DESC, cr.cls_id DESC"
+      )
+    ),
+    budget_cls_request_line = query(
+      paste(
+        "SELECT line_id, cls_id, object_category, spend_category, amount, justification, sort_order",
+        "FROM budget.cls_request_line ORDER BY cls_id, sort_order, line_id"
+      )
+    ),
+    budget_cls_request_position = query(
+      paste(
+        "SELECT pos_id, cls_id, classification, position_count, estimated_salary, justification, explanation",
+        "FROM budget.cls_request_position ORDER BY cls_id, pos_id"
+      )
+    ),
+    budget_cls_review = query(
+      paste(
+        "SELECT rv.review_id, rv.cls_id, rv.analyst_notes, rv.analyst_approval, rv.bbmr_approval,",
+        "rv.reviewed_by, reviewer.full_name AS reviewed_by_name,",
+        "rv.updated_at AT TIME ZONE 'America/New_York' AS updated_at",
+        "FROM budget.cls_review rv",
+        "LEFT JOIN access.\"user\" reviewer ON reviewer.user_id = rv.reviewed_by"
+      )
     )
   )
 
@@ -1144,6 +1345,306 @@ delete_feedback_request <- function(connection, feedback_id) {
   if (is.na(feedback_id)) stop("Choose a valid feedback request.")
   DBI::dbExecute(connection, "DELETE FROM application.feedback_request WHERE feedback_id = $1", params = list(feedback_id))
   invisible(feedback_id)
+}
+
+# ---- CLS (Current Level of Service) budget requests -------------------------
+
+# PLACEHOLDER DATA. Spend categories are a chart-of-accounts concept (the SC6xxx
+# codes in the budget system). These stand-ins let the field be used and tested;
+# replace them with the real COA spend-category list when it is available.
+cls_spend_category_choices <- c(
+  "SC6001 - Professional Services",
+  "SC6002 - Consultants",
+  "SC6003 - Non-Operating Costs (NOC)",
+  "SC6004 - Subcontractors",
+  "SC6005 - Software and Subscriptions",
+  "SC6006 - Fuel and Lubricants",
+  "SC6007 - Building Maintenance",
+  "SC6008 - Fleet Parts and Repairs",
+  "SC6009 - Training and Travel",
+  "SC6010 - Office Supplies"
+)
+
+cls_object_choices <- c(
+  "Transfers",
+  "Salaries",
+  "Other Personnel Costs",
+  "Contractual Services",
+  "Materials and Supplies",
+  "Minor Equipment (<$5k)",
+  "Major Equipment (>$5k)",
+  "Grants, Subsidies, and Contributions",
+  "Debt Service"
+)
+
+cls_request_type_choices <- c(
+  "Annualization of Cost",
+  "Capital Project",
+  "Cyclical Cost",
+  "Debt Service",
+  "Extraordinary Inflation",
+  "Grant Match",
+  "Mandated Cost",
+  "Remove One-Time Item"
+)
+
+# Reference content for the request-type information icon on the CLS request page.
+cls_adjustment_type_guidance <- list(
+  list("Annualization of Cost", "Provide full-year funding for programs funded for a partial year in Fiscal 2027.", "Fiscal 2027 includes a partial year of funding for a new lease that needs to be annualized in Fiscal 2028."),
+  list("Capital Project", "Operating cost for a capital project that will come online in Fiscal 2028.", "A facility is being renovated and will reopen in Fiscal 2028. The CLS adjustment will include costs for the newly renovated facility."),
+  list("Cyclical Cost", "Service costs due to the nature of the service.", "Adjustments for election costs."),
+  list("Debt Service", "Adjustment based on projected changes to debt service in Fiscal 2028.", "An agency's budget includes debt funding for a conditional purchase agreement; the CLS adjustment will update the budget based on the debt schedule."),
+  list("Extraordinary Inflation", "Expenditure or contract that is anticipated to grow faster than the standard CLS inflationary adjustment.", "Specific expenditures anticipated to grow by more than 5% driven by inflation."),
+  list("Grant Match", "Local matching funds associated with state or federal grants; does not include funding to replace loss of grant funding.", "The local match for a 3-year grant grows each year; the CLS adjustment updates the local match for Fiscal 2028."),
+  list("Mandated Cost", "Increased cost driven either by legal or contractual mandate.", "Updates to agency budgets to reflect operating costs from recent Council legislation."),
+  list("Remove One-Time Item", "Items included in the Fiscal 2027 budget that were only intended for one year for a specific purpose.", "The Fiscal 2027 budget included funding to purchase new equipment; the CLS adjustment will remove the one-time funding.")
+)
+
+nullable_numeric_param <- function(value) {
+  value <- suppressWarnings(as.numeric(value))
+  if (length(value) != 1 || is.na(value)) NA_real_ else value
+}
+
+nullable_integer_param <- function(value) {
+  value <- suppressWarnings(as.integer(value))
+  if (length(value) != 1 || is.na(value)) NA_integer_ else value
+}
+
+create_cls_request <- function(connection, plan_service_id, request_name, request_type = NULL,
+                               request_amount = NULL, one_time = FALSE, overall_summary = NULL,
+                               amount_next_fy = NULL, amount_2next_fy = NULL, modified_by = NULL) {
+  plan_service_id <- as.integer(plan_service_id)
+  if (is.na(plan_service_id)) stop("Choose a service for this request.")
+  request_name <- trimws(as.character(request_name %||% ""))
+  if (!nzchar(request_name)) stop("Add a request name.")
+  service_rows <- DBI::dbGetQuery(
+    connection,
+    "SELECT plan_service_id FROM performance.plan_service WHERE plan_service_id = $1",
+    params = list(plan_service_id)
+  )
+  if (!nrow(service_rows)) stop("That service is no longer available.")
+  request_type <- as.character(request_type %||% "")
+  if (!nzchar(request_type)) request_type <- NA_character_
+  DBI::dbGetQuery(
+    connection,
+    paste(
+      "INSERT INTO budget.cls_request",
+      "(plan_service_id, request_name, request_type, request_amount, one_time, overall_summary, amount_next_fy, amount_2next_fy, modified_by)",
+      "VALUES ($1::integer, $2::text, $3::text, $4::numeric, $5::boolean, NULLIF($6::text, ''), $7::numeric, $8::numeric, $9::integer)",
+      "RETURNING cls_id"
+    ),
+    params = list(
+      plan_service_id, request_name, request_type,
+      nullable_numeric_param(request_amount), isTRUE(one_time),
+      as.character(overall_summary %||% ""),
+      nullable_numeric_param(amount_next_fy), nullable_numeric_param(amount_2next_fy),
+      nullable_integer_param(modified_by)
+    )
+  )$cls_id[[1]]
+}
+
+update_cls_request <- function(connection, cls_id, request_name, request_type = NULL,
+                               request_amount = NULL, one_time = FALSE, overall_summary = NULL,
+                               amount_next_fy = NULL, amount_2next_fy = NULL,
+                               plan_service_id = NULL, modified_by = NULL) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  request_name <- trimws(as.character(request_name %||% ""))
+  if (!nzchar(request_name)) stop("Add a request name.")
+  request_type <- as.character(request_type %||% "")
+  if (!nzchar(request_type)) request_type <- NA_character_
+  plan_service_id <- suppressWarnings(as.integer(plan_service_id %||% NA_integer_))
+  if (!is.na(plan_service_id)) {
+    service_rows <- DBI::dbGetQuery(
+      connection,
+      "SELECT plan_service_id FROM performance.plan_service WHERE plan_service_id = $1",
+      params = list(plan_service_id)
+    )
+    if (!nrow(service_rows)) stop("That service is no longer available.")
+  }
+  # `status` is managed by the hand-off actions, not this edit form, so it is
+  # intentionally omitted from the SET clause.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_request SET",
+      "request_name = $2::text, request_type = $3::text, request_amount = $4::numeric,",
+      "one_time = $5::boolean, overall_summary = NULLIF($6::text, ''),",
+      "amount_next_fy = $7::numeric, amount_2next_fy = $8::numeric,",
+      "plan_service_id = COALESCE($9::integer, plan_service_id),",
+      "modified_by = COALESCE($10::integer, modified_by),",
+      "updated_at = now() WHERE cls_id = $1"
+    ),
+    params = list(
+      cls_id, request_name, request_type, nullable_numeric_param(request_amount),
+      isTRUE(one_time), as.character(overall_summary %||% ""),
+      nullable_numeric_param(amount_next_fy), nullable_numeric_param(amount_2next_fy),
+      if (is.na(plan_service_id)) NA_integer_ else plan_service_id,
+      nullable_integer_param(modified_by)
+    )
+  )
+  invisible(cls_id)
+}
+
+cls_status_choices <- c(
+  "In Progress",
+  "Agency Review",
+  "BBMR Review",
+  "Approved",
+  "Partially Approved",
+  "Denied"
+)
+
+# "Complete" now means only "has left the agency for BBMR" - derived from status,
+# which replaced the target schema's `completed` BIT.
+cls_status_is_complete <- function(status) {
+  as.character(status) %in% c("BBMR Review", "Approved", "Partially Approved", "Denied")
+}
+
+# Advance every CLS request on a plan to a new workflow status.
+set_plan_cls_status <- function(connection, plan_id, status, modified_by = NULL, only_from = NULL) {
+  plan_id <- suppressWarnings(as.integer(plan_id))
+  if (is.na(plan_id)) stop("Choose a valid plan.")
+  status <- as.character(status %||% "")
+  if (!status %in% cls_status_choices) stop("Choose a valid request status.")
+  sql <- paste(
+    "UPDATE budget.cls_request SET status = $2::varchar, updated_at = now(),",
+    "modified_by = COALESCE($3::integer, modified_by)",
+    "WHERE plan_service_id IN (SELECT plan_service_id FROM performance.plan_service WHERE plan_id = $1)"
+  )
+  params <- list(plan_id, status, nullable_integer_param(modified_by))
+  if (length(only_from)) {
+    placeholders <- paste0("$", seq_along(only_from) + length(params), "::varchar", collapse = ", ")
+    sql <- paste0(sql, " AND status IN (", placeholders, ")")
+    params <- c(params, as.list(as.character(only_from)))
+  }
+  DBI::dbExecute(connection, sql, params = params)
+  invisible(plan_id)
+}
+
+# Set the status of a single request (used by the BBMR decision).
+set_cls_status <- function(connection, cls_id, status, modified_by = NULL) {
+  cls_id <- suppressWarnings(as.integer(cls_id))
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  status <- as.character(status %||% "")
+  if (!status %in% cls_status_choices) stop("Choose a valid request status.")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_request SET status = $2::varchar, updated_at = now(),",
+      "modified_by = COALESCE($3::integer, modified_by) WHERE cls_id = $1"
+    ),
+    params = list(cls_id, status, nullable_integer_param(modified_by))
+  )
+  invisible(cls_id)
+}
+
+mark_plan_cls_complete <- function(connection, plan_id, modified_by = NULL) {
+  set_plan_cls_status(connection, plan_id, "BBMR Review", modified_by)
+}
+
+# BBMR review record for a CLS request — kept separate so the submitted request
+# data is retained unchanged while reviewers add their evaluation.
+save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
+                            analyst_approval = NULL, bbmr_approval = NULL, reviewed_by = NULL) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  bbmr_approval <- as.character(bbmr_approval %||% "")
+  if (!bbmr_approval %in% c("Approved", "Partial", "Denied")) bbmr_approval <- NA_character_
+  analyst_approval <- as.character(analyst_approval %||% "")
+  if (!analyst_approval %in% c("Approved", "Partial", "Denied")) analyst_approval <- NA_character_
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO budget.cls_review (cls_id, analyst_notes, analyst_approval, bbmr_approval, reviewed_by, updated_at)",
+      "VALUES ($1::integer, NULLIF($2::text, ''), $3::text, $4::text, $5::integer, now())",
+      "ON CONFLICT (cls_id) DO UPDATE SET",
+      "analyst_notes = EXCLUDED.analyst_notes, analyst_approval = EXCLUDED.analyst_approval,",
+      "bbmr_approval = EXCLUDED.bbmr_approval, reviewed_by = EXCLUDED.reviewed_by, updated_at = now()"
+    ),
+    params = list(cls_id, as.character(analyst_notes %||% ""), analyst_approval, bbmr_approval, nullable_integer_param(reviewed_by))
+  )
+  # A BBMR decision advances the request's workflow status.
+  decided <- switch(
+    as.character(bbmr_approval %||% ""),
+    "Approved" = "Approved",
+    "Partial" = "Partially Approved",
+    "Denied" = "Denied",
+    NULL
+  )
+  if (!is.null(decided)) {
+    set_cls_status(connection, cls_id, decided, reviewed_by)
+  }
+  invisible(cls_id)
+}
+
+delete_cls_request <- function(connection, cls_id) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  # Remove children explicitly rather than relying on ON DELETE CASCADE: the FK
+  # cascade is only present on freshly created tables, and databases where the
+  # CLS tables predate the cascade would otherwise block the delete.
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_request_line WHERE cls_id = $1", params = list(cls_id))
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_request_position WHERE cls_id = $1", params = list(cls_id))
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_review WHERE cls_id = $1", params = list(cls_id))
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_request WHERE cls_id = $1", params = list(cls_id))
+  })
+  invisible(cls_id)
+}
+
+add_cls_request_line <- function(connection, cls_id, object_category = NULL, amount = NULL, justification = NULL,
+                                 spend_category = NULL) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  next_sort <- DBI::dbGetQuery(
+    connection,
+    "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort FROM budget.cls_request_line WHERE cls_id = $1",
+    params = list(cls_id)
+  )$next_sort[[1]]
+  DBI::dbGetQuery(
+    connection,
+    paste(
+      "INSERT INTO budget.cls_request_line (cls_id, object_category, spend_category, amount, justification, sort_order)",
+      "VALUES ($1::integer, NULLIF($2::text, ''), NULLIF($3::text, ''), $4::numeric, NULLIF($5::text, ''), $6::integer)",
+      "RETURNING line_id"
+    ),
+    params = list(cls_id, as.character(object_category %||% ""), as.character(spend_category %||% ""),
+                  nullable_numeric_param(amount), as.character(justification %||% ""), as.integer(next_sort))
+  )$line_id[[1]]
+}
+
+delete_cls_request_line <- function(connection, line_id) {
+  line_id <- as.integer(line_id)
+  if (is.na(line_id)) stop("Choose a valid line item.")
+  DBI::dbExecute(connection, "DELETE FROM budget.cls_request_line WHERE line_id = $1", params = list(line_id))
+  invisible(line_id)
+}
+
+add_cls_request_position <- function(connection, cls_id, classification, position_count = 0,
+                                     estimated_salary = NULL, justification = NULL, explanation = NULL) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  classification <- trimws(as.character(classification %||% ""))
+  if (!nzchar(classification)) stop("Add a job classification.")
+  position_count <- nullable_integer_param(position_count)
+  if (is.na(position_count)) position_count <- 0L
+  DBI::dbGetQuery(
+    connection,
+    paste(
+      "INSERT INTO budget.cls_request_position (cls_id, classification, position_count, estimated_salary, justification, explanation)",
+      "VALUES ($1::integer, $2::text, $3::integer, $4::numeric, NULLIF($5::text, ''), NULLIF($6::text, ''))",
+      "RETURNING pos_id"
+    ),
+    params = list(cls_id, classification, position_count, nullable_numeric_param(estimated_salary), as.character(justification %||% ""), as.character(explanation %||% ""))
+  )$pos_id[[1]]
+}
+
+delete_cls_request_position <- function(connection, pos_id) {
+  pos_id <- as.integer(pos_id)
+  if (is.na(pos_id)) stop("Choose a valid position request.")
+  DBI::dbExecute(connection, "DELETE FROM budget.cls_request_position WHERE pos_id = $1", params = list(pos_id))
+  invisible(pos_id)
 }
 
 # Baltimore's fiscal year runs July 1 - June 30, named by the calendar
@@ -2009,7 +2510,7 @@ set_measure_active <- function(connection, measure_id, agency_id, active) {
 
 save_team_role_assignment <- function(connection, access_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
-  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
   is_new <- identical(as.character(access_id), "new")
   access_id <- if (is_new) NA_integer_ else as.integer(access_id)
   agency_id <- trimws(as.character(agency_id %||% ""))
@@ -2098,7 +2599,7 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
 
 save_entity_team_role_assignment <- function(connection, entity_access_id, entity_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
-  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
   is_new <- identical(as.character(entity_access_id), "new")
   entity_access_id <- if (is_new) NA_integer_ else as.integer(entity_access_id)
   entity_id <- as.integer(entity_id)

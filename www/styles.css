@@ -735,6 +735,14 @@ body.hide-application-admin .application-nav-item {
   display: none;
 }
 
+body.hide-cls-requests .cls-requests-nav-item {
+  display: none;
+}
+
+body.hide-cls-review .cls-review-nav-item {
+  display: none;
+}
+
 body.auth-signed-out .drawer-context-selector,
 body.auth-signed-out .nav-item:not([data-page="login"]),
 body.auth-signed-out .desktop-drawer,
@@ -2220,6 +2228,1102 @@ body.builder-autosave-active #page {
 
 .team-role-table .table-row {
   grid-template-columns: minmax(11rem, 1.05fr) minmax(12rem, 1fr) minmax(10rem, 0.9fr) minmax(14rem, 1.15fr);
+}
+
+/* ---- CLS requests ---- */
+.cls-request-table .cls-request-row {
+  grid-template-columns: minmax(10rem, 1.6fr) minmax(7rem, 1fr) minmax(5.5rem, 6.5rem) minmax(8rem, 9.5rem) minmax(19rem, 21rem);
+}
+
+.cls-sort-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+.cls-sort-btn:hover {
+  color: var(--lp-brand-primary);
+}
+
+.cls-sort-icon {
+  opacity: 0.45;
+  font-size: 0.8em;
+}
+
+.cls-sort-btn[data-sort-dir] {
+  color: var(--lp-brand-primary);
+}
+
+.cls-sort-btn[data-sort-dir] .cls-sort-icon {
+  opacity: 1;
+}
+
+.civic-button.submit-agency {
+  background: #e8730c;
+  border-color: #e8730c;
+  color: #ffffff;
+}
+
+.civic-button.submit-agency:hover:not(:disabled) {
+  background: #cf6608;
+  border-color: #cf6608;
+}
+
+.cls-export-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--lp-border-soft);
+  flex-wrap: wrap;
+}
+
+.cls-export-label {
+  color: var(--lp-text-secondary);
+  font-size: 0.9rem;
+  margin-right: 0.25rem;
+}
+
+.cls-line-table .cls-line-row {
+  grid-template-columns: minmax(9rem, 1fr) minmax(10rem, 1.15fr) minmax(6.5rem, 7.5rem) minmax(10rem, 1.5fr) minmax(6rem, 7rem);
+}
+
+.cls-position-table .cls-position-row {
+  grid-template-columns: minmax(10rem, 1.1fr) minmax(5rem, 6rem) minmax(7rem, 8rem) minmax(10rem, 1.4fr) minmax(6rem, 7rem);
+}
+
+.cls-request-table .cls-request-row > *,
+.cls-line-table .cls-line-row > *,
+.cls-position-table .cls-position-row > * {
+  min-width: 0;
+}
+
+.cls-request-name {
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+/* A request that still needs work is called out loudly: the whole row is tinted
+   and edged in red, and the name carries a red badge with the reason on hover. */
+.cls-request-row-missing {
+  background: #fdeff1;
+  box-shadow: inset 3px 0 0 #c62828;
+}
+
+.cls-request-row-missing:hover {
+  background: #fce3e6;
+}
+
+.cls-missing-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  background: #c62828;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-radius: var(--lp-radius-pill);
+  padding: 0.1rem 0.5rem;
+  cursor: help;
+}
+
+.cls-missing-flag:focus-visible {
+  outline: 2px solid #7a1414;
+  outline-offset: 1px;
+}
+
+.cls-request-summary {
+  color: var(--lp-text-muted, #5b6472);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Page 2 (the request page) sits on a slightly darker canvas for contrast. */
+.cls-detail-shell {
+  background: #e7edf2;
+  border: 1px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-surface);
+  padding: 1.25rem 1.25rem 1.5rem;
+  margin: -0.25rem 0 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cls-detail-shell { background: rgba(255, 255, 255, 0.04); }
+}
+
+.cls-detail-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.35;
+  padding-bottom: 0.15rem;
+  margin-bottom: 0.25rem;
+}
+
+.cls-amount-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+  align-items: end;
+}
+
+.cls-amount-row .form-group,
+.cls-amount-row .shiny-input-container {
+  margin-bottom: 0;
+  width: 100% !important;
+}
+
+.cls-request-amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cls-request-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.cls-request-actions .civic-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.cls-empty-state {
+  padding: 1.5rem 1rem;
+}
+
+.cls-detail-chips {
+  margin-bottom: 1rem;
+}
+
+.cls-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.cls-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.cls-detail-label {
+  font-size: 0.8rem;
+  color: var(--lp-text-muted, #5b6472);
+}
+
+.cls-detail-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cls-detail-summary p {
+  margin: 0.25rem 0 0;
+}
+
+.cls-enter-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cls-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.5rem 1rem;
+  align-items: end;
+}
+
+.cls-form-grid .form-group,
+.cls-form-grid .shiny-input-container {
+  margin-bottom: 0;
+  width: 100% !important;
+}
+
+.cls-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/* The entry panel is visually separated from the table of what's been added. */
+.cls-add-form {
+  background: var(--lp-surface-subtle);
+  border: 1px solid var(--lp-border-default);
+  border-radius: var(--lp-radius-surface);
+  padding: 0.9rem 1rem 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.cls-add-form-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--lp-brand-primary);
+  margin-bottom: 0.6rem;
+}
+
+.cls-table-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1.35rem 0 0.6rem;
+}
+
+.cls-table-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--lp-border-strong);
+}
+
+.cls-table-divider-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--lp-text-secondary);
+}
+
+.cls-form-service {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+}
+
+.cls-detail-back {
+  margin-bottom: 1rem;
+}
+
+/* ---- CLS request page (page 2) ---- */
+.cls-detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.cls-detail-topbar .cls-save-status {
+  cursor: default;
+  padding-top: 0;
+}
+
+.cls-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--lp-brand-primary);
+  background: #ffffff;
+  border: 1.5px solid var(--lp-brand-primary);
+  border-radius: var(--lp-radius-pill);
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cls-back-link:hover {
+  background: var(--lp-brand-primary);
+  color: #ffffff;
+}
+
+.cls-reminder {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  background: var(--lp-status-info-bg);
+  border-left: 4px solid var(--lp-brand-supporting);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.95rem;
+}
+
+.cls-reminder-icon {
+  color: var(--lp-brand-primary);
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+
+.cls-summary-surface .cls-summary-head {
+  margin-bottom: 1rem;
+}
+
+.cls-summary-surface .cls-field-full,
+.cls-add-form .cls-field-full {
+  margin-bottom: 0.9rem;
+}
+
+.cls-summary-surface .cls-field-full .shiny-input-container,
+.cls-summary-surface .cls-field-full .form-group,
+.cls-amount-cell .shiny-input-container,
+.cls-amount-cell .form-group {
+  width: 100% !important;
+  margin-bottom: 0;
+}
+
+.cls-onetime-row {
+  margin: 0.1rem 0 1rem;
+}
+
+.cls-wordcount {
+  font-size: 0.85rem;
+  color: var(--lp-text-secondary);
+  margin-top: 0.3rem;
+}
+
+.cls-wordcount.cls-over-limit {
+  color: #b64454;
+  font-weight: 600;
+}
+
+textarea.cls-over-limit,
+.cls-over-limit textarea {
+  border-color: #b64454 !important;
+  box-shadow: 0 0 0 1px rgba(182, 68, 84, 0.5);
+}
+
+.cls-type-info {
+  font-size: 0.9rem;
+}
+
+.cls-type-summary {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  list-style: none;
+  margin-bottom: 0.25rem;
+}
+
+.cls-type-summary::-webkit-details-marker { display: none; }
+
+.cls-type-summary .control-label { margin-bottom: 0; }
+
+.cls-type-summary .cls-info-icon {
+  color: var(--lp-brand-primary);
+  font-size: 0.95em;
+}
+
+.cls-info-icon { font-size: 0.95em; }
+
+.cls-type-info-body {
+  overflow-x: auto;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.cls-type-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.cls-type-table th,
+.cls-type-table td {
+  border: 1px solid var(--lp-border-soft);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cls-type-table thead th {
+  background: var(--lp-surface-subtle);
+}
+
+.cls-remaining-note {
+  background: var(--lp-status-info-bg);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin: 0.25rem 0 1rem;
+  font-size: 0.92rem;
+}
+
+.cls-remaining-note.cls-remaining-ok {
+  background: var(--lp-status-success-bg);
+  border-left: 4px solid #2f7d61;
+}
+
+/* Out of balance in either direction is an error, and it needs to be impossible
+   to miss - the amount above is the one number BBMR has to be able to trace. */
+.cls-remaining-note.cls-remaining-over {
+  background: #fdeaec;
+  border: 1px solid #e2a2aa;
+  border-left: 4px solid #c62828;
+  color: #8a1420;
+  font-weight: 700;
+}
+
+.cls-remaining-note.cls-remaining-over .cls-remaining-text::before {
+  content: "\26A0";
+  margin-right: 0.4rem;
+  font-weight: 700;
+  color: #c62828;
+}
+
+.cls-field-missing input,
+.cls-field-missing textarea,
+.cls-field-missing select {
+  border-color: #b64454 !important;
+  box-shadow: 0 0 0 1px rgba(182, 68, 84, 0.35);
+}
+
+.cls-field-missing .control-label {
+  color: #b64454;
+}
+
+.cls-positions-toggle {
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+}
+
+/* Single-line inputs across the CLS pages share one height, so text inputs,
+   number inputs and selects line up in a row. */
+.cls-detail-shell input[type="text"],
+.cls-detail-shell input[type="number"],
+.cls-detail-shell input[type="search"],
+.cls-detail-shell select,
+.cls-review-filters input[type="text"],
+.cls-review-filters select,
+.cls-rv-body input[type="text"],
+.cls-rv-body input[type="number"],
+.cls-rv-body select {
+  height: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.6rem;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+/* Multi-line fields keep their own height but match the horizontal metrics. */
+.cls-detail-shell textarea,
+.cls-rv-body textarea {
+  padding: 0.4rem 0.6rem;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+/* Selectize (multi-select) controls used by the review filters. */
+.cls-review-filters .selectize-input {
+  min-height: 2.5rem;
+  padding: 0.3rem 0.5rem;
+  box-sizing: border-box;
+}
+
+/* Remove number-input spinner arrows on the request page. */
+.cls-detail-shell input[type="number"]::-webkit-inner-spin-button,
+.cls-detail-shell input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cls-detail-shell input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Resizable multi-line fields on the request page. */
+.cls-detail-shell textarea {
+  resize: vertical;
+}
+
+/* Slightly smaller text in the CLS tables. */
+.cls-line-table .table-row,
+.cls-position-table .table-row,
+.cls-request-table .table-row {
+  font-size: 0.85rem;
+}
+
+/* Summary header + autosave indicator. */
+.cls-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.cls-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--lp-text-secondary);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  padding-top: 0.35rem;
+}
+
+.cls-save-icon {
+  color: var(--lp-brand-supporting);
+}
+
+/* ---- BBMR CLS Review page ---- */
+.cls-review-grid {
+  margin-bottom: 1.25rem;
+}
+
+.cls-chart-wrap {
+  overflow-x: auto;
+}
+
+.cls-chart {
+  width: 100%;
+  min-width: 34rem;
+  height: auto;
+}
+
+.cls-chart-bar {
+  fill: var(--lp-chart-fill-primary);
+}
+
+.cls-chart-bar:hover {
+  opacity: 0.82;
+}
+
+/* Approval-decision segments. */
+.cls-chart-bar.seg-approved { fill: #2f7d61; }
+.cls-chart-bar.seg-partial  { fill: #e8a72c; }
+.cls-chart-bar.seg-denied   { fill: #b64454; }
+.cls-chart-bar.seg-pending  { fill: #b9c6d0; }
+
+.cls-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin-top: 0.6rem;
+}
+
+.cls-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--lp-text-secondary);
+}
+
+.cls-chart-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.cls-chart-swatch.seg-approved { background: #2f7d61; }
+.cls-chart-swatch.seg-partial  { background: #e8a72c; }
+.cls-chart-swatch.seg-denied   { background: #b64454; }
+.cls-chart-swatch.seg-pending  { background: #b9c6d0; }
+
+.cls-chart-label {
+  font-size: 11px;
+  fill: var(--lp-text-secondary);
+}
+
+.cls-chart-value {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--lp-text-primary);
+}
+
+.cls-chart-caption {
+  font-size: 0.85rem;
+  color: var(--lp-text-secondary);
+  margin: 0.5rem 0 0;
+}
+
+.cls-review-filters {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
+  gap: 0.85rem 1rem;
+  align-items: end;
+  background: var(--lp-surface-subtle);
+  border: 1px solid var(--lp-border-default);
+  border-radius: var(--lp-radius-surface);
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 720px) {
+  .cls-review-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cls-review-filters .measure-field {
+  min-width: 0;
+}
+
+.cls-review-filters .shiny-input-container,
+.cls-review-filters .form-group {
+  width: 100% !important;
+  margin-bottom: 0;
+}
+
+.cls-review-filters label,
+.cls-review-filters .control-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--lp-text-secondary);
+  margin-bottom: 0.3rem;
+}
+
+.cls-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cls-review-card {
+  border: 1px solid var(--lp-border-soft);
+  border-left: 4px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-surface);
+  padding: 1rem 1.1rem;
+  background: var(--lp-surface-elevated);
+}
+
+.cls-review-card.is-complete {
+  border-left-color: #2f7d61;
+}
+
+.cls-review-card.is-pending {
+  border-left-color: var(--lp-brand-accent);
+}
+
+.cls-review-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.cls-review-card-head h3 {
+  margin: 0 0 0.15rem;
+}
+
+.cls-review-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cls-review-meta {
+  margin: 0;
+  color: var(--lp-text-secondary);
+  font-size: 0.9rem;
+}
+
+.cls-review-submitted {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.75rem;
+  margin: 0.85rem 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--lp-border-soft);
+  border-bottom: 1px solid var(--lp-border-soft);
+}
+
+.cls-review-summary {
+  font-size: 0.92rem;
+  margin-bottom: 0.85rem;
+}
+
+.cls-review-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 1rem;
+  align-items: end;
+}
+
+.cls-review-field-grid .form-group,
+.cls-review-field-grid .shiny-input-container {
+  margin-bottom: 0;
+  width: 100% !important;
+}
+
+.cls-review-fields {
+  background: var(--lp-surface-soft-bg);
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+.cls-review-fields textarea {
+  resize: vertical;
+}
+
+/* ---- Request page: title, intro, info icons, duration toggle ---- */
+.cls-summary-surface .cls-detail-title {
+  font-size: 1.35rem;
+  text-align: left;
+  width: 100%;
+  margin: 0 0 0.15rem;
+}
+
+.cls-request-intro {
+  font-size: 0.93rem;
+  color: var(--lp-text-secondary);
+  margin: 0 0 1.1rem;
+}
+
+.cls-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.25rem;
+}
+
+.cls-label-row .control-label {
+  margin-bottom: 0;
+}
+
+.cls-info-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: var(--lp-brand-primary);
+  font-size: 0.95em;
+  line-height: 1;
+  display: inline-flex;
+}
+
+.cls-info-toggle:hover { color: var(--lp-brand-primary-dark); }
+
+.cls-info-panel {
+  margin: 0.45rem 0 0.6rem;
+  background: var(--lp-surface-subtle);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+}
+
+.cls-info-copy {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+/* Panel opens under the input, so it comes after the select in the DOM. */
+.cls-type-field .cls-info-panel,
+.cls-onetime-field .cls-info-panel {
+  order: 3;
+}
+
+.cls-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.cls-switch {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.cls-switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cls-switch-track {
+  width: 2.6rem;
+  height: 1.4rem;
+  border-radius: var(--lp-radius-pill);
+  background: #c4d1d9;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem;
+  transition: background 0.15s ease;
+}
+
+.cls-switch-thumb {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.cls-switch-input:checked + .cls-switch-track {
+  background: var(--lp-brand-primary);
+}
+
+.cls-switch-input:checked + .cls-switch-track .cls-switch-thumb {
+  transform: translateX(1.2rem);
+}
+
+.cls-switch-input:focus-visible + .cls-switch-track {
+  outline: var(--lp-focus-width) solid var(--lp-focus-ring);
+  outline-offset: 2px;
+}
+
+.cls-switch-label {
+  font-weight: 600;
+  font-size: 0.93rem;
+}
+
+.cls-cost-field .shiny-input-container,
+.cls-cost-field .form-group {
+  margin-bottom: 0;
+  width: 100% !important;
+}
+
+.cls-cost-link {
+  color: var(--lp-brand-primary);
+  text-decoration: underline;
+}
+
+/* ---- CLS Review: overview vs. review separation ---- */
+.cls-review-overview {
+  background: var(--lp-surface-alt);
+  border: 1px solid var(--lp-border-soft);
+  border-radius: var(--lp-radius-surface);
+  padding: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.cls-review-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.75rem 0 1rem;
+}
+
+.cls-review-divider::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  background: var(--lp-border-strong);
+  border-radius: 2px;
+}
+
+.cls-review-divider-label {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lp-brand-primary);
+}
+
+.cls-review-filter-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.cls-rv-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.cls-rv-count {
+  font-size: 0.85rem;
+  color: var(--lp-text-secondary);
+}
+
+.cls-export-bar-inline {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* ---- CLS Review: compact, collapsible request table ---- */
+.cls-rv-table {
+  border: 1px solid var(--lp-border-soft);
+  border-radius: var(--lp-radius-surface);
+  overflow: hidden;
+}
+
+.cls-rv-head {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(10rem, 2.2fr) minmax(8rem, 1.3fr) minmax(5.5rem, 6.5rem) minmax(9rem, 10rem);
+  gap: 0.75rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font-size: 0.84rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--lp-surface-default);
+  border: 0;
+  border-top: 1px solid var(--lp-border-soft);
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cls-rv-header-row {
+  background: var(--lp-surface-subtle);
+  font-weight: 700;
+  cursor: default;
+  border-top: 0;
+}
+
+.cls-rv-row:first-child .cls-rv-head {
+  border-top: 1px solid var(--lp-border-soft);
+}
+
+.cls-rv-head:hover:not(.cls-rv-header-row) {
+  background: var(--lp-surface-subtle);
+}
+
+.cls-rv-head > * {
+  min-width: 0;
+}
+
+.cls-rv-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cls-rv-agency,
+.cls-rv-amount {
+  color: var(--lp-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cls-rv-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.cls-rv-caret {
+  color: var(--lp-text-secondary);
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+}
+
+.cls-rv-head[aria-expanded="true"] .cls-rv-caret {
+  transform: rotate(90deg);
+}
+
+.cls-rv-body {
+  padding: 0.85rem 0.9rem 1rem;
+  background: var(--lp-surface-soft-bg);
+  border-top: 1px solid var(--lp-border-soft);
+  font-size: 0.88rem;
+}
+
+/* All eight facts on one line; the labels shrink rather than wrap. */
+/* All eight submitted fields stay on one line. Service carries the longest value
+   (SRV0000 plus a name), so it gets the extra width and the money columns the least. */
+.cls-rv-submitted {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 2.1fr) minmax(0, 1.2fr) repeat(3, minmax(0, 0.8fr))
+    minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 0.5rem 0.6rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.76rem;
+}
+
+.cls-rv-submitted .cls-detail-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cls-rv-submitted .cls-detail-value {
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Shrink the type before wrapping: one line is worth more than a larger font. */
+@media (max-width: 1120px) {
+  .cls-rv-submitted { font-size: 0.7rem; gap: 0.45rem 0.45rem; }
+  .cls-rv-submitted .cls-detail-label { font-size: 0.62rem; }
+  .cls-rv-submitted .cls-detail-value { font-size: 0.74rem; }
+}
+
+@media (max-width: 820px) {
+  .cls-rv-submitted { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.cls-rv-summary {
+  font-size: 0.88rem;
+  margin-bottom: 0.85rem;
+}
+
+.cls-rv-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+/* Objects / positions inside an expanded review row. */
+.cls-rv-block {
+  margin: 0 0 1rem;
+}
+
+.cls-rv-block-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--lp-brand-primary);
+  margin-bottom: 0.4rem;
+}
+
+.cls-rv-block .app-table {
+  background: #fff;
+}
+
+.cls-rv-block .table-row {
+  font-size: 0.82rem;
+}
+
+.cls-rv-explanations {
+  margin-top: 0.5rem;
+}
+
+.cls-rv-explanation {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  color: var(--lp-text-secondary);
 }
 
 .team-role-table .table-row > * {
