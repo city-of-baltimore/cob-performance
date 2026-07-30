@@ -50,6 +50,7 @@ performance_role_rank <- function(role) {
   ranks <- c(
     AgencyViewer = 10L,
     AgencyWriter = 20L,
+    # Retired role, kept only so any legacy row still ranks. Not assignable.
     AgencyApprover = 30L,
     AgencySubmitter = 40L,
     BBMRReviewer = 50L,
@@ -873,6 +874,21 @@ ensure_review_schema <- function(connection) {
   retype_modified_by_to_user_id(connection, "budget", "cls_review", "reviewed_by")
   # USER_ROLE.assigned_by from the target schema: which admin granted the role.
   DBI::dbExecute(connection, "ALTER TABLE access.user_role ADD COLUMN IF NOT EXISTS assigned_by integer REFERENCES access.user(user_id)")
+  # AgencyApprover is retired (AgencySubmitter is the approving agency role).
+  # target_schema.sql only runs on a fresh database, so the CHECK constraint on
+  # an already-provisioned one has to be replaced here or it keeps accepting a
+  # role nothing can assign. Any surviving row is moved over first so the new
+  # constraint can be validated.
+  DBI::dbExecute(connection, "UPDATE access.user_role SET app_role = 'AgencySubmitter' WHERE app_role = 'AgencyApprover'")
+  DBI::dbExecute(connection, "ALTER TABLE access.user_role DROP CONSTRAINT IF EXISTS user_role_app_role_check")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "ALTER TABLE access.user_role ADD CONSTRAINT user_role_app_role_check CHECK (app_role IN (",
+      "'AgencySubmitter', 'AgencyWriter', 'OPIReviewer', 'BBMRReviewer',",
+      "'DeputyMayor', 'CAOffice', 'SystemAdmin', 'AgencyViewer'))"
+    )
+  )
 
   # Foreign-key columns with no covering index (found via a live pg_constraint
   # audit). target_schema.sql only runs on a fresh database, so already-
@@ -2494,7 +2510,7 @@ set_measure_active <- function(connection, measure_id, agency_id, active) {
 
 save_team_role_assignment <- function(connection, access_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
-  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
   is_new <- identical(as.character(access_id), "new")
   access_id <- if (is_new) NA_integer_ else as.integer(access_id)
   agency_id <- trimws(as.character(agency_id %||% ""))
@@ -2583,7 +2599,7 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
 
 save_entity_team_role_assignment <- function(connection, entity_access_id, entity_id, agency_id, full_name, email, agency_role, performance_role, budget_access, adaptive_planning, performance_plan_access, service_id = NULL) {
   agency_role_values <- c("Agency Head", "Agency Director", "Chief of Staff", "Fiscal Officer", "Fiscal Staff", "Agency Staff", "Program Staff", "Performance Lead", "Admin")
-  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
+  performance_role_values <- c("AgencySubmitter", "AgencyWriter", "AgencyViewer", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice", "SystemAdmin")
   is_new <- identical(as.character(entity_access_id), "new")
   entity_access_id <- if (is_new) NA_integer_ else as.integer(entity_access_id)
   entity_id <- as.integer(entity_id)

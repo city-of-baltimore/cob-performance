@@ -70,10 +70,12 @@ agency_role_choices <- c(
   "Admin"
 )
 
+# AgencyApprover is retired and deliberately absent: access.user_role's CHECK
+# constraint no longer accepts it, so offering it here would hand the admin a
+# choice the database rejects. AgencySubmitter is the approving agency role.
 performance_role_choices <- c(
   "AgencySubmitter",
   "AgencyWriter",
-  "AgencyApprover",
   "AgencyViewer",
   "OPIReviewer",
   "BBMRReviewer",
@@ -85,11 +87,11 @@ performance_role_choices <- c(
 access_policy <- list(
   role_edit_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor", "AgencySubmitter"),
   role_edit_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff"),
-  plan_edit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  plan_edit_app_roles = c("AgencySubmitter", "AgencyWriter", "SystemAdmin", "OPIReviewer"),
   submitter_assignment_app_roles = c("SystemAdmin", "CAOffice", "DeputyMayor"),
   submitter_assignment_agency_roles = c("Agency Head", "Agency Director", "Chief of Staff", "Admin"),
   measure_review_app_roles = c("SystemAdmin", "OPIReviewer"),
-  measure_submit_app_roles = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "SystemAdmin", "OPIReviewer"),
+  measure_submit_app_roles = c("AgencySubmitter", "AgencyWriter", "SystemAdmin", "OPIReviewer"),
   measure_submit_agency_roles = c("Performance Lead", "Chief of Staff", "Agency Director", "Agency Head", "Admin"),
   plan_review_app_roles = c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"),
   final_plan_approval_app_roles = c("SystemAdmin")
@@ -97,9 +99,9 @@ access_policy <- list(
 
 role_grant_policy <- list(
   system_admin = performance_role_choices,
-  reviewer_admin = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
-  portfolio_admin = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
-  agency_leadership = c("AgencySubmitter", "AgencyWriter", "AgencyApprover", "AgencyViewer"),
+  reviewer_admin = c("AgencySubmitter", "AgencyWriter", "AgencyViewer"),
+  portfolio_admin = c("AgencySubmitter", "AgencyWriter", "AgencyViewer"),
+  agency_leadership = c("AgencySubmitter", "AgencyWriter", "AgencyViewer"),
   agency_submitter = c("AgencyWriter", "AgencyViewer")
 )
 

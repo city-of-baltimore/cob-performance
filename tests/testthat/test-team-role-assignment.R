@@ -58,14 +58,14 @@ test_that("saving the same person twice does not violate user_role_user_id_key",
     save_team_role_assignment(
       connection, access_id = "new", agency_id = "AGC3100",
       full_name = "CI Regression Test User", email = email,
-      agency_role = "Agency Staff", performance_role = "AgencyApprover",
+      agency_role = "Agency Staff", performance_role = "AgencyWriter",
       budget_access = FALSE, adaptive_planning = FALSE, performance_plan_access = TRUE
     )
   )
 
   second_pass_roles <- DBI::dbGetQuery(connection, "SELECT app_role FROM access.user_role WHERE user_id = $1", params = list(user_id))
   expect_equal(nrow(second_pass_roles), 1)
-  expect_equal(second_pass_roles$app_role[[1]], "AgencyApprover")
+  expect_equal(second_pass_roles$app_role[[1]], "AgencyWriter")
 })
 
 test_that("save_team_role_assignment rejects an invalid performance role rather than writing bad data", {

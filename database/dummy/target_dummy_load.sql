@@ -168,8 +168,8 @@ INSERT INTO access.user_role ("user_role_id", "user_id", "app_role", "agency_id"
 VALUES
     (1, 1, 'AgencySubmitter', 'AGC2600', NULL, '2025-09-01', true, true, true, false),
     (2, 2, 'AgencySubmitter', 'AGC2600', NULL, '2025-09-01', true, true, true, false),
-    (3, 3, 'AgencyApprover', 'AGC2600', NULL, '2025-09-01', true, true, true, false),
-    (4, 4, 'AgencyApprover', 'AGC4346', NULL, '2025-09-01', true, true, true, false),
+    (3, 3, 'AgencySubmitter', 'AGC2600', NULL, '2025-09-01', true, true, true, false),
+    (4, 4, 'AgencySubmitter', 'AGC4346', NULL, '2025-09-01', true, true, true, false),
     (5, 5, 'AgencySubmitter', 'AGC4346', NULL, '2025-09-01', true, false, true, false),
     (6, 6, 'OPIReviewer', NULL, NULL, '2025-09-01', true, true, true, false),
     (7, 7, 'DeputyMayor', NULL, 2, '2025-09-01', true, true, true, false),
