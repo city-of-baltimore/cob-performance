@@ -2041,9 +2041,6 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
     )
   })
   review_rows <- Filter(Negate(is.null), review_rows)
-  score_rows <- Filter(function(row) !is.na(row$score), review_rows)
-  score_rows <- Filter(Negate(is.null), score_rows)
-  if (!length(score_rows)) stop("Enter at least one valid score before saving.")
 
   scale_score <- function(value, raw_max, target_max) {
     if (is.na(value) || is.na(raw_max) || raw_max <= 0) return(0)
@@ -2113,7 +2110,17 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
       )
       review_id <- inserted$review_id[[1]]
     }
-    for (row in score_rows) {
+    # Iterate every criterion collect_plan_review_scores() knows about, not
+    # just the ones with a currently-valid score -- a reviewer clearing a
+    # score/justification back out submits that criterion with score = NA,
+    # and skipping NA rows here (the prior behavior) left the stale old
+    # score sitting untouched in the DB, so the "removed" content silently
+    # reappeared the next time the form re-read it. An existing row always
+    # gets updated (including down to NULL/cleared); a criterion with
+    # neither an existing row nor a current score is skipped so untouched,
+    # never-scored criteria don't get an empty row inserted for every
+    # criterion on every save.
+    for (row in review_rows) {
       existing_score <- DBI::dbGetQuery(
         connection,
         paste(
@@ -2134,7 +2141,7 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
           ),
           params = list(existing_score$score_id[[1]], row$score, row$weight, row$weighted_score, row$justification)
         )
-      } else {
+      } else if (!is.na(row$score)) {
         DBI::dbExecute(
           connection,
           paste(
