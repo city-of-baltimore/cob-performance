@@ -71,7 +71,7 @@ def request_flowables(req, styles):
 
     fields = [
         ["Type", req.get("type") or "—", "One-time", "Yes" if req.get("one_time") else "No"],
-        ["Request amount", money(req.get("amount")), "Justified", req.get("justified") or "—"],
+        ["Request amount", money(req.get("amount")), "Status", req.get("status") or "—"],
         ["Projected FY+2", money(req.get("amount_next_fy")), "Projected FY+3", money(req.get("amount_2next_fy"))],
         ["Completed", "Yes" if req.get("completed") else "No", "", ""],
     ]
@@ -94,10 +94,12 @@ def request_flowables(req, styles):
     out.append(Paragraph("Request details (line items)", styles["CLSSection"]))
     lines = req.get("lines") or []
     if lines:
-        data = [[cell("Object category", styles, True), cell("Amount", styles, True), cell("Justification", styles, True)]]
+        data = [[cell("Object", styles, True), cell("Spend category", styles, True),
+                 cell("Amount", styles, True), cell("Justification", styles, True)]]
         for li in lines:
-            data.append([cell(li.get("object_category"), styles), cell(money(li.get("amount")), styles), cell(li.get("justification"), styles)])
-        out.append(styled_table(data, [1.9 * inch, 1.1 * inch, 3.6 * inch], styles))
+            data.append([cell(li.get("object_category"), styles), cell(li.get("spend_category"), styles),
+                         cell(money(li.get("amount")), styles), cell(li.get("justification"), styles)])
+        out.append(styled_table(data, [1.55 * inch, 1.6 * inch, 1.0 * inch, 2.45 * inch], styles))
     else:
         out.append(Paragraph("No line items.", styles["CLSService"]))
 

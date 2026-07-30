@@ -11,6 +11,10 @@ services:
       - ./database/schema/target_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./docker/initdb/02_load_seed.sql:/docker-entrypoint-initdb.d/02_load_seed.sql:ro
       - ./database/seed:/docker-entrypoint-initdb.d/seed:ro
+      # Named (not anonymous) so the data directory survives the db
+      # container being recreated, not just stopped/started -- otherwise
+      # any recreate reruns the init scripts and resets every password.
+      - db_data:/var/lib/postgresql
     ports:
       # Host port 5433 to avoid clashing with a locally installed Postgres
       - "5433:5432"
@@ -37,3 +41,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+volumes:
+  db_data:

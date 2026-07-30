@@ -1,6 +1,15 @@
 library(shiny)
 library(DBI)
 library(RPostgres)
+library(future)
+library(promises)
+
+# Full database reloads (refresh_app_data(), ~36 queries) run in a background
+# worker so one user's save/submit/approve doesn't block every other
+# connected session -- Shiny normally runs as a single process/thread, so a
+# synchronous reload here would freeze the whole app for its duration.
+# shared-cpu-2x machine (see fly.toml) -> 2 workers.
+future::plan(future::multisession, workers = 2)
 
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
@@ -20,6 +29,7 @@ pages <- list(
   approval_queue = "Plan approval queue",
   publishing_queue = "Publishing queue",
   measure_review = "Measure review",
+  action_plan_measures = "Action Plan Measures",
   bug_fix = "Bug/Fix",
   role_preview = "Role preview",
   strategic_plan = "City action plan",
@@ -182,24 +192,38 @@ can_delete_measures <- function(app_roles) {
   has_any_role(app_roles, "SystemAdmin")
 }
 
+can_edit_locked_measure_data <- function(app_roles) {
+  has_any_role(app_roles, "SystemAdmin")
+}
+
 can_view_performance_reviewing <- function(app_roles) {
   has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
 }
 
 # CLS requests are an agency-facing budget tool. Viewers can see them; writers,
-# approvers, and submitters (agency leadership) can create/edit/delete. SystemAdmin
-# has access for support and testing.
+# writers and submitters (agency leadership) can create/edit/delete. SystemAdmin
+# has access for support and testing. AgencySubmitter is the approving role -
+# there is no AgencyApprover; see cls-schema-reconciliation.md Q11.
+# The agency-facing CLS Requests page. BBMR reviewers are deliberately excluded:
+# they work from CLS Review and reach a request through "Open request", so the
+# agency list page (and its nav entry) never appears for them.
 can_view_cls_requests <- function(app_roles) {
-  has_any_role(app_roles, c("AgencyViewer", "AgencyWriter", "AgencyApprover", "AgencySubmitter", "BBMRReviewer", "SystemAdmin"))
+  has_any_role(app_roles, c("AgencyViewer", "AgencyWriter", "AgencySubmitter", "SystemAdmin"))
+}
+
+# Who may open a single request page (agency users plus BBMR reviewers).
+can_open_cls_request <- function(app_roles) {
+  can_view_cls_requests(app_roles) || can_review_cls(app_roles)
 }
 
 can_edit_cls_requests <- function(app_roles) {
-  has_any_role(app_roles, c("AgencyWriter", "AgencyApprover", "AgencySubmitter", "BBMRReviewer", "SystemAdmin"))
+  has_any_role(app_roles, c("AgencyWriter", "AgencySubmitter", "BBMRReviewer", "SystemAdmin"))
 }
 
-# Agency Approvers (and admins) can send the agency's requests on for BBMR review.
+# Agency Submitters (agency leadership, and admins) send requests on for BBMR
+# review. This is the role with final agency approval per USER_TYPES.
 can_approve_cls <- function(app_roles) {
-  has_any_role(app_roles, c("AgencyApprover", "SystemAdmin"))
+  has_any_role(app_roles, c("AgencySubmitter", "SystemAdmin"))
 }
 
 # The BBMR review workspace.
@@ -300,11 +324,13 @@ format_measure_value <- function(value, format_type, display_unit = NA, missing_
   formatted
 }
 
+# Built on current_fiscal_year() (R/database.R) so there's one shared
+# implementation of the July-1 rollover, not a second copy that could
+# drift from it -- this just relabels the same number for this page's
+# "last complete actual / this year's target" summary column.
 fiscal_measure_snapshot_years <- function(today = Sys.Date()) {
-  calendar_year <- as.integer(format(today, "%Y"))
-  fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
-  last_completed_fy <- if (today >= fiscal_year_start) calendar_year else calendar_year - 1L
-  list(actual_fy = last_completed_fy, target_fy = last_completed_fy + 1L)
+  target_fy <- current_fiscal_year(today)
+  list(actual_fy = target_fy - 1L, target_fy = target_fy)
 }
 
 fy_label <- function(year) {
@@ -534,6 +560,21 @@ plan_accounting_agency_id <- function(db, plan) {
   if (nrow(entity)) entity$parent_agency_id[[1]] else NA_character_
 }
 
+plan_fiscal_analyst <- function(db, plan) {
+  agency_id <- plan_accounting_agency_id(db, plan)
+  if (is.na(agency_id) || !"reference_agency" %in% names(db) || !"fiscal_analyst" %in% names(db$reference_agency)) return(NA_character_)
+  agency <- db$reference_agency[db$reference_agency$agency_id == agency_id, , drop = FALSE]
+  if (!nrow(agency)) return(NA_character_)
+  value <- trimws(as.character(agency$fiscal_analyst[[1]] %||% ""))
+  if (!nzchar(value)) return(NA_character_)
+  value
+}
+
+plan_fiscal_analyst_label <- function(db, plan) {
+  value <- plan_fiscal_analyst(db, plan)
+  if (is.na(value)) "Unassigned" else value
+}
+
 plan_service_rows <- function(db, plan) {
   if (is.null(plan) || !nrow(plan)) return(db$reference_service[0, , drop = FALSE])
   if (is.na(plan$plan_id[[1]])) return(db$reference_service[0, , drop = FALSE])
@@ -650,11 +691,27 @@ scorable_service_rows <- function(service_rows) {
   service_rows[!is_administration_service(service_rows), , drop = FALSE]
 }
 
-measure_preview_years <- function(current_fy = 2027) {
+measure_preview_years <- function(current_fy = current_fiscal_year()) {
+  # Matches the budget book: the four most recently completed actual years,
+  # then this year's target and next year's -- we're always planning one
+  # fiscal year ahead of whichever one is currently executing (e.g. FY27
+  # executing now means FY27-FY28 Target, FY23-FY26 Actual). The two
+  # ranges must not overlap (a repeated year showed up as a duplicate
+  # column).
   list(
-    actual_years = seq.int(current_fy - 5L, current_fy - 1L),
-    target_years = seq.int(current_fy - 1L, current_fy + 1L)
+    actual_years = seq.int(current_fy - 4L, current_fy - 1L),
+    target_years = seq.int(current_fy, current_fy + 1L)
   )
+}
+
+# Builds one <tr>'s cells for a kpi-history-table, highlighting the cell for
+# highlight_year -- the past fiscal year's actual and the next fiscal
+# year's target are the two boxes users most need to keep current, so they
+# get a visual callout instead of blending into the rest of the row.
+history_row_cells <- function(values, years, highlight_year) {
+  Map(function(value, year) {
+    tags$td(class = if (identical(year, highlight_year)) "kpi-history-highlight", value)
+  }, values, years)
 }
 
 service_body_output_id <- function(service_id) {
@@ -683,36 +740,53 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
   selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
   other_service_metric_ids <- service_metric_ids_for_other_services(db, plan, service_id)
+  service_metric_select <- function(metric_index, selected_value) {
+    selected_value <- as.character(selected_value %||% "")
+    select_id <- paste0("service_metric_", service_id, "_", metric_index)
+    tags$select(
+      id = select_id,
+      name = select_id,
+      class = "form-control service-metric-select",
+      tags$option(value = "", selected = if (!nzchar(selected_value)) "selected", "Select a metric"),
+      lapply(seq_along(metric_choices), function(choice_index) {
+        value <- as.character(metric_choices[[choice_index]])
+        label <- names(metric_choices)[[choice_index]]
+        tags$option(
+          value = value,
+          selected = if (identical(value, selected_value)) "selected",
+          label
+        )
+      })
+    )
+  }
   metric_selector_rows <- lapply(seq_along(selected_metrics), function(metric_index) {
     div(
       class = "kpi-select-row",
-      selectInput(
-        paste0("service_metric_", service_id, "_", metric_index),
-        label = NULL,
-        choices = c("Select a metric" = "", metric_choices),
-        selected = selected_metrics[metric_index],
-        selectize = FALSE
-      ),
+      service_metric_select(metric_index, selected_metrics[metric_index]),
       if (metric_index > 1 || nzchar(selected_metrics[metric_index])) tags$button(type = "button", class = "kpi-remove-button", title = "Remove metric", `aria-label` = "Remove metric", icon("xmark"))
     )
   })
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
-  actual_years <- preview_years$actual_years
-  target_years <- preview_years$target_years
+  preview_years <- measure_preview_years()
+  preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
     measure <- measures[measure_index, , drop = FALSE]
     history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-    actual_values <- vapply(actual_years, function(year) {
+    actual_values <- vapply(preview_all_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
-      if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
+      value <- if (nrow(row)) row$annual_actual[[1]] else NA_real_
+      format_measure_value(value, measure$format_type[1], measure$display_unit[1])
     }, character(1))
-    target_values <- vapply(target_years, function(year) {
+    target_values <- vapply(preview_all_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
-      if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
+      value <- if (nrow(row)) row$target_value[[1]] else NA_real_
+      format_measure_value(value, measure$format_type[1], measure$display_unit[1], "Not set")
     }, character(1))
     div(
       class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_metrics) "active" else ""),
       `data-measure-id` = as.character(measure$measure_id),
+      title = "Click to review or edit this measure",
       div(
         class = "kpi-preview-header",
         div(h4(measure$title)),
@@ -727,16 +801,17 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
         class = "kpi-history-wrap",
         tags$table(
           class = "kpi-history-table",
-          tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
+          tags$caption(class = "sr-only", paste(measure$title, "actuals and targets by fiscal year")),
           tags$thead(tags$tr(
             tags$th(scope = "col", "Series"),
-            lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+            lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
           )),
           tags$tbody(
-            tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
-            tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
+            tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+            tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
           )
-        )
+        ),
+        p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
       )
     )
   })
@@ -786,8 +861,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.na(plan$plan_id[[1]])) return(db$performance_performance_measure[0, , drop = FALSE])
   services <- plan_service_rows(db, plan)
   if (!nrow(services)) return(db$performance_performance_measure[0, , drop = FALSE])
-  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-  measure_ids <- unique(link_table$measure_id[link_table$service_id %in% services$service_id])
+  measure_ids <- legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link
     if (!is.na(plan$entity_id[[1]])) {
@@ -818,6 +892,35 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
     ]
   }
   rows[order(rows$title), , drop = FALSE]
+}
+
+legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE) {
+  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
+  if (is.null(link_table) || !nrow(link_table) || !length(service_ids)) return(integer(0))
+  link_rows <- link_table[as.character(link_table$service_id) %in% as.character(service_ids), , drop = FALSE]
+  if (!nrow(link_rows)) return(integer(0))
+  measure_ids <- unique(link_rows$measure_id)
+  measure_ids <- measure_ids[!is.na(measure_ids)]
+  if (!length(measure_ids) || is.null(plan) || !nrow(plan)) return(measure_ids)
+
+  measure_rows <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% measure_ids, , drop = FALSE]
+  if (!nrow(measure_rows)) return(integer(0))
+
+  accounting_agency_id <- plan_accounting_agency_id(db, plan)
+  keep_ids <- measure_rows$measure_id[measure_rows$agency_id == accounting_agency_id]
+
+  if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link) && !is.na(plan$entity_id[[1]])) {
+    scoped_links <- db$performance_measure_entity_link[
+      !is.na(db$performance_measure_entity_link$entity_id) &
+        db$performance_measure_entity_link$entity_id == plan$entity_id[[1]] &
+        as.character(db$performance_measure_entity_link$service_id) %in% as.character(service_ids),
+      ,
+      drop = FALSE
+    ]
+    keep_ids <- unique(c(keep_ids, scoped_links$measure_id))
+  }
+
+  unique(measure_ids[measure_ids %in% keep_ids])
 }
 
 measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
@@ -873,8 +976,7 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
 }
 
 service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
-  link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
-  linked_ids <- unique(link_table$measure_id[link_table$service_id == service_id])
+  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
     if (!is.null(plan) && nrow(plan)) {
@@ -970,8 +1072,17 @@ timeline_all_items <- function(today = Sys.Date()) {
 }
 
 timeline_step_card <- function(row) {
+  status_class <- switch(
+    as.character(row$status[[1]]),
+    "Current" = "current-step",
+    "Current step" = "current-step",
+    "Last step" = "last-step",
+    "Next step" = "next-step",
+    "Following step" = "following-step",
+    tolower(gsub(" ", "-", row$status[[1]]))
+  )
   div(
-    class = paste("timeline-step-card", tolower(gsub(" ", "-", row$status[[1]]))),
+    class = paste("timeline-step-card", status_class),
     div(class = "eyebrow", row$status[[1]]),
     h3(row$milestone[[1]]),
     div(class = "timeline-date", row$date_label[[1]])
@@ -1204,28 +1315,44 @@ nonblank_text <- function(value) {
 }
 
 goal_draft_readiness <- function(db, plan, goals) {
-  if (is.null(plan) || !nrow(plan) || !nrow(goals)) {
+  if (is.null(plan) || !nrow(plan)) {
     return(list(complete_count = 0L, aligned_count = 0L))
   }
   goals_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "goals") else NULL
+
+  # A goal only becomes a performance.agency_goal row once the plan is
+  # Approved (apply_plan_drafts_to_records() promotes the draft at that
+  # point) -- for every plan still Draft/Submitted/UnderReview/Returned,
+  # goals live only in the draft payload's goalIds list. Iterating just the
+  # published rows meant this always reported 0 complete goals for any
+  # agency still drafting, no matter how much they'd actually written.
+  draft_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) as.character(unlist(goals_draft$goalIds)) else character(0)
+  published_goal_ids <- if (nrow(goals)) as.character(goals$agency_goal_id) else character(0)
+  goal_ids <- union(published_goal_ids, draft_goal_ids)
+
   complete <- 0L
   aligned <- 0L
-  for (i in seq_len(nrow(goals))) {
-    goal_id <- as.character(goals$agency_goal_id[[i]])
-    statement <- draft_value(goals_draft, paste0("goal_statement_", goal_id), goals$title[[i]])
+  for (goal_id in goal_ids) {
+    published_row <- goals[as.character(goals$agency_goal_id) == goal_id, , drop = FALSE]
+    fallback_title <- if (nrow(published_row)) published_row$title[[1]] else ""
+    statement <- draft_value(goals_draft, paste0("goal_statement_", goal_id), fallback_title)
     initiative_values <- if (!is.null(goals_draft) && !is.null(goals_draft$initiatives[[goal_id]])) {
       as.character(unlist(goals_draft$initiatives[[goal_id]]))
-    } else {
-      initiative_links <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goals$agency_goal_id[[i]], , drop = FALSE]
+    } else if (nrow(published_row)) {
+      initiative_links <- db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == published_row$agency_goal_id[[1]], , drop = FALSE]
       db$performance_initiative$title[match(initiative_links$initiative_id, db$performance_initiative$initiative_id)]
+    } else {
+      character(0)
     }
     kpi_values <- if (!is.null(goals_draft) && !is.null(goals_draft$kpis[[goal_id]])) {
       as.character(unlist(goals_draft$kpis[[goal_id]]))
-    } else {
-      measure_links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == goals$agency_goal_id[[i]], , drop = FALSE]
+    } else if (nrow(published_row)) {
+      measure_links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id == published_row$agency_goal_id[[1]], , drop = FALSE]
       as.character(measure_links$measure_id)
+    } else {
+      character(0)
     }
-    fallback_alignment <- if ("alignment_code" %in% names(goals) && !is.na(goals$alignment_code[[i]])) goals$alignment_code[[i]] else ""
+    fallback_alignment <- if (nrow(published_row) && "alignment_code" %in% names(published_row) && !is.na(published_row$alignment_code[[1]])) published_row$alignment_code[[1]] else ""
     alignment <- draft_value(goals_draft, paste0("goal_alignment_", goal_id), fallback_alignment)
     has_initiative <- any(nzchar(trimws(initiative_values[!is.na(initiative_values)])))
     has_kpi <- any(nzchar(trimws(kpi_values[!is.na(kpi_values)])))
@@ -1257,13 +1384,14 @@ nav_item <- function(id, label, icon_tag, section = NULL, item_class = NULL) {
 
 performance_reviewing_nav_items <- function(approval_first = FALSE) {
   measure_review <- nav_item("measure_review", "Measure review", icon("chart-line"), item_class = "performance-reviewing-nav-item measure-review-nav-item")
+  action_plan_measures <- nav_item("action_plan_measures", "Action Plan Measures", icon("bullseye"), item_class = "performance-reviewing-nav-item action-plan-measures-nav-item")
   plan_review <- nav_item("reviewer_dashboard", "Plan review", icon("clipboard-check"), item_class = "performance-reviewing-nav-item")
   approval_queue <- nav_item("approval_queue", "Plan approval queue", icon("stamp"), item_class = "performance-reviewing-nav-item approval-queue-nav-item")
   publishing_queue <- nav_item("publishing_queue", "Publishing queue", icon("upload"), item_class = "performance-reviewing-nav-item publishing-nav-item")
   if (isTRUE(approval_first)) {
-    tagList(measure_review, approval_queue, plan_review, publishing_queue)
+    tagList(measure_review, action_plan_measures, approval_queue, plan_review, publishing_queue)
   } else {
-    tagList(measure_review, plan_review, approval_queue, publishing_queue)
+    tagList(measure_review, action_plan_measures, plan_review, approval_queue, publishing_queue)
   }
 }
 
@@ -1338,10 +1466,18 @@ metric_number <- function(value, unit = NULL) {
 }
 
 metric_visual <- function(metric) {
-  unit <- metric$unit
-  max_value <- max(metric$current, metric$target, na.rm = TRUE)
-  current_width <- max(3, round(metric$current / max_value * 100))
-  target_position <- min(100, max(3, round(metric$target / max_value * 100)))
+  format_type <- metric$format_type %||% "Count"
+  # format_measure_value() checks is.na(display_unit) to detect "no unit",
+  # but metric$unit is NULL (not NA) when absent -- is.na(NULL) is
+  # logical(0), which throws in an `if`, so coalesce it to NA first.
+  metric_unit <- metric$unit %||% NA_character_
+  label_for <- function(value) format_measure_value(value, format_type, metric_unit, "Not set")
+  current_value <- if (is.null(metric$current) || length(metric$current) == 0) NA_real_ else metric$current
+  target_value <- if (is.null(metric$target) || length(metric$target) == 0) NA_real_ else metric$target
+  max_value <- suppressWarnings(max(current_value, target_value, na.rm = TRUE))
+  if (!is.finite(max_value) || max_value == 0) max_value <- 1
+  current_width <- if (is.na(current_value)) 0 else max(3, round(current_value / max_value * 100))
+  target_position <- if (is.na(target_value)) 0 else min(100, max(3, round(target_value / max_value * 100)))
   current_label_position <- min(96, max(4, current_width))
   target_label_position <- min(96, max(4, target_position))
 
@@ -1357,52 +1493,33 @@ metric_visual <- function(metric) {
       div(
         class = "metric-bar-track",
         role = "img",
-        `aria-label` = paste("Current", metric_number(metric$current, unit), "target", metric_number(metric$target, unit)),
-        div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
-        div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
+        `aria-label` = paste("Current", label_for(current_value), "target", label_for(target_value)),
+        if (!is.na(current_value)) div(class = "metric-bar current", style = paste0("width: ", current_width, "%;")),
+        if (!is.na(target_value)) div(class = "target-marker", style = paste0("left: ", target_position, "%;"))
       ),
-      span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), metric_number(metric$current, unit)),
-      span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), metric_number(metric$target, unit))
+      if (!is.na(current_value)) span(class = "metric-bar-value current-value", style = paste0("left: ", current_label_position, "%;"), label_for(current_value)),
+      if (!is.na(target_value)) span(class = "metric-bar-value target-value", style = paste0("left: ", target_label_position, "%;"), label_for(target_value))
     )
   )
 }
 
-action_plan_measure_item <- function(db, metric) {
-  matched_id <- suppressWarnings(as.integer(metric$matched_measure_id %||% NA_integer_))
-  matched_measure <- if (!is.na(matched_id)) {
-    db$performance_performance_measure[db$performance_performance_measure$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  history <- if (nrow(matched_measure)) {
-    db$performance_measure_actuals[db$performance_measure_actuals$measure_id == matched_id, , drop = FALSE]
-  } else {
-    data.frame()
-  }
-  has_data <- nrow(history) && (any(!is.na(history$annual_actual)) || any(!is.na(history$target_value)))
-  data_summary <- NULL
-  if (has_data) {
-    actual_rows <- history[!is.na(history$annual_actual), , drop = FALSE]
-    target_rows <- history[!is.na(history$target_value), , drop = FALSE]
-    latest_actual <- actual_rows[order(actual_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    latest_target <- target_rows[order(target_rows$fiscal_year, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
-    data_summary <- div(
-      class = "action-plan-measure-data",
-      if (nrow(latest_actual)) span(tags$strong(paste0(fy_label(latest_actual$fiscal_year[[1]]), " actual: ")), format_measure_value(latest_actual$annual_actual[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]])),
-      if (nrow(latest_target)) span(tags$strong(paste0(fy_label(latest_target$fiscal_year[[1]]), " target: ")), format_measure_value(latest_target$target_value[[1]], matched_measure$format_type[[1]], matched_measure$display_unit[[1]], "Not set")),
-      span(class = "measure-direction-note", paste0(metric$match_type, " to measure ", matched_id))
-    )
-  }
+# Renders one Citywide measure in a pillar's "Performance Measures"
+# section: a current-vs-target bar chart (metric_visual()) once it has at
+# least one recorded value, otherwise a plain placeholder -- a measure can
+# be marked Citywide and linked to a pillar before any actual/target for
+# the current snapshot years has been entered.
+action_plan_measure_item <- function(metric) {
+  has_data <- !is.na(metric$current) || !is.na(metric$target)
+  if (has_data) return(metric_visual(metric))
   div(
     class = "action-plan-measure-item",
     div(
       tags$strong(metric$name),
       if (!is.null(metric$direction) && !is.na(metric$direction) && nzchar(trimws(metric$direction))) {
         span(class = "measure-direction-note", metric$direction)
-      },
-      data_summary
+      }
     ),
-    if (has_data) status_chip("Data linked", "success") else status_chip("Awaiting data", "warning")
+    status_chip("Awaiting data", "warning")
   )
 }
 
@@ -1527,8 +1644,12 @@ pillar_modal <- function(pillar_id, db) {
         tags$section(
           class = "modal-section-block",
           h3("Performance Measures"),
-          p("Action Plan measure names are included here. Baselines, actuals, and targets are awaiting validated data."),
-          div(class = "action-plan-measure-list", lapply(pillar$metrics, function(metric) action_plan_measure_item(db, metric)))
+          p("Citywide measures assigned to this pillar, with the most recently reported actual and current target."),
+          if (length(pillar$metrics)) {
+            div(class = "action-plan-measure-list", lapply(pillar$metrics, action_plan_measure_item))
+          } else {
+            p(class = "action-plan-measure-empty", "No measures are marked Citywide for this pillar yet.")
+          }
         ),
         tags$section(
           class = "modal-section-block",
@@ -1702,18 +1823,9 @@ page_login <- function(state = list(view = "login"), db = NULL) {
           div(class = "brand-subtitle", "Baltimore City Performance & Budgeting")
         )
       ),
-      body,
-      div(class = "support-note", "Need access? Contact performance@baltimorecity.gov.")
+      body
     )
   )
-}
-
-reviewer_assignment_rows <- function() {
-  path <- file.path("database", "seed", "reviewer_assignments.csv")
-  if (!file.exists(path)) {
-    return(data.frame(agency_name = character(), agency_type = character(), analyst = character(), email = character()))
-  }
-  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
 reviewer_assignment_key <- function(value) {
@@ -1723,30 +1835,26 @@ reviewer_assignment_key <- function(value) {
   gsub("[^a-z0-9]+", "", value)
 }
 
+# reviewer_assignments.csv used to be consulted here too, as a name-matched
+# fallback for plans with no assigned_reviewer -- removed once
+# scripts/backfill_assigned_reviewer_from_csv.R backfilled the proper
+# ID-keyed planning.agency_plan.assigned_reviewer column for every plan the
+# CSV covered (2026-07-23). entity_assignments (workflow.entity_role_assignment)
+# remains as its own, separate, table-backed fallback for entity-scoped plans.
 apply_reviewer_assignments <- function(db, joined) {
-  assignments <- reviewer_assignment_rows()
   entity_assignments <- entity_role_assignment_rows(db)
   joined$assignment_reviewer_name <- NA_character_
-  joined$assignment_reviewer_email <- NA_character_
   joined$assignment_agency_type <- NA_character_
   if (!nrow(joined) || !"submitter_name" %in% names(joined)) {
     return(joined)
   }
-  plan_keys <- reviewer_assignment_key(joined$submitter_name)
   if (nrow(entity_assignments)) {
+    plan_keys <- reviewer_assignment_key(joined$submitter_name)
     entity_keys <- reviewer_assignment_key(entity_assignments$public_name)
     entity_match <- match(plan_keys, entity_keys)
     matched <- !is.na(entity_match)
     joined$assignment_reviewer_name[matched] <- entity_assignments$reviewer[entity_match[matched]]
     joined$assignment_agency_type[matched] <- entity_assignments$entity_type[entity_match[matched]]
-  }
-  if (nrow(assignments)) {
-    assignment_keys <- reviewer_assignment_key(assignments$agency_name)
-    match_index <- match(plan_keys, assignment_keys)
-    matched <- !is.na(match_index) & (is.na(joined$assignment_reviewer_name) | !nzchar(joined$assignment_reviewer_name))
-    joined$assignment_reviewer_name[matched] <- assignments$analyst[match_index[matched]]
-    joined$assignment_reviewer_email[matched] <- assignments$email[match_index[matched]]
-    joined$assignment_agency_type[matched] <- assignments$agency_type[match_index[matched]]
   }
   joined
 }
@@ -2197,6 +2305,47 @@ measure_review_card <- function(db, measure) {
   )
 }
 
+measure_validation_export_rows <- function(db) {
+  measures <- db$performance_performance_measure
+  agency_names <- vapply(measures$agency_id, function(id) agency_name(db, id), character(1))
+  rows <- data.frame(
+    measure_id = measures$measure_id,
+    title = measures$title,
+    agency_id = measures$agency_id,
+    agency_name = agency_names,
+    approval_status = measures$approval_status,
+    validated = measures$validated,
+    active = measures$active,
+    submitted_for_approval_at = measures$submitted_for_approval_at,
+    last_updated = measures$last_updated,
+    stringsAsFactors = FALSE
+  )
+  rows[order(rows$agency_name, rows$title), ]
+}
+
+measure_data_export_rows <- function(db) {
+  actuals <- db$performance_measure_actuals
+  measures <- db$performance_performance_measure
+  idx <- match(actuals$measure_id, measures$measure_id)
+  agency_ids <- measures$agency_id[idx]
+  agency_names <- vapply(agency_ids, function(id) agency_name(db, id), character(1))
+  rows <- data.frame(
+    measure_id = actuals$measure_id,
+    title = measures$title[idx],
+    agency_id = agency_ids,
+    agency_name = agency_names,
+    format_type = measures$format_type[idx],
+    display_unit = measures$display_unit[idx],
+    fiscal_year = actuals$fiscal_year,
+    annual_actual = actuals$annual_actual,
+    annual_actual_notes = actuals$annual_actual_notes,
+    target_value = actuals$target_value,
+    target_value_notes = actuals$target_value_notes,
+    stringsAsFactors = FALSE
+  )
+  rows[order(rows$agency_name, rows$title, rows$fiscal_year), ]
+}
+
 page_measure_review <- function(db) {
   measures <- db$performance_performance_measure[db$performance_performance_measure$approval_status == "PendingApproval", , drop = FALSE]
   measures <- measures[order(measures$submitted_for_approval_at, measures$last_updated, decreasing = TRUE), , drop = FALSE]
@@ -2210,7 +2359,12 @@ page_measure_review <- function(db) {
         h1("Measure Review"),
         p("Review submitted measures for definition quality, data ownership, validation rigor, and readiness for use in performance planning. Approve measures that are ready, or return them to the agency with feedback.")
       ),
-      status_chip("OPI / System Admin", "primary")
+      div(
+        class = "measure-review-header-actions",
+        downloadButton("download_measure_validation_csv", "Export Validation", class = "civic-button secondary small"),
+        downloadButton("download_measure_data_csv", "Export Data", class = "civic-button secondary small"),
+        status_chip("OPI / System Admin", "primary")
+      )
     ),
     div(
       class = "dashboard-grid reviewer-dashboard-grid",
@@ -2776,6 +2930,14 @@ entity_access_numeric_id <- function(access_id) {
 
 team_rows_for_plan <- function(db, submitter_value) {
   plan <- current_plan(db, submitter_value)
+  if (is.null(plan) || !nrow(plan)) {
+    # A NULL plan must short-circuit here: every downstream agency_id/entity_id
+    # comparison below is `== NA`, and R's `df[logical_with_NA, ]` indexing
+    # returns the WHOLE table back as all-NA rows (not zero rows) rather than
+    # erroring, so without this guard the team table renders as a wall of NA
+    # placeholder rows instead of nothing.
+    return(db$access_user_agency_access[0, , drop = FALSE])
+  }
   agency_id <- plan_accounting_agency_id(db, plan)
   if (!is.null(plan) && nrow(plan) && !is.na(plan$entity_id[[1]])) {
     if (!"access_user_entity_access" %in% names(db)) {
@@ -3130,6 +3292,35 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
   unique(c(goal_measure_ids, service_measure_ids))
 }
 
+# Measures selected as this plan's goal KPIs or service metrics that are
+# missing either the most recently completed fiscal year's actual (e.g.
+# FY26 actual while FY27 is executing) or the upcoming budget year's
+# target (e.g. FY28). Both are required to publish the *plan* -- neither
+# is required to save or submit an individual measure for approval (see
+# validate_measure_submit_requirements()). Measures marked "New" this
+# cycle are exempt -- they weren't tracked yet, so there's nothing to report.
+plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services) {
+  empty <- db$performance_performance_measure[0, , drop = FALSE]
+  if (is.null(plan) || !nrow(plan)) return(empty)
+  selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
+  if (!length(selected_measure_ids)) return(empty)
+  measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
+  change_mapping <- ifelse(is.na(measures$change_mapping), "", measures$change_mapping)
+  measures <- measures[change_mapping != "New", , drop = FALSE]
+  if (!nrow(measures)) return(measures)
+  actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  next_target_fy <- current_fiscal_year() + 1L
+  actuals <- db$performance_measure_actuals
+  nonblank <- function(x) !is.na(x) & nzchar(trimws(x))
+  reported_actual_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == actual_fy & !is.na(actuals$annual_actual) & nonblank(actuals$annual_actual_notes)
+  ])
+  reported_target_ids <- unique(actuals$measure_id[
+    actuals$fiscal_year == next_target_fy & !is.na(actuals$target_value) & nonblank(actuals$target_value_notes)
+  ])
+  measures[!(measures$measure_id %in% reported_actual_ids & measures$measure_id %in% reported_target_ids), , drop = FALSE]
+}
+
 plan_readiness_summary <- function(db, submitter_value, plan) {
   if (is.null(plan) || !nrow(plan)) return(list(rows = list(), has_errors = TRUE))
   services <- plan_service_rows(db, plan)
@@ -3190,13 +3381,30 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
     more_services <- if (length(missing_service_names) > 3) paste("and", length(missing_service_names) - 3, "more") else ""
     paste("Missing metrics:", listed_services, more_services)
   }
-  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures)
+  recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+  next_target_fy <- current_fiscal_year() + 1L
+  missing_fiscal_data <- plan_measures_missing_required_fiscal_data(db, plan, goals, services)
+  measures_complete <- length(selected_measure_ids) > 0 && !nrow(invalid_selected_measures) && !nrow(missing_fiscal_data)
+  measures_missing_notes <- c(
+    if (!length(selected_measure_ids)) "at least one plan measure",
+    if (nrow(invalid_selected_measures)) {
+      paste0(
+        "validation for ", paste(head(invalid_selected_measures$title, 3), collapse = ", "),
+        if (nrow(invalid_selected_measures) > 3) paste0(" and ", nrow(invalid_selected_measures) - 3, " more") else ""
+      )
+    },
+    if (nrow(missing_fiscal_data)) {
+      paste0(
+        fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+        paste(head(missing_fiscal_data$title, 3), collapse = ", "),
+        if (nrow(missing_fiscal_data) > 3) paste0(" and ", nrow(missing_fiscal_data) - 3, " more") else ""
+      )
+    }
+  )
   measures_detail <- if (measures_complete) {
-    paste("All", length(selected_measure_ids), "plan measures validated")
-  } else if (!length(selected_measure_ids)) {
-    "Missing: at least one plan measure"
+    paste("All", length(selected_measure_ids), "plan measures validated and reporting", fy_label(recent_actual_fy), "actual and", fy_label(next_target_fy), "target")
   } else {
-    paste("Missing validation:", paste(head(invalid_selected_measures$title, 3), collapse = ", "), if (nrow(invalid_selected_measures) > 3) paste("and", nrow(invalid_selected_measures) - 3, "more") else "")
+    paste("Missing:", paste(measures_missing_notes, collapse = "; "))
   }
   risks_complete <- nrow(risks) > 0
   rows <- list(
@@ -3253,6 +3461,45 @@ agency_choices_only <- function(db) {
   choices[startsWith(unname(choices), "agency:")]
 }
 
+resolve_owning_agency_id <- function(db, value) {
+  submitter <- parse_submitter_value(value)
+  if (identical(submitter$type, "entity")) {
+    entity <- db$reference_plan_entity[db$reference_plan_entity$entity_id == submitter$id, , drop = FALSE]
+    if (nrow(entity)) return(entity$parent_agency_id[[1]])
+    return(NA_character_)
+  }
+  submitter$id
+}
+
+# A brand-new measure created via the owning-entity picker (measure_modal_ui's
+# show_owning_entity_picker) must have its measure_entity_link scoped to
+# whichever entity the picker selected, not to whatever plan the current user
+# happens to be viewing -- e.g. a SystemAdmin looking at Mayoralty's own plan
+# who picks "OPI" as the owner must link the new measure to OPI, not to
+# Mayoralty. This applies even when OPI is left at its default selection --
+# OPI is meant to administratively hold measures with no other single clear
+# owner, so those should still link (and surface) specifically under OPI,
+# not sit unlinked at the bare Mayoralty agency level. Editing an existing
+# measure (no picker involved) keeps the prior current-submitter behavior.
+resolve_link_submitter_value <- function(existing_measure_id, owning_picker_value, current_submitter_value) {
+  is_new <- is.null(existing_measure_id) || identical(existing_measure_id, "new")
+  picker_usable <- !is.null(owning_picker_value) && length(owning_picker_value) == 1 && nzchar(owning_picker_value)
+  if (is_new && picker_usable) return(owning_picker_value)
+  current_submitter_value
+}
+
+# Default selection for the new-measure owning-agency picker: OPI when it's
+# in the choice list (it resolves to Mayoralty's agency_id, AGC4301, via
+# resolve_owning_agency_id()), else the Mayor's Office agency choice itself,
+# else just the first available choice.
+default_owning_measure_choice <- function(choices) {
+  opi_match <- unname(choices[names(choices) == "Mayor's Office of Performance and Innovation"])
+  if (length(opi_match)) return(opi_match[[1]])
+  if ("agency:AGC4301" %in% choices) return("agency:AGC4301")
+  if (length(choices)) return(unname(choices[[1]]))
+  "agency:AGC4301"
+}
+
 user_submitter_choices <- function(db, user_id) {
   valid_choices <- agency_selector_choices(db)
   valid_values <- unname(valid_choices)
@@ -3283,6 +3530,21 @@ user_submitter_choices <- function(db, user_id) {
   if (nrow(role_rows)) {
     role_agency_ids <- unique(role_rows$agency_id[!is.na(role_rows$agency_id)])
     values <- c(values, paste0("agency:", role_agency_ids))
+  }
+
+  if ("access_user_entity_access" %in% names(db) && "reference_plan_entity" %in% names(db)) {
+    entity_access_rows <- db$access_user_entity_access[as.character(db$access_user_entity_access$user_id) == user_id, , drop = FALSE]
+    if (nrow(entity_access_rows)) {
+      entity_ids <- unique(entity_access_rows$entity_id[!is.na(entity_access_rows$entity_id)])
+      entities <- db$reference_plan_entity[
+        db$reference_plan_entity$entity_id %in% entity_ids &
+          db$reference_plan_entity$active &
+          db$reference_plan_entity$has_own_plan,
+        ,
+        drop = FALSE
+      ]
+      values <- c(values, paste0("entity:", entities$entity_id))
+    }
   }
 
   assignments <- entity_role_assignment_rows(db)
@@ -3318,6 +3580,27 @@ user_submitter_choices <- function(db, user_id) {
     }
   }
 
+  # Some agencies (e.g. BCIT) have an agency-scoped plan (agency_id set,
+  # entity_id NULL) that is ALSO represented by a same-named "Agency"-type
+  # plan_entity row, and access can be granted through either form. Only the
+  # agency form appears in valid_values (agency_selector_choices() only lists
+  # "entity:" for plans whose own row has entity_id set), so an entity-form
+  # value for one of these dual-registered agencies would otherwise get
+  # silently dropped by the validity filter below even though it points at a
+  # real, valid plan. Canonicalize it back to the agency form first.
+  values <- vapply(values, function(value) {
+    if (startsWith(value, "entity:") && !value %in% valid_values) {
+      entity_id <- suppressWarnings(as.integer(sub("^entity:", "", value)))
+      if (!is.na(entity_id)) {
+        entity_row <- db$reference_plan_entity[db$reference_plan_entity$entity_id == entity_id, , drop = FALSE]
+        if (nrow(entity_row) && !is.na(entity_row$parent_agency_id[[1]])) {
+          canonical <- paste0("agency:", entity_row$parent_agency_id[[1]])
+          if (canonical %in% valid_values) return(canonical)
+        }
+      }
+    }
+    value
+  }, character(1))
   values <- unique(values[nzchar(values) & values %in% valid_values])
   valid_choices[valid_values %in% values]
 }
@@ -3335,7 +3618,7 @@ section_draft_payload <- function(db, plan_id, section_key) {
     drop = FALSE
   ]
   if (!nrow(drafts)) return(NULL)
-  payload <- tryCatch(jsonlite::fromJSON(drafts$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
+  payload <- parse_stored_draft_payload(drafts$payload[[1]], context = paste0("plan_id=", plan_id, " section_key=", section_key))
   if (is.null(payload) || !is.list(payload)) return(NULL)
   payload
 }
@@ -3448,30 +3731,6 @@ metric_export_summary <- function(db, measure_ids, current_fy = 2027) {
       targets = targets
     )
   })
-}
-
-agency_director_contact <- function(db, plan) {
-  agency_id <- plan_accounting_agency_id(db, plan)
-  access_rows <- db$access_user_agency_access[db$access_user_agency_access$agency_id == agency_id, , drop = FALSE]
-  director_mask <- if (nrow(access_rows)) {
-    vapply(seq_len(nrow(access_rows)), function(i) {
-      roles <- split_stored_roles(if ("agency_roles" %in% names(access_rows)) access_rows$agency_roles[[i]] else access_rows$agency_role[[i]])
-      any(roles %in% c("Agency Director", "Agency Head"))
-    }, logical(1))
-  } else {
-    logical(0)
-  }
-  director_rows <- access_rows[director_mask, , drop = FALSE]
-  if (nrow(director_rows)) return(director_rows$full_name[[1]])
-  approver_rows <- db$access_user_role[
-    db$access_user_role$agency_id == agency_id & db$access_user_role$app_role == "AgencyApprover",
-    ,
-    drop = FALSE
-  ]
-  if (nrow(approver_rows)) return(approver_rows$full_name[[1]])
-  header <- db$performance_plan_header[db$performance_plan_header$plan_id == plan$plan_id[[1]], , drop = FALSE]
-  if (nrow(header) && !is.na(header$primary_contact_name[[1]]) && nzchar(trimws(header$primary_contact_name[[1]]))) return(header$primary_contact_name[[1]])
-  "Director-level contact not assigned"
 }
 
 score_out_of_100 <- function(score) {
@@ -4110,12 +4369,15 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     agency_name = plan_display_name(db, plan),
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
-    agency_contact = agency_director_contact(db, plan),
+    submitter = plan_submitter_label(db, plan),
+    fiscal_analyst = plan_fiscal_analyst_label(db, plan),
+    performance_analyst = plan_reviewer_label(db, plan),
+    deputy_mayor = plan_deputy_mayor_label(db, plan),
+    ca_office = plan_ca_office_label(db, plan),
     overview = if (nrow(overview) || !is.null(overview_draft)) list(overview = overview_text, vision = vision_text, web_address = web_address) else list(),
     overview_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("plan_overview"), "plan", NA_integer_) else list(),
     include_review = isTRUE(include_review),
     review = if (isTRUE(include_review)) list(
-      reviewer = plan_reviewer_label(db, plan),
       score = if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored",
       notes = as.list(review_notes_summary(review_bits))
     ) else list(),
@@ -4203,6 +4465,14 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
         )
       ),
       div(class = "history-plan-updated", span(updated_label), strong(as.character(updated_value)))
+    ),
+    div(
+      class = "history-modal-contact-stack history-card-contacts",
+      p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Fiscal Analyst: "), plan_fiscal_analyst_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
+      p(class = "history-modal-contact", tags$strong("CA Office Approver: "), plan_ca_office_label(db, plan))
     ),
     div(
       class = "history-review-box",
@@ -4518,11 +4788,10 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
           div(class = "chip-row", status_chip(agency_plan_status(plan$plan_status[[1]]), status_tone(plan$plan_status[[1]])), status_chip(paste("Version", plan$version[[1]]), "primary")),
           div(
             class = "history-modal-contact-stack",
-            p(class = "history-modal-contact", tags$strong("Plan contact: "), agency_director_contact(db, plan)),
             p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("Reviewer: "), plan_reviewer_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("Deputy Mayor / portfolio: "), plan_deputy_mayor_label(db, plan)),
-            p(class = "history-modal-contact", tags$strong("CA Office approver: "), plan_ca_office_label(db, plan))
+            p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
+            p(class = "history-modal-contact", tags$strong("CA Office Approver: "), plan_ca_office_label(db, plan))
           )
         ),
         if (isTRUE(full_page)) actionButton("back_to_review_queue", label = tagList(icon("arrow-left"), "Back to queue"), class = "civic-button secondary small")
@@ -4744,16 +5013,40 @@ measure_label <- function(text, help, required = FALSE) {
   )
 }
 
-measure_note_input <- function(input_id, label, value = "") {
+# Recursively adds a disabled attribute to the actual <input>/<textarea>/
+# <select> nested inside a Shiny widget's tag (Shiny's textInput() etc.
+# don't take a disabled argument directly, and disabling the outer
+# wrapper div wouldn't do anything). Used to lock definition fields on a
+# validated measure without duplicating each field's whole render block
+# into an editable/read-only branch.
+disable_input_tag <- function(tag, disabled = TRUE) {
+  if (!isTRUE(disabled)) return(tag)
+  walk <- function(node) {
+    if (inherits(node, "shiny.tag")) {
+      if (node$name %in% c("input", "textarea", "select")) {
+        node$attribs$disabled <- "disabled"
+      }
+      if (length(node$children)) node$children <- lapply(node$children, walk)
+      return(node)
+    }
+    if (is.list(node)) return(lapply(node, walk))
+    node
+  }
+  walk(tag)
+}
+
+measure_note_input <- function(input_id, label, value = "", locked = FALSE) {
   note_value <- if (is.null(value) || length(value) == 0 || is.na(value)) "" else as.character(value)
+  textarea_attrs <- list(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
+  if (locked) textarea_attrs$disabled <- "disabled"
   div(
-    class = "form-group shiny-input-container",
+    class = paste("form-group shiny-input-container", if (locked) "measure-note-locked"),
     tags$label(class = "control-label", `for` = input_id, label),
-    tags$textarea(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
+    do.call(tags$textarea, textarea_attrs)
   )
 }
 
-measure_value_input <- function(input_id, label, value = NA, format_type = "Count") {
+measure_value_input <- function(input_id, label, value = NA, format_type = "Count", locked = FALSE) {
   format_class <- paste0("format-", tolower(format_type))
   input_value <- if (is.null(value) || length(value) == 0 || is.na(value)) NULL else as.character(value)
   input_attrs <- list(
@@ -4769,8 +5062,9 @@ measure_value_input <- function(input_id, label, value = NA, format_type = "Coun
     input_attrs$min <- "0"
     input_attrs$max <- "100"
   }
+  if (locked) input_attrs$disabled <- "disabled"
   div(
-    class = paste("measure-number-field", format_class),
+    class = paste("measure-number-field", format_class, if (locked) "measure-value-locked"),
     div(
       class = "form-group shiny-input-container",
       tags$label(class = "control-label", `for` = input_id, label),
@@ -4803,7 +5097,7 @@ display_unit_choices <- function(db, selected_unit = "") {
   c("No unit" = "", stats::setNames(units, units))
 }
 
-measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE) {
+measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = FALSE, target_fy = 2027, can_edit_form = TRUE, can_delete_measure = FALSE, can_edit_locked_data = FALSE, default_is_city = FALSE, show_owning_entity_picker = FALSE) {
   measure <- if (is.null(measure_id)) data.frame() else db$performance_performance_measure[db$performance_performance_measure$measure_id == measure_id, , drop = FALSE]
   is_new <- nrow(measure) == 0
   value <- function(name, default = "") {
@@ -4817,6 +5111,17 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   pillar_choices <- c("Not linked" = "", setNames(db$reference_pillar$pillar_id, db$reference_pillar$pillar_name))
   pillar_goal_choices <- c("Not linked" = "", setNames(db$reference_pillar_goal$pillar_goal_id, paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)))
   status <- value("approval_status", "Draft")
+  # Once a measure is Validated, everything about it locks to SystemAdmin
+  # only, except the current fiscal year's actual (still being actively
+  # reported) and the following fiscal year's target (still being
+  # actively planned) -- see measure_actual_is_locked()/
+  # measure_target_is_locked()/measure_definition_is_locked() in
+  # R/database.R for the shared, date-driven rule, enforced again
+  # server-side in collect_measure_form()/collect_measure_years() and
+  # save_measure_record() regardless of what this UI renders.
+  is_measure_validated <- identical(status, "Validated")
+  definition_locked <- measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data
+  effective_can_edit_scope <- can_edit_scope && !definition_locked
   status_meta <- if (is_new) list(label = "Draft", tone = "warning") else measure_library_status(measure)
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
   format_choices <- if (identical(selected_format, "N/A")) c("N/A (legacy)" = "N/A", "Percent" = "Percent", "Count" = "Count", "Currency" = "Currency") else c("Percent", "Count", "Currency")
@@ -4828,7 +5133,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   selected_pillar_goal <- db$reference_pillar_goal[db$reference_pillar_goal$pillar_goal_id == selected_pillar_goal_id, , drop = FALSE]
   pillar_label <- if (nrow(selected_pillar)) selected_pillar$pillar_name[[1]] else "Not linked"
   pillar_goal_label <- if (nrow(selected_pillar_goal)) paste(selected_pillar_goal$goal_code[[1]], selected_pillar_goal$goal_title[[1]]) else "Not linked"
-  scope_city <- isTRUE(value("is_city", FALSE))
+  scope_city <- isTRUE(value("is_city", default_is_city))
   scope_agency <- isTRUE(value("is_agency", FALSE))
   scope_service <- if (is_new) TRUE else isTRUE(value("is_service", FALSE))
   scope_label <- paste(
@@ -4858,6 +5163,16 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-form-stack",
         div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
+        if (definition_locked) {
+          div(
+            class = "measure-validated-lock-note",
+            icon("lock"),
+            paste0(
+              "This measure is validated and locked to system admins, except the ",
+              fy_label(current_fiscal_year()), " actual and the ", fy_label(current_fiscal_year() + 1L), " target."
+            )
+          )
+        },
         if (nrow(latest_review) && nzchar(trimws(latest_review$feedback[[1]] %||% ""))) {
           tags$section(
             class = "modal-section-block measure-review-feedback",
@@ -4875,14 +5190,27 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Definition"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title"))),
-            div(class = "measure-field full-width", textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description"))),
-            div(class = "measure-field", selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_direction", measure_label("Desired direction", "Select whether successful performance should increase, decrease, maintain, or not apply to this value.", TRUE), choices = c("Increase", "Decrease", "Maintain", "Not Applicable"), selected = value("desired_direction", "Increase"), selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_format", measure_label("Format", "Select how this value should be displayed. New measures use Percent, Count, or Currency; N/A is preserved for legacy measures.", TRUE), choices = format_choices, selected = selected_format, selectize = FALSE)),
-            div(class = "measure-field", selectInput("measure_unit", measure_label("Display unit", "Optional label for the unit shown with the value, such as residents, permits, or dollars."), choices = display_unit_choices(db, selected_display_unit), selected = selected_display_unit, selectize = FALSE)),
-            div(class = "measure-field", numericInput("measure_baseline", measure_label("Baseline value", "Enter the starting value used to compare future progress."), value = value("baseline_value", NA))),
-            div(class = "measure-field", numericInput("measure_baseline_fy", measure_label("Baseline fiscal year", "Enter the fiscal year for the baseline value."), value = value("baseline_fy", 2026), min = 2000, max = 2100))
+            if (is_new && show_owning_entity_picker) {
+              owning_choices <- agency_selector_choices(db)
+              div(
+                class = "measure-field full-width",
+                selectInput(
+                  "measure_owning_entity",
+                  measure_label("Owning agency", "Griffin files this measure under whichever agency or entity owns it. If there's no clear single owner, leave this set to Mayor's Office (Office of Performance and Innovation).", TRUE),
+                  choices = owning_choices,
+                  selected = default_owning_measure_choice(owning_choices),
+                  selectize = FALSE
+                )
+              )
+            },
+            div(class = "measure-field full-width", disable_input_tag(textInput("measure_title", measure_label("Measure name", "Use a concise name that clearly identifies the outcome, output, efficiency, or effectiveness being tracked.", TRUE), value = value("title")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_description", measure_label("Definition", "Define exactly what is being measured so a reviewer can understand the measure without additional context.", TRUE), rows = 3, value = value("description")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_type", measure_label("Measure type", "Classify the measure as output, efficiency, effectiveness, or outcome based on what it tells reviewers about performance.", TRUE), choices = c("Output", "Efficiency", "Effectiveness", "Outcome"), selected = value("measure_type", "Outcome"), selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_direction", measure_label("Desired direction", "Select whether successful performance should increase, decrease, maintain, or not apply to this value.", TRUE), choices = c("Increase", "Decrease", "Maintain", "Not Applicable"), selected = value("desired_direction", "Increase"), selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_format", measure_label("Format", "Select how this value should be displayed. New measures use Percent, Count, or Currency; N/A is preserved for legacy measures.", TRUE), choices = format_choices, selected = selected_format, selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(selectInput("measure_unit", measure_label("Display unit", "Optional label for the unit shown with the value, such as residents, permits, or dollars."), choices = display_unit_choices(db, selected_display_unit), selected = selected_display_unit, selectize = FALSE), definition_locked)),
+            div(class = "measure-field", disable_input_tag(numericInput("measure_baseline", measure_label("Baseline value", "Enter the starting value used to compare future progress."), value = value("baseline_value", NA)), definition_locked)),
+            div(class = "measure-field", disable_input_tag(numericInput("measure_baseline_fy", measure_label("Baseline fiscal year", "Enter the fiscal year for the baseline value."), value = value("baseline_fy", 2026), min = 2000, max = 2100), definition_locked))
           )
         ),
         tags$section(
@@ -4890,13 +5218,13 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Data Source & Ownership"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textInput("measure_data_source", measure_label("Data source", "Name the system, report, dataset, or official source used to produce this measure.", TRUE), value = value("data_source"))),
-            div(class = "measure-field", textInput("measure_data_owner", measure_label("Data owner", "Name the person or team responsible for the source data.", TRUE), value = value("data_owner"))),
-            div(class = "measure-field", textInput("measure_data_owner_role", measure_label("Data owner role", "Identify the title or role accountable for maintaining and validating the data.", TRUE), value = value("data_owner_role"))),
-            div(class = "measure-field", textInput("measure_frequency", measure_label("Update frequency", "State how often the measure can be updated, such as monthly, quarterly, annually, or daily.", TRUE), value = value("update_frequency"))),
-            div(class = "measure-field", textInput("measure_data_location", measure_label("Data location", "Describe where the underlying data lives, such as a database, spreadsheet, system export, or public report.", TRUE), value = value("data_location"))),
-            div(class = "measure-field full-width", textAreaInput("measure_formula", measure_label("Formula or calculation", "Document the calculation clearly enough that another reviewer could reproduce the result.", TRUE), rows = 2, value = value("formula"))),
-            div(class = "measure-field full-width", textAreaInput("measure_collection_method", measure_label("Collection method", "Describe how the data is collected, compiled, refreshed, or quality checked.", TRUE), rows = 2, value = value("collection_method")))
+            div(class = "measure-field full-width", disable_input_tag(textInput("measure_data_source", measure_label("Data source", "Name the system, report, dataset, or official source used to produce this measure.", TRUE), value = value("data_source")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_owner", measure_label("Data owner", "Name the person or team responsible for the source data.", TRUE), value = value("data_owner")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_owner_role", measure_label("Data owner role", "Identify the title or role accountable for maintaining and validating the data.", TRUE), value = value("data_owner_role")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_frequency", measure_label("Update frequency", "State how often the measure can be updated, such as monthly, quarterly, annually, or daily.", TRUE), value = value("update_frequency")), definition_locked)),
+            div(class = "measure-field", disable_input_tag(textInput("measure_data_location", measure_label("Data location", "Describe where the underlying data lives, such as a database, spreadsheet, system export, or public report.", TRUE), value = value("data_location")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_formula", measure_label("Formula or calculation", "Document the calculation clearly enough that another reviewer could reproduce the result.", TRUE), rows = 2, value = value("formula")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_collection_method", measure_label("Collection method", "Describe how the data is collected, compiled, refreshed, or quality checked.", TRUE), rows = 2, value = value("collection_method")), definition_locked))
           )
         ),
         tags$section(
@@ -4904,18 +5232,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           h3("Validation Criteria"),
           div(
             class = "measure-form-grid",
-            div(class = "measure-field full-width", textAreaInput("measure_context", measure_label("Context required for interpretation", "Note caveats, comparison limits, seasonality, policy changes, or other context needed to interpret the value responsibly."), rows = 2, value = value("context_required"))),
-            if (can_edit_scope) {
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_context", measure_label("Context required for interpretation", "Note caveats, comparison limits, seasonality, policy changes, or other context needed to interpret the value responsibly."), rows = 2, value = value("context_required")), definition_locked)),
+            if (effective_can_edit_scope) {
               div(class = "measure-field checkbox-field", checkboxInput("measure_replicability", "Calculation is replicable", value = isTRUE(value("replicability", FALSE))), p(class = "field-inline-help", "Reviewer/admin field: a reviewer should be able to recreate the value from the formula and source data."))
             } else {
-              div(class = "measure-scope-options scope-derived", div(class = "scope-derived-grid", span("Calculation is replicable"), strong(if (isTRUE(value("replicability", FALSE))) "Yes" else "Not yet validated")), p(class = "scope-admin-note", "This validation field is completed by OPI reviewers or system admins."))
+              div(class = "measure-scope-options scope-derived", div(class = "scope-derived-grid", span("Calculation is replicable"), strong(if (isTRUE(value("replicability", FALSE))) "Yes" else "Not yet validated")), p(class = "scope-admin-note", if (definition_locked) "This measure is validated -- only a system admin can change this now." else "This validation field is completed by OPI reviewers or system admins."))
             },
-            div(class = "measure-field", textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation"))),
-            div(class = "measure-field full-width", textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used"))),
-            div(class = "measure-field full-width", textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful"))),
-            div(class = "measure-field full-width", textAreaInput("measure_proxy", measure_label("Proxy measure or limitations", "Describe whether this is a proxy for a harder-to-measure outcome and name important limitations."), rows = 2, value = value("proxy_measure"))),
-            div(class = "measure-field full-width", textAreaInput("measure_improvement_notes", measure_label("Improvement notes", "Identify needed improvements to data quality, frequency, definition, validation, or reporting."), rows = 2, value = value("improvement_notes"))),
-            if (can_edit_scope) {
+            div(class = "measure-field", disable_input_tag(textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_proxy", measure_label("Proxy measure or limitations", "Describe whether this is a proxy for a harder-to-measure outcome and name important limitations."), rows = 2, value = value("proxy_measure")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_improvement_notes", measure_label("Improvement notes", "Identify needed improvements to data quality, frequency, definition, validation, or reporting."), rows = 2, value = value("improvement_notes")), definition_locked)),
+            if (effective_can_edit_scope) {
               tagList(
                 div(class = "measure-field", selectInput("measure_pillar", measure_label("Action Plan pillar", "Only system admins will be able to designate citywide metrics and match them to an Action Plan pillar."), choices = pillar_choices, selected = as.character(value("pillar_id")), selectize = FALSE)),
                 div(class = "measure-field full-width", selectInput("measure_pillar_goal", measure_label("Action Plan pillar goal", "Only system admins will be able to designate citywide metrics and match them to an Action Plan goal."), choices = pillar_goal_choices, selected = as.character(value("pillar_goal_id")), selectize = FALSE))
@@ -4927,10 +5255,10 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
                 tags$input(id = "measure_pillar_goal", type = "hidden", value = if (is.na(selected_pillar_goal_id)) "" else selected_pillar_goal_id),
                 div(class = "scope-derived-grid", span("Action Plan pillar"), strong(pillar_label)),
                 div(class = "scope-derived-grid", span("Action Plan goal"), strong(pillar_goal_label)),
-                p(class = "scope-admin-note", "Action Plan metric alignment is system-admin managed.")
+                p(class = "scope-admin-note", if (definition_locked) "This measure is validated -- only a system admin can change this now." else "Action Plan metric alignment is system-admin managed.")
               )
             },
-            if (can_edit_scope) {
+            if (effective_can_edit_scope) {
               div(
                 class = "measure-scope-options full-width",
                 checkboxInput("measure_is_city", "Citywide measure", value = scope_city),
@@ -4954,16 +5282,49 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           class = "modal-section-block measure-form-section",
           h3("Fiscal Year Actuals & Targets"),
           p("Enter annual actuals and targets. Notes should explain revisions, data quality issues, or target rationale."),
+          if (is_measure_validated && !can_edit_locked_data) {
+            p(
+              class = "field-inline-help",
+              paste0(
+                "This measure is validated: only the ", fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
+                " actuals and the ", fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
+              )
+            )
+          },
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
+              actual_locked <- measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
+              target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
+              is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
+              is_next_target_year <- year == target_fy
               div(
                 class = "measure-year-row",
                 h4(fy_label(year)),
-                measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format),
-                measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Optional note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes")),
-                measure_value_input(paste0("measure_target_", year), measure_label(if (year == target_fy) "Next Fiscal Year Target" else "Target", "Enter the target value for this fiscal year.", year == target_fy), annual_value(year, "target_value", NA), selected_format),
-                measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Optional note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"))
+                div(
+                  class = if (is_recent_actual_year) "measure-year-highlight",
+                  measure_value_input(paste0("measure_actual_", year), measure_label("Actual", "Enter the reported annual value for this fiscal year."), annual_value(year, "annual_actual", NA), selected_format, locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
+                  if (actual_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
+                ),
+                div(
+                  class = if (is_recent_actual_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_actual_notes_", year), measure_label("Actual notes", "Note on data quality, revisions, unusual events, or interpretation. Maximum 200 characters."), annual_value(year, "annual_actual_notes"), locked = actual_locked),
+                  if (is_recent_actual_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                ),
+                div(
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_value_input(paste0("measure_target_", year), measure_label("Target", "Enter the target value for this fiscal year."), annual_value(year, "target_value", NA), selected_format, locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure."),
+                  if (target_admin_override) p(class = "field-inline-help measure-locked-admin-note", "Locked field -- add a note if you change this value.")
+                ),
+                div(
+                  class = if (is_next_target_year) "measure-year-highlight",
+                  measure_note_input(paste0("measure_target_notes_", year), measure_label("Target notes", "Note explaining target rationale, assumptions, or revisions. Maximum 200 characters."), annual_value(year, "target_value_notes"), locked = target_locked),
+                  if (is_next_target_year) p(class = "field-inline-help", "Required to publish the plan -- not required to save or submit this measure.")
+                )
               )
             })
           )
@@ -4978,7 +5339,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", "Submit for approval currently marks this measure pending. The system admin review panel will be added in a later workflow step."),
+          p(class = "approval-workflow-note", "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
           div(
             tags$button(id = "save_measure", type = "button", class = "civic-button secondary", "Save"),
             tags$button(id = "submit_measure", type = "button", class = "civic-button primary", "Submit for approval")
@@ -5066,6 +5427,74 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     section_key = "measures",
     show_save = FALSE,
     show_status = FALSE
+  )
+}
+
+# Every measure marked Citywide (is_city = TRUE), across every agency --
+# the admin view for the Action Plan Measures feature. Reuses the same
+# measure editor modal as the regular Measures page (data-measure-id /
+# data-new-measure, handled by the same client-side click handler and
+# open_measure_id observer) rather than a separate editor. Visible to the
+# whole Performance Reviewing group; the modal's own can_edit_scope check
+# still restricts who can actually mark a measure Citywide or change its
+# pillar to SystemAdmin/OPIReviewer.
+page_action_plan_measures <- function(db) {
+  measures <- db$city_measures
+  snapshot_years <- fiscal_measure_snapshot_years()
+  missing_pillar_count <- if (nrow(measures)) sum(is.na(measures$pillar_id)) else 0L
+  awaiting_data_count <- if (nrow(measures)) sum(is.na(measures$current_value) & is.na(measures$target_value)) else 0L
+  tagList(
+    div(
+      class = "briefing-header compact",
+      div(
+        div(class = "eyebrow", "Performance Reviewing"),
+        h1("Action Plan Measures"),
+        p("Every measure marked Citywide, across all agencies. Open a measure to update its data, targets, or Action Plan pillar alignment.")
+      )
+    ),
+    div(
+      class = "dashboard-grid reviewer-dashboard-grid",
+      metric_tile("Citywide measures", nrow(measures), "Marked is_city across all agencies"),
+      metric_tile("Missing a pillar", missing_pillar_count, "Won't appear on any pillar's Action Plan view until assigned", if (missing_pillar_count) "warning" else "success"),
+      metric_tile("Awaiting data", awaiting_data_count, paste0(fy_label(snapshot_years$actual_fy), " actual and ", fy_label(snapshot_years$target_fy), " target both blank"), if (awaiting_data_count) "warning" else "success")
+    ),
+    surface(
+      "Citywide Measures",
+      "When you add a Citywide measure, you'll pick its owning agency or entity directly in the form. Leave Mayor's Office selected for measures with no single clear owner (Office of Performance and Innovation).",
+      if (!nrow(measures)) {
+        div(class = "empty-state", h3("No measures are marked Citywide yet"), p("Open any measure and check \"Citywide measure\" (SystemAdmin/OPIReviewer only) to have it appear here."))
+      } else {
+        div(
+          class = "app-table measure-library-table action-plan-measures-table",
+          div(
+            class = "table-row table-head action-plan-measures-row",
+            span("Measure"),
+            span("Pillar"),
+            span("Owning agency"),
+            span(paste(fy_label(snapshot_years$actual_fy), "Actual /", fy_label(snapshot_years$target_fy), "Target")),
+            span("Status")
+          ),
+          lapply(seq_len(nrow(measures)), function(i) {
+            status_meta <- measure_library_status(measures[i, , drop = FALSE])
+            actual <- format_measure_value(measures$current_value[i], measures$format_type[i], measures$display_unit[i], "Not reported")
+            target <- format_measure_value(measures$target_value[i], measures$format_type[i], measures$display_unit[i], "Not set")
+            pillar_label <- if (is.na(measures$pillar_name[i])) "Not linked" else measures$pillar_name[i]
+            agency_label <- if (!is.na(measures$agency_public_name[i]) && nzchar(measures$agency_public_name[i])) measures$agency_public_name[i] else measures$agency_name[i]
+            tags$button(
+              type = "button",
+              class = "table-row action-plan-measures-row measure-library-row",
+              `data-measure-id` = measures$measure_id[i],
+              span(measures$title[i]),
+              span(class = if (is.na(measures$pillar_name[i])) "action-plan-measure-unlinked", pillar_label),
+              span(agency_label),
+              span(paste(actual, "/", target)),
+              status_chip(status_meta$label, status_meta$tone)
+            )
+          })
+        )
+      },
+      actions = tags$button(type = "button", class = "civic-button primary", `data-new-measure` = "true", `data-page` = "action_plan_measures", `data-default-city` = "true", icon("plus"), "Add a Citywide measure")
+    )
   )
 }
 
@@ -5165,9 +5594,10 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   pillar_goal_labels <- paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)
   alignment_choices <- c("Not aligned" = "", setNames(pillar_goal_codes, pillar_goal_labels))
   kpi_choices <- setNames(agency_measures$measure_id, agency_measures$title)
-  preview_years <- measure_preview_years(plan$fiscal_year[[1]] %||% 2027)
-  actual_years <- preview_years$actual_years
-  target_years <- preview_years$target_years
+  preview_years <- measure_preview_years()
+  preview_all_years <- c(preview_years$actual_years, preview_years$target_years)
+  recent_actual_fy <- preview_years$actual_years[length(preview_years$actual_years)]
+  upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
 
   goal_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4, class = NULL) {
     tags$tr(
@@ -5270,16 +5700,29 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
             }
             selected_measure <- if (nrow(measure_link) > 0) as.character(measure_link$measure_id) else character(0)
             initial_kpis <- if (length(selected_measure) > 0) selected_measure else ""
+            goal_kpi_select <- function(kpi_index, selected_value) {
+              selected_value <- as.character(selected_value %||% "")
+              select_id <- paste0("goal_kpi_", goal_id, "_", kpi_index)
+              tags$select(
+                id = select_id,
+                name = select_id,
+                class = "form-control goal-kpi-select",
+                tags$option(value = "", selected = if (!nzchar(selected_value)) "selected", "Select a performance measure"),
+                lapply(seq_along(kpi_choices), function(choice_index) {
+                  value <- as.character(kpi_choices[[choice_index]])
+                  label <- names(kpi_choices)[[choice_index]]
+                  tags$option(
+                    value = value,
+                    selected = if (identical(value, selected_value)) "selected",
+                    label
+                  )
+                })
+              )
+            }
             kpi_selector_rows <- lapply(seq_along(initial_kpis), function(kpi_index) {
               div(
                 class = "kpi-select-row",
-                selectInput(
-                  paste0("goal_kpi_", goal_id, "_", kpi_index),
-                  label = NULL,
-                  choices = c("Select a performance measure" = "", kpi_choices),
-                  selected = initial_kpis[kpi_index],
-                  selectize = FALSE
-                ),
+                goal_kpi_select(kpi_index, initial_kpis[kpi_index]),
                 if (kpi_index > 1) tags$button(type = "button", class = "kpi-remove-button", title = "Remove KPI", `aria-label` = "Remove KPI", icon("xmark"))
               )
             })
@@ -5287,18 +5730,21 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
             kpi_previews <- lapply(seq_len(nrow(agency_measures)), function(measure_index) {
               measure <- agency_measures[measure_index, , drop = FALSE]
               history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
-              actual_values <- vapply(actual_years, function(year) {
+              actual_values <- vapply(preview_all_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
-                if (nrow(row) == 0) "Not reported" else format_measure_value(row$annual_actual[1], measure$format_type[1], measure$display_unit[1])
+                value <- if (nrow(row)) row$annual_actual[[1]] else NA_real_
+                format_measure_value(value, measure$format_type[1], measure$display_unit[1])
               }, character(1))
-              target_values <- vapply(target_years, function(year) {
+              target_values <- vapply(preview_all_years, function(year) {
                 row <- history[history$fiscal_year == year, , drop = FALSE]
-                if (nrow(row) == 0) "Not set" else format_measure_value(row$target_value[1], measure$format_type[1], measure$display_unit[1], "Not set")
+                value <- if (nrow(row)) row$target_value[[1]] else NA_real_
+                format_measure_value(value, measure$format_type[1], measure$display_unit[1], "Not set")
               }, character(1))
 
               div(
                 class = paste("kpi-measure-preview", if (as.character(measure$measure_id) %in% selected_measure) "active" else ""),
                 `data-measure-id` = as.character(measure$measure_id),
+                title = "Click to review or edit this measure",
                 div(
                   class = "kpi-preview-header",
                   div(h4(measure$title)),
@@ -5313,16 +5759,17 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                   class = "kpi-history-wrap",
                   tags$table(
                     class = "kpi-history-table",
-                    tags$caption(class = "sr-only", paste(measure$title, "five-year actuals and targets")),
+                    tags$caption(class = "sr-only", paste(measure$title, "actuals and targets by fiscal year")),
                     tags$thead(tags$tr(
                       tags$th(scope = "col", "Series"),
-                      lapply(c(actual_years, target_years), function(year) tags$th(scope = "col", fy_label(year)))
+                      lapply(preview_all_years, function(year) tags$th(scope = "col", fy_label(year)))
                     )),
                     tags$tbody(
-                      tags$tr(tags$th(scope = "row", "Actual"), lapply(actual_values, tags$td), lapply(target_years, function(year) tags$td("-"))),
-                      tags$tr(tags$th(scope = "row", "Target"), lapply(actual_years, function(year) tags$td("-")), lapply(target_values, tags$td))
+                      tags$tr(tags$th(scope = "row", "Actual"), history_row_cells(actual_values, preview_all_years, recent_actual_fy)),
+                      tags$tr(tags$th(scope = "row", "Target"), history_row_cells(target_values, preview_all_years, upcoming_target_fy))
                     )
-                  )
+                  ),
+                  p(class = "kpi-history-click-hint", icon("arrow-up-right-from-square"), "Click to review or edit this measure")
                 )
               )
             })
@@ -5457,6 +5904,7 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   service_rows <- plan_service_rows(db, plan)
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
+  metric_choices <- setNames(measures$measure_id, measures$title)
   services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
   service_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4) {
     tags$tr(
@@ -5521,11 +5969,17 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
                 span(class = "status-chip tone-primary service-metric-count", if (service_is_admin) "Not scored" else paste(sum(nzchar(selected_metrics)), if (sum(nzchar(selected_metrics)) == 1) "Metric" else "Metrics"))
               )
             ),
-            uiOutput(
-              service_body_output_id(service_id),
-              container = div,
-              class = "goal-editor-body service-editor-body lazy-service-body",
-              `aria-hidden` = "true"
+            div(
+              class = "goal-editor-body service-editor-body",
+              `aria-hidden` = "true",
+              service_editor_body_ui(
+                db,
+                plan,
+                service_rows[i, , drop = FALSE],
+                measures = measures,
+                metric_choices = metric_choices,
+                locked = !plan_is_editable(plan) || !can_edit_plan
+              )
             )
           )
           })
@@ -5728,13 +6182,24 @@ cls_plan_service_choices <- function(db, plan) {
   if (is.null(services) || !nrow(services)) return(character(0))
   services <- services[!is.na(services$plan_service_id), , drop = FALSE]
   if (!nrow(services)) return(character(0))
-  stats::setNames(as.character(services$plan_service_id), services$service_name)
+  labels <- paste(services$service_id, services$service_name)
+  ord <- order(labels)
+  stats::setNames(as.character(services$plan_service_id[ord]), labels[ord])
 }
 
 cls_service_name <- function(db, service_id) {
   service_id <- as.character(service_id)
   row <- db$reference_service[db$reference_service$service_id == service_id, , drop = FALSE]
   if (nrow(row)) row$service_name[[1]] else service_id
+}
+
+# Services are shown with their Service ID everywhere in the CLS pages, since
+# budget staff work from the SRV codes as much as the names.
+cls_service_label <- function(db, service_id) {
+  service_id <- as.character(service_id)
+  if (length(service_id) != 1 || is.na(service_id) || !nzchar(service_id)) return("—")
+  name <- cls_service_name(db, service_id)
+  if (identical(name, service_id)) service_id else paste(service_id, name)
 }
 
 # Build the three CLS export tables as a named list of data frames — one per
@@ -5750,12 +6215,11 @@ cls_export_sheets <- function(db, plan) {
   if (nrow(reqs)) {
     summary_df <- data.frame(
       Request = as.character(reqs$request_name),
-      Service = vapply(reqs$service_id, function(s) cls_service_name(db, s), character(1)),
+      Service = vapply(reqs$service_id, function(s) cls_service_label(db, s), character(1)),
       Type = as.character(reqs$request_type),
       Amount = numv(reqs$request_amount),
       `One-time` = yesno(reqs$one_time),
-      Justified = as.character(reqs$justified),
-      Completed = yesno(reqs$completed),
+      Status = as.character(reqs$status),
       `Projected FY+2` = numv(reqs$amount_next_fy),
       `Projected FY+3` = numv(reqs$amount_2next_fy),
       Summary = as.character(reqs$overall_summary),
@@ -5764,7 +6228,7 @@ cls_export_sheets <- function(db, plan) {
   } else {
     summary_df <- data.frame(
       Request = character(0), Service = character(0), Type = character(0), Amount = numeric(0),
-      `One-time` = character(0), Justified = character(0), Completed = character(0),
+      `One-time` = character(0), Status = character(0),
       `Projected FY+2` = numeric(0), `Projected FY+3` = numeric(0), Summary = character(0),
       check.names = FALSE, stringsAsFactors = FALSE
     )
@@ -5775,13 +6239,14 @@ cls_export_sheets <- function(db, plan) {
   lines_df <- if (!is.null(line_rows) && nrow(line_rows)) {
     data.frame(
       Request = request_name_for(line_rows$cls_id),
-      `Object category` = as.character(line_rows$object_category),
+      Object = as.character(line_rows$object_category),
+      `Spend category` = as.character(line_rows$spend_category),
       Amount = numv(line_rows$amount),
       Justification = as.character(line_rows$justification),
       check.names = FALSE, stringsAsFactors = FALSE
     )
   } else {
-    data.frame(Request = character(0), `Object category` = character(0), Amount = numeric(0), Justification = character(0), check.names = FALSE, stringsAsFactors = FALSE)
+    data.frame(Request = character(0), Object = character(0), `Spend category` = character(0), Amount = numeric(0), Justification = character(0), check.names = FALSE, stringsAsFactors = FALSE)
   }
 
   positions <- db$budget_cls_request_position
@@ -5818,17 +6283,17 @@ cls_export_payload <- function(db, plan) {
       pr <- if (!is.null(positions) && nrow(positions)) positions[positions$cls_id == r$cls_id, , drop = FALSE] else data.frame()
       requests[[length(requests) + 1L]] <- list(
         name = as.character(r$request_name %||% ""),
-        service = cls_service_name(db, r$service_id),
+        service = cls_service_label(db, r$service_id),
         type = as.character(r$request_type %||% ""),
         amount = num(r$request_amount),
         one_time = isTRUE(r$one_time),
-        justified = as.character(r$justified %||% ""),
-        completed = isTRUE(r$completed),
+        status = as.character(r$status %||% ""),
         amount_next_fy = num(r$amount_next_fy),
         amount_2next_fy = num(r$amount_2next_fy),
         summary = as.character(r$overall_summary %||% ""),
         lines = if (nrow(lr)) lapply(seq_len(nrow(lr)), function(j) list(
           object_category = as.character(lr$object_category[j] %||% ""),
+          spend_category = as.character(lr$spend_category[j] %||% ""),
           amount = num(lr$amount[j]),
           justification = as.character(lr$justification[j] %||% "")
         )) else list(),
@@ -5870,12 +6335,47 @@ cls_format_km <- function(value) {
   else paste0(sign, "$", formatC(a, format = "f", digits = 1))
 }
 
+# A request is "complete" when the mandatory fields are filled in and the FY28
+# amount is fully described by its objects plus positions. Used for the red
+# indicator on the list page and the reminder on the request page.
+cls_request_is_complete <- function(db, row) {
+  filled <- function(x) { x <- as.character(x %||% ""); length(x) == 1 && !is.na(x) && nzchar(trimws(x)) }
+  if (!filled(row$request_name)) return(FALSE)
+  if (!filled(row$overall_summary)) return(FALSE)
+  amount <- suppressWarnings(as.numeric(row$request_amount))
+  if (length(amount) != 1 || is.na(amount) || amount <= 0) return(FALSE)
+  lines <- db$budget_cls_request_line
+  line_total <- if (!is.null(lines) && nrow(lines)) sum(suppressWarnings(as.numeric(lines$amount[lines$cls_id == row$cls_id[[1]]])), na.rm = TRUE) else 0
+  positions <- db$budget_cls_request_position
+  pos_total <- if (!is.null(positions) && nrow(positions)) sum(suppressWarnings(as.numeric(positions$estimated_salary[positions$cls_id == row$cls_id[[1]]])), na.rm = TRUE) else 0
+  abs(amount - (line_total + pos_total)) < 0.005
+}
+
+# Which required pieces a request is still missing. Used for the list-page
+# indicator and the banner wording.
+cls_request_gaps <- function(db, request_row) {
+  if (is.null(request_row) || !nrow(request_row)) return(character(0))
+  r <- request_row[1, , drop = FALSE]
+  gaps <- character(0)
+  if (!nzchar(trimws(as.character(r$request_name %||% "")))) gaps <- c(gaps, "request name")
+  if (!nzchar(trimws(as.character(r$request_type %||% "")))) gaps <- c(gaps, "request type")
+  if (!nzchar(trimws(as.character(r$overall_summary %||% "")))) gaps <- c(gaps, "summary")
+  amount <- suppressWarnings(as.numeric(r$request_amount))
+  if (length(amount) != 1 || is.na(amount) || amount <= 0) {
+    gaps <- c(gaps, "FY28 amount")
+  } else {
+    lines <- db$budget_cls_request_line
+    line_total <- if (!is.null(lines) && nrow(lines)) sum(suppressWarnings(as.numeric(lines$amount[lines$cls_id == r$cls_id[[1]]])), na.rm = TRUE) else 0
+    positions <- db$budget_cls_request_position
+    pos_total <- if (!is.null(positions) && nrow(positions)) sum(suppressWarnings(as.numeric(positions$estimated_salary[positions$cls_id == r$cls_id[[1]]])), na.rm = TRUE) else 0
+    if (abs(amount - (line_total + pos_total)) >= 0.005) gaps <- c(gaps, "a complete breakdown by object or positions")
+  }
+  gaps
+}
+
 cls_status_label <- function(row) {
   status <- as.character(row$status %||% "")
-  if (is.na(status) || !nzchar(status)) {
-    status <- if (isTRUE(row$completed)) "BBMR Review" else "In Progress"
-  }
-  status
+  if (length(status) != 1 || is.na(status) || !nzchar(status)) "In Progress" else status
 }
 
 cls_status_tone <- function(status) {
@@ -5891,6 +6391,18 @@ cls_status_tone <- function(status) {
   )
 }
 
+# The placeholder list plus anything agencies have created through the
+# "Create a spend category" field, so a new one is reusable straight away.
+cls_spend_category_options <- function(db) {
+  used <- character(0)
+  lines <- db$budget_cls_request_line
+  if (!is.null(lines) && nrow(lines)) {
+    used <- trimws(as.character(lines$spend_category))
+    used <- used[!is.na(used) & nzchar(used)]
+  }
+  sort(unique(c(cls_spend_category_choices, used)))
+}
+
 cls_submitter_name <- function(db, plan) {
   if (is.null(plan) || !nrow(plan) || is.na(plan$agency_id[[1]])) return("your Agency Submitter")
   ur <- db$access_user_role
@@ -5899,16 +6411,6 @@ cls_submitter_name <- function(db, plan) {
   if (!nrow(rows)) return("your Agency Submitter")
   users <- db$access_user[db$access_user$user_id == rows$user_id[[1]], , drop = FALSE]
   if (nrow(users) && nzchar(as.character(users$full_name[[1]] %||% ""))) users$full_name[[1]] else "your Agency Submitter"
-}
-
-cls_approver_name <- function(db, plan) {
-  if (is.null(plan) || !nrow(plan) || is.na(plan$agency_id[[1]])) return("your Agency Approver")
-  ur <- db$access_user_role
-  if (is.null(ur) || !nrow(ur)) return("your Agency Approver")
-  rows <- ur[!is.na(ur$app_role) & ur$app_role == "AgencyApprover" & !is.na(ur$agency_id) & ur$agency_id == plan$agency_id[[1]], , drop = FALSE]
-  if (!nrow(rows)) return("your Agency Approver")
-  users <- db$access_user[db$access_user$user_id == rows$user_id[[1]], , drop = FALSE]
-  if (nrow(users) && nzchar(as.character(users$full_name[[1]] %||% ""))) users$full_name[[1]] else "your Agency Approver"
 }
 
 page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
@@ -5955,20 +6457,34 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
         r <- requests[i, , drop = FALSE]
         amount_key <- suppressWarnings(as.numeric(r$request_amount))
         status <- cls_status_label(r)
+        gaps <- cls_request_gaps(db, r)
+        missing_tip <- if (length(gaps)) {
+          paste0("This request has missing information. Still needed: ", paste(gaps, collapse = ", "), ".")
+        } else NULL
         div(
-          class = "table-row cls-request-row",
+          class = paste("table-row cls-request-row", if (length(gaps)) "cls-request-row-missing" else ""),
           `data-sort-name` = tolower(as.character(r$request_name %||% "")),
-          `data-sort-service` = tolower(cls_service_name(db, r$service_id)),
+          `data-sort-service` = tolower(cls_service_label(db, r$service_id)),
           `data-sort-amount` = if (is.na(amount_key)) "" else as.character(amount_key),
           `data-sort-status` = tolower(status),
-          span(class = "cls-request-name", r$request_name),
-          span(cls_service_name(db, r$service_id)),
+          span(
+            class = "cls-request-name",
+            span(r$request_name),
+            if (length(gaps)) tags$span(
+              class = "cls-missing-flag",
+              title = missing_tip,
+              `aria-label` = missing_tip,
+              tabindex = "0",
+              icon("circle-exclamation"), "Missing info"
+            )
+          ),
+          span(cls_service_label(db, r$service_id)),
           span(class = "cls-request-amount", cls_format_km(r$request_amount)),
           span(status_chip(status, cls_status_tone(status))),
           div(
             class = "cls-request-actions",
-            # Per-request hand-off: writers submit a draft to their approver; approvers
-            # send an individual request on to BBMR.
+            # Per-request hand-off: writers submit a draft to their submitter;
+            # submitters send an individual request on to BBMR.
             if (can_approve_cls(app_roles) && status %in% c("In Progress", "Agency Review")) {
               tags$button(type = "button", class = "civic-button submit-agency small",
                 `data-cls-send-bbmr` = r$cls_id, `data-cls-name` = r$request_name,
@@ -5993,7 +6509,7 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
     "CLS requests will be summarized by initiative/project rather than broken out by individual spend category.",
     "For each request you will provide the total amount and then break out the request by expenditure object.",
     "Feel free to work collaboratively across the agency to complete these submissions.",
-    "Only items approved by Agency Approvers will be reviewed."
+    "Only items approved by Agency Submitters will be reviewed."
   )
 
   surface(
@@ -6024,19 +6540,19 @@ cls_review_rows <- function(db) {
     cls_id = reqs$cls_id,
     agency = vapply(reqs$plan_id, agency_for, character(1)),
     request_name = as.character(reqs$request_name),
-    service = vapply(reqs$service_id, function(s) cls_service_name(db, s), character(1)),
+    service = vapply(reqs$service_id, function(s) cls_service_label(db, s), character(1)),
     request_type = ifelse(is.na(reqs$request_type), "", as.character(reqs$request_type)),
     request_amount = suppressWarnings(as.numeric(reqs$request_amount)),
     amount_next_fy = suppressWarnings(as.numeric(reqs$amount_next_fy)),
     amount_2next_fy = suppressWarnings(as.numeric(reqs$amount_2next_fy)),
     one_time = as.logical(reqs$one_time),
-    completed = as.logical(reqs$completed),
     status = if ("status" %in% names(reqs)) ifelse(is.na(reqs$status) | !nzchar(as.character(reqs$status)), NA_character_, as.character(reqs$status)) else NA_character_,
     overall_summary = ifelse(is.na(reqs$overall_summary), "", as.character(reqs$overall_summary)),
     stringsAsFactors = FALSE
   )
-  out$completed[is.na(out$completed)] <- FALSE
-  out$status[is.na(out$status)] <- ifelse(out$completed[is.na(out$status)], "BBMR Review", "In Progress")
+  out$status[is.na(out$status)] <- "In Progress"
+  # "Complete" is derived from status now that the completed column is gone.
+  out$completed <- cls_status_is_complete(out$status)
 
   out$line_count <- vapply(out$cls_id, function(id) {
     if (is.null(lines) || !nrow(lines)) 0L else sum(lines$cls_id == id)
@@ -6058,10 +6574,6 @@ cls_review_rows <- function(db) {
     v <- row[[field]][[1]]
     if (is.na(v)) default else v
   }
-  out$evaluation_score <- vapply(out$cls_id, function(id) {
-    v <- pick(id, "evaluation_score", NA_real_)
-    suppressWarnings(as.numeric(v))
-  }, numeric(1))
   out$analyst_notes <- vapply(out$cls_id, function(id) as.character(pick(id, "analyst_notes", "")), character(1))
   out$analyst_approval <- vapply(out$cls_id, function(id) as.character(pick(id, "analyst_approval", "")), character(1))
   out$bbmr_approval <- vapply(out$cls_id, function(id) as.character(pick(id, "bbmr_approval", "")), character(1))
@@ -6069,50 +6581,154 @@ cls_review_rows <- function(db) {
   out[order(-as.integer(out$completed), tolower(out$agency), tolower(out$request_name)), , drop = FALSE]
 }
 
-# Simple, dependency-free bar chart with hover tooltips (SVG <title>).
+# Dependency-free stacked bar chart: requested dollars per agency, split by how
+# far each request has got through approval. Tooltips are native SVG <title>.
 cls_review_chart <- function(rows) {
   if (is.null(rows) || !nrow(rows)) {
     return(div(class = "cls-empty-state", p(class = "empty-state-copy", "No CLS request data to chart yet.")))
   }
   amounts <- ifelse(is.na(rows$request_amount), 0, rows$request_amount)
-  totals <- tapply(amounts, rows$agency, sum)
-  agg <- data.frame(
-    agency = names(totals),
-    total = as.numeric(totals),
-    stringsAsFactors = FALSE
+
+  # Decision buckets, in the order they stack left to right.
+  segments <- list(
+    list(key = "Approved",           label = "Approved",           class = "seg-approved"),
+    list(key = "Partially Approved", label = "Partially approved", class = "seg-partial"),
+    list(key = "Denied",             label = "Denied",             class = "seg-denied"),
+    list(key = "__pending__",        label = "Awaiting decision",  class = "seg-pending")
   )
-  agg <- agg[order(-agg$total), , drop = FALSE]
-  if (nrow(agg) > 10) agg <- agg[seq_len(10), , drop = FALSE]
-  counts <- vapply(agg$agency, function(a) sum(rows$agency == a), integer(1))
-  max_total <- max(agg$total, na.rm = TRUE)
+  bucket_of <- function(status) if (status %in% c("Approved", "Partially Approved", "Denied")) status else "__pending__"
+  buckets <- vapply(rows$status, bucket_of, character(1))
+
+  agencies <- unique(rows$agency)
+  totals <- vapply(agencies, function(a) sum(amounts[rows$agency == a]), numeric(1))
+  ord <- order(-totals)
+  agencies <- agencies[ord]; totals <- totals[ord]
+  if (length(agencies) > 10) { agencies <- agencies[seq_len(10)]; totals <- totals[seq_len(10)] }
+  max_total <- max(totals, na.rm = TRUE)
   if (!is.finite(max_total) || max_total <= 0) max_total <- 1
 
-  bar_h <- 26; gap <- 10; label_w <- 190; chart_w <- 640
-  plot_w <- chart_w - label_w - 70
-  height <- nrow(agg) * (bar_h + gap) + 10
+  bar_h <- 24; gap <- 12; label_w <- 190; chart_w <- 680
+  plot_w <- chart_w - label_w - 80
+  height <- length(agencies) * (bar_h + gap) + 10
 
-  bars <- lapply(seq_len(nrow(agg)), function(i) {
+  bars <- lapply(seq_along(agencies), function(i) {
+    a <- agencies[[i]]
     y <- (i - 1) * (bar_h + gap) + 5
-    w <- max(2, round(agg$total[i] / max_total * plot_w))
-    tip <- paste0(agg$agency[i], " — ", cls_format_km(agg$total[i]), " across ", counts[i], if (counts[i] == 1) " request" else " requests")
+    x <- label_w
+    pieces <- list()
+    for (seg in segments) {
+      keep <- rows$agency == a & buckets == seg$key
+      value <- sum(amounts[keep])
+      if (value <= 0) next
+      w <- max(1, value / max_total * plot_w)
+      n <- sum(keep)
+      pieces[[length(pieces) + 1L]] <- tags$g(
+        tags$title(sprintf("%s — %s %s across %d %s", a, seg$label, cls_format_km(value), n, if (n == 1) "request" else "requests")),
+        tags$rect(x = x, y = y, width = w, height = bar_h, rx = 2, class = paste("cls-chart-bar", seg$class))
+      )
+      x <- x + w
+    }
     tags$g(
-      tags$title(tip),
-      tags$text(x = label_w - 8, y = y + bar_h / 2 + 4, `text-anchor` = "end", class = "cls-chart-label", substr(agg$agency[i], 1, 28)),
-      tags$rect(x = label_w, y = y, width = w, height = bar_h, rx = 3, class = "cls-chart-bar"),
-      tags$text(x = label_w + w + 6, y = y + bar_h / 2 + 4, class = "cls-chart-value", cls_format_km(agg$total[i]))
+      tags$text(x = label_w - 8, y = y + bar_h / 2 + 4, `text-anchor` = "end", class = "cls-chart-label", substr(a, 1, 28)),
+      pieces,
+      tags$text(x = min(x + 6, chart_w - 4), y = y + bar_h / 2 + 4, class = "cls-chart-value", cls_format_km(totals[[i]]))
     )
+  })
+
+  legend_items <- lapply(segments, function(seg) {
+    total <- sum(amounts[buckets == seg$key])
+    span(class = "cls-chart-legend-item",
+      span(class = paste("cls-chart-swatch", seg$class)),
+      paste0(seg$label, " ", cls_format_km(total)))
   })
 
   div(
     class = "cls-chart-wrap",
     tags$svg(
       class = "cls-chart", viewBox = paste("0 0", chart_w, height),
-      role = "img", `aria-label` = "Total CLS request amount by agency",
+      role = "img", `aria-label` = "Requested dollars by agency, split by approval decision",
       preserveAspectRatio = "xMinYMin meet",
       bars
     ),
-    p(class = "cls-chart-caption", "Total requested amount by agency (top 10). Hover a bar for the request count.")
+    div(class = "cls-chart-legend", legend_items),
+    p(class = "cls-chart-caption", "Requested dollars by agency (top 10), split by approval decision. Hover a segment for its amount and request count.")
   )
+}
+
+# BBMR export: every agency and service, with the review/approval fields added.
+cls_review_export_sheets <- function(db) {
+  rows <- cls_review_rows(db)
+  numv <- function(x) suppressWarnings(as.numeric(x))
+  if (is.null(rows) || !nrow(rows)) {
+    empty <- data.frame(Agency = character(0), Request = character(0), stringsAsFactors = FALSE)
+    return(list(`Requests and decisions` = empty, `Line items` = empty, `Personnel` = empty))
+  }
+
+  requests_df <- data.frame(
+    Agency = rows$agency,
+    Request = rows$request_name,
+    Service = rows$service,
+    Type = rows$request_type,
+    Status = rows$status,
+    `FY28 amount` = numv(rows$request_amount),
+    `FY29 amount` = numv(rows$amount_next_fy),
+    `FY30 amount` = numv(rows$amount_2next_fy),
+    Duration = ifelse(rows$one_time %in% TRUE, "One-time", "Recurring"),
+    `Objects` = rows$line_count,
+    `Object total` = numv(rows$line_total),
+    `Positions` = rows$position_count,
+    `Position cost` = numv(rows$position_salary),
+    `Analyst approval` = rows$analyst_approval,
+    `BBMR approval` = rows$bbmr_approval,
+    `Analyst notes` = rows$analyst_notes,
+    Summary = rows$overall_summary,
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+
+  lines <- db$budget_cls_request_line
+  lines_df <- if (!is.null(lines) && nrow(lines)) {
+    keep <- lines[lines$cls_id %in% rows$cls_id, , drop = FALSE]
+    idx <- match(keep$cls_id, rows$cls_id)
+    data.frame(
+      Agency = rows$agency[idx],
+      Request = rows$request_name[idx],
+      Status = rows$status[idx],
+      `BBMR approval` = rows$bbmr_approval[idx],
+      Object = as.character(keep$object_category),
+      `Spend category` = as.character(keep$spend_category),
+      Amount = numv(keep$amount),
+      Justification = as.character(keep$justification),
+      check.names = FALSE, stringsAsFactors = FALSE
+    )
+  } else {
+    data.frame(Agency = character(0), Request = character(0), Status = character(0), `BBMR approval` = character(0),
+               Object = character(0), `Spend category` = character(0), Amount = numeric(0), Justification = character(0),
+               check.names = FALSE, stringsAsFactors = FALSE)
+  }
+
+  positions <- db$budget_cls_request_position
+  pos_df <- if (!is.null(positions) && nrow(positions)) {
+    keep <- positions[positions$cls_id %in% rows$cls_id, , drop = FALSE]
+    idx <- match(keep$cls_id, rows$cls_id)
+    data.frame(
+      Agency = rows$agency[idx],
+      Request = rows$request_name[idx],
+      Status = rows$status[idx],
+      `BBMR approval` = rows$bbmr_approval[idx],
+      Classification = as.character(keep$classification),
+      Positions = suppressWarnings(as.integer(keep$position_count)),
+      `Estimated cost` = numv(keep$estimated_salary),
+      Justification = as.character(keep$justification),
+      Explanation = as.character(keep$explanation),
+      check.names = FALSE, stringsAsFactors = FALSE
+    )
+  } else {
+    data.frame(Agency = character(0), Request = character(0), Status = character(0), `BBMR approval` = character(0),
+               Classification = character(0), Positions = integer(0), `Estimated cost` = numeric(0),
+               Justification = character(0), Explanation = character(0), check.names = FALSE, stringsAsFactors = FALSE)
+  }
+
+  list(`Requests and decisions` = requests_df, `Line items` = lines_df, `Personnel` = pos_df)
 }
 
 page_cls_review <- function(db, app_roles = character(0), status_filter = character(0), agency_filter = character(0)) {
@@ -6124,63 +6740,117 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
   total_positions <- if (nrow(complete_rows)) sum(complete_rows$position_count, na.rm = TRUE) else 0
 
   agency_choices <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
-  status_choices <- c("Incomplete (pending)", "Complete (ready for review)")
+  status_choices <- cls_status_choices
   sel_status <- if (length(status_filter)) status_filter else status_choices
   sel_agency <- if (length(agency_filter)) agency_filter else agency_choices
 
   view_rows <- rows
-  if (nrow(view_rows)) {
-    keep_complete <- "Complete (ready for review)" %in% sel_status
-    keep_incomplete <- "Incomplete (pending)" %in% sel_status
-    view_rows <- view_rows[(view_rows$completed & keep_complete) | (!view_rows$completed & keep_incomplete), , drop = FALSE]
+  if (nrow(view_rows) && length(sel_status)) {
+    view_rows <- view_rows[view_rows$status %in% sel_status, , drop = FALSE]
   }
   if (nrow(view_rows) && length(sel_agency)) {
     view_rows <- view_rows[view_rows$agency %in% sel_agency, , drop = FALSE]
   }
 
-  review_cards <- lapply(seq_len(nrow(view_rows)), function(i) {
+  approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
+  review_rows_ui <- lapply(seq_len(nrow(view_rows)), function(i) {
     r <- view_rows[i, , drop = FALSE]
     id <- r$cls_id
-    approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
     div(
-      class = paste("cls-review-card", if (isTRUE(r$completed)) "is-complete" else "is-pending"),
+      class = "cls-rv-row",
+      # Collapsed summary line — the whole row toggles the detail panel.
+      tags$button(
+        type = "button", class = "cls-rv-head", `data-cls-rv-toggle` = id, `aria-expanded` = "false",
+        span(class = "cls-rv-caret", icon("chevron-right")),
+        span(class = "cls-rv-name", r$request_name),
+        span(class = "cls-rv-agency", r$agency),
+        span(class = "cls-rv-amount", cls_format_km(r$request_amount)),
+        span(class = "cls-rv-status", status_chip(r$status, cls_status_tone(r$status)))
+      ),
       div(
-        class = "cls-review-card-head",
+        id = paste0("cls_rv_body_", id), class = "cls-rv-body", style = "display:none;",
         div(
-          h3(r$request_name),
-          p(class = "cls-review-meta", paste0(r$agency, " • ", r$service, if (nzchar(r$request_type)) paste0(" • ", r$request_type) else ""))
+          class = "cls-rv-submitted",
+          cls_detail_field("Service", r$service),
+          cls_detail_field("Type", if (nzchar(r$request_type)) r$request_type else "—"),
+          cls_detail_field("FY28", cls_format_dollars(r$request_amount)),
+          cls_detail_field("FY29", cls_format_dollars(r$amount_next_fy)),
+          cls_detail_field("FY30", cls_format_dollars(r$amount_2next_fy)),
+          cls_detail_field("Duration", if (isTRUE(r$one_time)) "One-time" else "Recurring"),
+          cls_detail_field("Objects", paste0(r$line_count, " (", cls_format_km(r$line_total), ")")),
+          cls_detail_field("Positions", paste0(r$position_count, if (r$position_salary > 0) paste0(" (", cls_format_km(r$position_salary), ")") else ""))
         ),
-        div(
-          class = "cls-review-head-actions",
-          status_chip(r$status, cls_status_tone(r$status)),
-          tags$button(
-            type = "button", class = "civic-button secondary small",
-            `data-cls-open` = id, `aria-label` = paste("Open request", r$request_name),
-            icon("up-right-from-square"), "Open request"
+        if (nzchar(r$overall_summary)) div(class = "cls-rv-summary", tags$strong("Summary. "), r$overall_summary),
+        # Objects and positions, laid out like the request page so reviewers see
+        # the same breakdown the agency entered.
+        {
+          lr <- db$budget_cls_request_line
+          lr <- if (!is.null(lr) && nrow(lr)) lr[lr$cls_id == id, , drop = FALSE] else NULL
+          div(
+            class = "cls-rv-block",
+            div(class = "cls-rv-block-title", "Request details"),
+            if (is.null(lr) || !nrow(lr)) {
+              p(class = "empty-state-copy", "No objects were entered.")
+            } else {
+              div(class = "app-table cls-line-table",
+                div(class = "table-row table-head cls-line-row", span("Object"), span("Spend category"), span("Amount"), span("Justification"), span("")),
+                lapply(seq_len(nrow(lr)), function(j) {
+                  li <- lr[j, , drop = FALSE]
+                  div(class = "table-row cls-line-row",
+                    span(if (nzchar(as.character(li$object_category %||% ""))) li$object_category else "—"),
+                    span(if (nzchar(as.character(li$spend_category %||% ""))) li$spend_category else "—"),
+                    span(class = "cls-request-amount", cls_format_dollars(li$amount)),
+                    span(if (nzchar(as.character(li$justification %||% ""))) li$justification else "—"),
+                    span(""))
+                }))
+            }
           )
-          # BBMR can edit the request itself from there; review fields stay here.
+        },
+        {
+          pr <- db$budget_cls_request_position
+          pr <- if (!is.null(pr) && nrow(pr)) pr[pr$cls_id == id, , drop = FALSE] else NULL
+          div(
+            class = "cls-rv-block",
+            div(class = "cls-rv-block-title", "Position requests"),
+            if (is.null(pr) || !nrow(pr)) {
+              p(class = "empty-state-copy", "No positions were requested.")
+            } else {
+              div(class = "app-table cls-position-table",
+                div(class = "table-row table-head cls-position-row", span("Classification"), span("Positions"), span("Est. cost"), span("Justification"), span("")),
+                lapply(seq_len(nrow(pr)), function(j) {
+                  po <- pr[j, , drop = FALSE]
+                  div(class = "table-row cls-position-row",
+                    span(po$classification),
+                    span(as.character(po$position_count %||% 0)),
+                    span(class = "cls-request-amount", cls_format_dollars(po$estimated_salary)),
+                    span(if (nzchar(as.character(po$justification %||% ""))) po$justification else "—"),
+                    span(""))
+                }))
+            },
+            if (!is.null(pr) && nrow(pr) && any(nzchar(as.character(pr$explanation %||% "")))) {
+              div(class = "cls-rv-explanations",
+                lapply(seq_len(nrow(pr)), function(j) {
+                  ex <- as.character(pr$explanation[j] %||% "")
+                  if (!nzchar(ex)) return(NULL)
+                  p(class = "cls-rv-explanation", tags$strong(paste0(pr$classification[j], ". ")), ex)
+                }))
+            }
+          )
+        },
+        div(
+          class = "cls-review-fields",
+          div(class = "cls-review-field-grid",
+            # Analyst approval is advisory and does not change the request status.
+            selectInput(paste0("cls_rv_analyst_", id), "Analyst approval (advisory)", choices = approval_choices, selected = r$analyst_approval, selectize = FALSE),
+            # BBMR approval sets the request's final status.
+            selectInput(paste0("cls_rv_bbmr_", id), "BBMR approval (sets status)", choices = approval_choices, selected = r$bbmr_approval, selectize = FALSE)
+          ),
+          div(class = "cls-field-full", textAreaInput(paste0("cls_rv_notes_", id), "Analyst notes", value = r$analyst_notes, width = "100%", rows = 2, resize = "vertical")),
+          div(class = "cls-rv-actions",
+            tags$button(type = "button", class = "civic-button secondary small", `data-cls-open` = id,
+              `aria-label` = paste("Open request", r$request_name), icon("up-right-from-square"), "Open request"),
+            tags$button(type = "button", class = "civic-button primary small", `data-cls-review-save` = id, icon("check"), "Save review"))
         )
-      ),
-      div(
-        class = "cls-review-submitted",
-        cls_detail_field("FY28 amount", cls_format_dollars(r$request_amount)),
-        cls_detail_field("FY29", cls_format_dollars(r$amount_next_fy)),
-        cls_detail_field("FY30", cls_format_dollars(r$amount_2next_fy)),
-        cls_detail_field("One-time", if (isTRUE(r$one_time)) "Yes" else "No"),
-        cls_detail_field("Objects", paste0(r$line_count, " (", cls_format_km(r$line_total), ")")),
-        cls_detail_field("Positions", paste0(r$position_count, if (r$position_salary > 0) paste0(" (", cls_format_km(r$position_salary), ")") else ""))
-      ),
-      if (nzchar(r$overall_summary)) div(class = "cls-review-summary", tags$strong("Summary. "), r$overall_summary),
-      div(
-        class = "cls-review-fields",
-        div(class = "cls-review-field-grid",
-          numericInput(paste0("cls_rv_score_", id), "Evaluation score", value = if (is.na(r$evaluation_score)) NA else r$evaluation_score, min = 0, max = 100, step = 1),
-          selectInput(paste0("cls_rv_analyst_", id), "Analyst approval", choices = approval_choices, selected = r$analyst_approval, selectize = FALSE),
-          selectInput(paste0("cls_rv_bbmr_", id), "BBMR approval", choices = approval_choices, selected = r$bbmr_approval, selectize = FALSE)
-        ),
-        div(class = "cls-field-full", textAreaInput(paste0("cls_rv_notes_", id), "Analyst notes", value = r$analyst_notes, width = "100%", rows = 2, resize = "vertical")),
-        div(class = "cls-form-actions",
-          tags$button(type = "button", class = "civic-button primary small", `data-cls-review-save` = id, icon("check"), "Save review"))
       )
     )
   })
@@ -6191,40 +6861,76 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
       div(
         div(class = "eyebrow", "BBMR"),
         h1("CLS Review"),
-        p("Review Current Level of Service requests submitted by agencies, score them, and record approval decisions.")
+        p("Review Current Level of Service requests submitted by agencies and record approval decisions.")
       ),
       status_chip(paste(total_for_review, "ready"), "success")
     ),
     div(
-      class = "dashboard-grid cls-review-grid",
-      metric_tile("Pending Requests", total_pending, "All CLS requests, complete or not"),
-      metric_tile("Requests for Review", total_for_review, "Marked complete by the agency", "success"),
-      metric_tile("Total requested", cls_format_km(total_dollars), "Across complete requests"),
-      metric_tile("Total positions", total_positions, "Across complete requests")
+      class = "cls-review-overview",
+      div(
+        class = "dashboard-grid cls-review-grid",
+        metric_tile("Pending Requests", total_pending),
+        metric_tile("Requests for Review", total_for_review, tone = "success"),
+        metric_tile("Total requested", cls_format_km(total_dollars)),
+        metric_tile("Total positions", total_positions)
+      ),
+      surface("Request volume", "How requested dollars are distributed across agencies.", cls_review_chart(rows))
     ),
-    surface("Request volume", "How requested dollars are distributed across agencies.", cls_review_chart(rows)),
+    div(
+      class = "cls-review-divider",
+      span(class = "cls-review-divider-label", "Review")
+    ),
     surface(
       "Review requests",
-      "Filter by review status and agency, then record the evaluation and approval for each request.",
+      "Filter by status and agency, then expand a request to record its approval.",
       div(
         class = "cls-review-filters",
         div(class = "measure-field", selectInput("cls_review_status_filter", "Status", choices = status_choices, selected = sel_status, multiple = TRUE, selectize = TRUE)),
-        div(class = "measure-field", selectInput("cls_review_agency_filter", "Agency", choices = agency_choices, selected = sel_agency, multiple = TRUE, selectize = TRUE))
+        div(class = "measure-field", selectInput("cls_review_agency_filter", "Agency", choices = agency_choices, selected = sel_agency, multiple = TRUE, selectize = TRUE)),
+        div(
+          class = "cls-review-filter-actions",
+          actionButton("cls_review_apply_filters", "Apply filters", class = "civic-button primary small"),
+          actionButton("cls_review_reset_filters", "Reset", class = "civic-button secondary small")
+        )
       ),
-      if (!length(review_cards)) div(class = "cls-empty-state", p(class = "empty-state-copy", "No requests match the current filters.")) else div(class = "cls-review-list", review_cards)
+      div(
+        class = "cls-rv-toolbar",
+        div(class = "cls-rv-count", paste(nrow(view_rows), if (nrow(view_rows) == 1) "request" else "requests")),
+        div(class = "cls-export-bar cls-export-bar-inline",
+          span(class = "cls-export-label", "Export all agencies:"),
+          downloadButton("cls_review_export_xlsx", label = tagList(icon("file-excel"), "Excel"), class = "civic-button secondary small"))
+      ),
+      if (!length(review_rows_ui)) {
+        div(class = "cls-empty-state", p(class = "empty-state-copy", "No requests match the current filters."))
+      } else {
+        div(
+          class = "cls-rv-table",
+          div(class = "cls-rv-head cls-rv-header-row",
+            span(class = "cls-rv-caret"),
+            span(class = "cls-rv-name", "Request"),
+            span(class = "cls-rv-agency", "Agency"),
+            span(class = "cls-rv-amount", "FY28"),
+            span(class = "cls-rv-status", "Status")
+          ),
+          review_rows_ui
+        )
+      }
     )
   )
 }
 
 cls_detail_field <- function(label, value) {
+  # Values are kept to one line, so carry the full text as a tooltip for the few
+  # (long service names, long request types) that end up truncated.
+  tip <- if (is.character(value) && length(value) == 1 && !is.na(value) && nzchar(value)) value else NULL
   div(
     class = "cls-detail-field",
     span(class = "cls-detail-label", label),
-    span(class = "cls-detail-value", value)
+    span(class = "cls-detail-value", title = tip, value)
   )
 }
 
-page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency_id = NULL) {
+page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency_id = NULL, origin_page = NULL) {
   can_edit <- can_edit_cls_requests(app_roles)
   cls_id_int <- suppressWarnings(as.integer(cls_id))
   is_new <- is.na(cls_id_int)
@@ -6234,8 +6940,13 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   }
   type_choices <- c("(select a type)" = "", cls_request_type_choices)
   # BBMR reviewers arrive from the CLS Review workspace, so send them back there
-  # (they can still edit; only the return destination differs).
-  reviewer_view <- can_review_cls(app_roles) && !has_any_role(app_roles, c("AgencyWriter", "AgencyApprover", "AgencySubmitter"))
+  # (they can still edit; only the return destination differs). Anyone who opened
+  # the request from CLS Review returns to CLS Review even if they also hold an
+  # agency role, and a reviewer with no agency list access never gets offered it.
+  came_from_review <- identical(as.character(origin_page %||% ""), "cls_review")
+  reviewer_view <- can_review_cls(app_roles) &&
+    (came_from_review || !can_view_cls_requests(app_roles) ||
+       !has_any_role(app_roles, c("AgencyWriter", "AgencySubmitter")))
   back_link <- if (reviewer_view) {
     tags$button(type = "button", class = "cls-back-link", `data-page` = "cls_review", icon("arrow-left"), "Back to CLS Review")
   } else {
@@ -6260,28 +6971,41 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   service_choices <- cls_plan_service_choices(db, plan)
   cur_ps <- if (is_new) NULL else as.character(request$plan_service_id[[1]])
   if (!is_new && !is.null(cur_ps) && !cur_ps %in% unname(service_choices)) {
-    service_choices <- c(stats::setNames(cur_ps, cls_service_name(db, request$service_id)), service_choices)
+    service_choices <- c(stats::setNames(cur_ps, cls_service_label(db, request$service_id)), service_choices)
   }
-  approver <- cls_approver_name(db, plan)
+  submitter <- cls_submitter_name(db, plan)
   page_title <- if (is_new) "New CLS request" else as.character(request$request_name %||% "CLS request")
 
-  type_info <- tags$details(
-    class = "cls-type-info",
-    tags$summary(
-      class = "cls-type-summary",
-      tags$span(class = "control-label cls-type-label", "Request type"),
-      tags$span(class = "cls-info-icon", `aria-label` = "About request types", icon("circle-info"))
-    ),
-    div(
-      class = "cls-type-info-body",
-      tags$table(
-        class = "cls-type-table",
-        tags$thead(tags$tr(tags$th("Adjustment type"), tags$th("Description"), tags$th("Example"))),
-        tags$tbody(lapply(cls_adjustment_type_guidance, function(row) {
-          tags$tr(tags$td(tags$strong(row[[1]])), tags$td(row[[2]]), tags$td(row[[3]]))
-        }))
-      )
+  # Field label with an info icon to its right; the panel opens below the input.
+  cls_labelled_info <- function(label, panel, id) {
+    tagList(
+      div(
+        class = "cls-label-row",
+        tags$span(class = "control-label", label),
+        tags$button(
+          type = "button", class = "cls-info-toggle", `data-cls-info` = id,
+          `aria-label` = paste("About", label), `aria-expanded` = "false",
+          icon("circle-info")
+        )
+      ),
+      div(id = paste0("cls_info_", id), class = "cls-info-panel", style = "display:none;", panel)
     )
+  }
+
+  type_info_panel <- div(
+    class = "cls-type-info-body",
+    tags$table(
+      class = "cls-type-table",
+      tags$thead(tags$tr(tags$th("Adjustment type"), tags$th("Description"), tags$th("Example"))),
+      tags$tbody(lapply(cls_adjustment_type_guidance, function(row) {
+        tags$tr(tags$td(tags$strong(row[[1]])), tags$td(row[[2]]), tags$td(row[[3]]))
+      }))
+    )
+  )
+
+  onetime_info_panel <- p(
+    class = "cls-info-copy",
+    "Subscriptions and Professional Services purchased for multi-year contracts are recurring if the agency plans to use their services indefinitely. Especially in these cases, the FY29 and FY30 year amounts will assume any year-over-year increase to the contract. Contact your budget analyst if you have any questions about how this should be input."
   )
 
   # ---- Summary section (merged header + request details) ----
@@ -6291,7 +7015,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     r <- request
     rtype <- as.character(r$request_type %||% ""); if (is.na(rtype)) rtype <- ""
     summary_body <- tagList(
-      div(class = "cls-form-service", span(class = "cls-detail-label", "Service"), tags$strong(cls_service_name(db, r$service_id))),
+      div(class = "cls-form-service", span(class = "cls-detail-label", "Service"), tags$strong(cls_service_label(db, r$service_id))),
       if (nzchar(rtype)) div(class = "chip-row cls-detail-chips", status_chip(rtype, "primary"), status_chip(if (isTRUE(r$one_time)) "One-time" else "Ongoing", if (isTRUE(r$one_time)) "warning" else "success")),
       div(
         class = "cls-detail-grid",
@@ -6312,22 +7036,37 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     v_onetime <- if (is_new) FALSE else isTRUE(request$one_time)
     v_summary <- if (is_new) "" else as.character(request$overall_summary %||% "")
     summary_body <- tagList(
+      p(class = "cls-request-intro",
+        "Describe the ", tags$strong(class = "cls-intro-name", if (nzchar(v_name)) v_name else "request"),
+        " by line item and any positions below. Each request should encompass an initiative and all of the accompanying costs."),
       div(class = "cls-field-full", `data-cls-required` = "true",
         textInput("cls_form_name", "Request name", value = v_name, width = "100%", placeholder = "A short, descriptive name for this request")),
       div(class = "cls-field-full", `data-cls-required` = "true",
         selectInput("cls_form_service", "Service", choices = service_choices, selected = cur_ps, selectize = FALSE, width = "100%")),
       div(class = "cls-field-full cls-type-field",
-        type_info,
+        cls_labelled_info("Request type", type_info_panel, "type"),
         selectInput("cls_form_type", label = NULL, choices = type_choices, selected = v_type, selectize = FALSE, width = "100%")),
+      div(class = "cls-field-full cls-onetime-field",
+        cls_labelled_info("Request duration", onetime_info_panel, "onetime"),
+        div(class = "cls-toggle-row",
+          tags$label(
+            class = "cls-switch",
+            tags$input(id = "cls_form_one_time", type = "checkbox", class = "cls-switch-input",
+              checked = if (isTRUE(v_onetime)) "checked" else NULL),
+            tags$span(class = "cls-switch-track", tags$span(class = "cls-switch-thumb"))
+          ),
+          tags$span(id = "cls_onetime_label", class = "cls-switch-label",
+            if (isTRUE(v_onetime)) "One-Time Request" else "Recurring Request")
+        )
+      ),
       div(class = "cls-amount-row",
         div(class = "cls-amount-cell", `data-cls-required` = "true", numericInput("cls_form_amount", "FY28 Amount", value = v_amount, min = 0, step = 1000)),
         div(class = "cls-amount-cell cls-outyear-field", numericInput("cls_form_amount_next", "FY29 Amount", value = v_next, min = 0, step = 1000)),
         div(class = "cls-amount-cell cls-outyear-field", numericInput("cls_form_amount_2next", "FY30 Amount", value = v_2next, min = 0, step = 1000))
       ),
-      div(class = "cls-onetime-row", checkboxInput("cls_form_one_time", "One-time request", value = v_onetime)),
       div(class = "cls-field-full", `data-cls-required` = "true",
         textAreaInput("cls_form_summary", "Summarize the request", value = v_summary, width = "100%", rows = 4, resize = "vertical",
-          placeholder = "Provide a 3-4 sentence explanation of the CLS request for review. This field is mandatory for all requests. 300 word limit."),
+          placeholder = "Provide a 3-4 sentence explanation of the CLS request for review. This field is mandatory for all requests. 150 word limit."),
         div(id = "cls_summary_wordcount", class = "cls-wordcount")),
       if (is_new) div(class = "cls-form-actions",
         actionButton("cls_submit_create", label = tagList(icon("check"), "Create request"), class = "civic-button primary"))
@@ -6338,7 +7077,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     class = "section-surface cls-summary-surface",
     div(class = "cls-summary-head",
       div(class = "eyebrow", "Budget proposal • CLS request"),
-      h1(class = "cls-detail-title", page_title)
+      h2(class = "cls-detail-title", page_title)
     ),
     summary_body
   )
@@ -6370,45 +7109,75 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
       div(class = "cls-empty-state", p(class = "empty-state-copy", "No objects yet."))
     } else {
       div(class = "app-table cls-line-table",
-        div(class = "table-row table-head cls-line-row", span("Object"), span("Amount"), span("Justification"), span("")),
+        div(class = "table-row table-head cls-line-row", span("Object"), span("Spend category"), span("Amount"), span("Justification"), span("")),
         lapply(seq_len(line_count), function(i) {
           li <- lines[i, , drop = FALSE]
           amt <- suppressWarnings(as.numeric(li$amount))
+          spend <- as.character(li$spend_category %||% "")
           div(class = "table-row cls-line-row", `data-cls-line-amount` = if (is.na(amt)) "" else as.character(amt),
             span(if (nzchar(as.character(li$object_category %||% ""))) li$object_category else "—"),
+            span(if (nzchar(spend)) spend else "—"),
             span(class = "cls-request-amount", cls_format_dollars(li$amount)),
             span(if (nzchar(as.character(li$justification %||% ""))) li$justification else "—"),
             div(class = "cls-request-actions", if (can_edit) tags$button(type = "button", class = "civic-button danger small", `data-cls-delete-line` = li$line_id, icon("trash-can"), "Remove")))
         }))
     }
     line_add <- if (can_edit) div(class = "cls-add-form",
+      div(class = "cls-add-form-title", "Add an object to this request"),
       div(class = "cls-form-grid",
         selectInput("cls_line_category", "Object", choices = c("(select an object)" = "", cls_object_choices), selectize = FALSE),
+        selectInput("cls_line_spend_category", "Spend category", choices = c("(select a spend category)" = "", cls_spend_category_options(db)), selectize = FALSE),
         numericInput("cls_line_amount", "Amount", value = NA, min = 0, step = 1000)),
+      # The spend-category list is not yet the real chart of accounts, so agencies
+      # need a way to name one that is missing. A typed value wins over the list.
+      div(class = "cls-field-full cls-new-category-field",
+        textInput("cls_line_new_spend_category", "Create a spend category", width = "100%",
+          placeholder = "Only if the spend category you need is not in the list above")),
       div(class = "cls-field-full", textInput("cls_line_justification", "Justification", width = "100%", placeholder = "Explain the anticipated amount (one line).")),
       div(class = "cls-form-actions", actionButton("cls_submit_line", label = tagList(icon("plus"), "Add Details"), class = "civic-button secondary small"))
     ) else NULL
 
-    details_section <- tags$section(class = "section-surface cls-details-surface",
-      h2("Request details"),
-      p(details_subtext),
-      div(class = "cls-remaining-note", `data-cls-request-amount` = as.character(req_amount),
-        span(class = "cls-remaining-text", sprintf("Select Add Details to describe the remaining %s in this request.", cls_format_dollars(max(remaining, 0))))),
-      line_add,
-      line_table)
-
     positions <- db$budget_cls_request_position
     positions <- if (!is.null(positions) && nrow(positions)) positions[positions$cls_id == cls_id_int, , drop = FALSE] else NULL
     position_count <- if (is.null(positions)) 0L else nrow(positions)
+    position_total <- if (position_count) sum(suppressWarnings(as.numeric(positions$estimated_salary)), na.rm = TRUE) else 0
+    # The request amount must be explained by objects *and* positions combined.
+    accounted <- line_total + position_total
+    remaining <- req_amount - accounted
+
+    balanced <- req_amount > 0 && abs(remaining) < 0.005
+    remaining_note <- div(
+      class = paste("cls-remaining-note", if (balanced) "cls-remaining-ok" else if (req_amount > 0) "cls-remaining-over" else ""),
+      `data-cls-request-amount` = as.character(req_amount),
+      span(class = "cls-remaining-text",
+        if (req_amount <= 0) {
+          "Enter the FY28 Amount above, then describe it by object or positions."
+        } else if (balanced) {
+          sprintf("The total request of %s is fully described by object and positions.", cls_format_dollars(req_amount))
+        } else if (remaining > 0) {
+          sprintf("The total request needs to explain %s. Describe the request amount by object or positions.", cls_format_dollars(remaining))
+        } else {
+          sprintf("The total request exceeds %s. Reduce the request amount by object or positions.", cls_format_dollars(abs(remaining)))
+        }))
+
+    details_section <- tags$section(class = "section-surface cls-details-surface",
+      remaining_note,
+      h2("Request details"),
+      p(details_subtext),
+      line_add,
+      div(class = "cls-table-divider",
+        span(class = "cls-table-divider-label", if (line_count == 1) "1 object added" else paste(line_count, "objects added"))),
+      line_table)
 
     position_table <- if (!position_count) {
       div(class = "cls-empty-state", p(class = "empty-state-copy", "No position requests yet."))
     } else {
       div(class = "app-table cls-position-table",
-        div(class = "table-row table-head cls-position-row", span("Classification"), span("Positions"), span("Est. salary"), span("Justification"), span("")),
+        div(class = "table-row table-head cls-position-row", span("Classification"), span("Positions"), span("Est. cost"), span("Justification"), span("")),
         lapply(seq_len(position_count), function(i) {
           po <- positions[i, , drop = FALSE]
-          div(class = "table-row cls-position-row",
+          amt <- suppressWarnings(as.numeric(po$estimated_salary))
+          div(class = "table-row cls-position-row", `data-cls-position-amount` = if (is.na(amt)) "" else as.character(amt),
             span(po$classification),
             span(as.character(po$position_count %||% 0)),
             span(class = "cls-request-amount", cls_format_dollars(po$estimated_salary)),
@@ -6420,7 +7189,11 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
       div(class = "cls-form-grid",
         textInput("cls_position_classification", "Job classification", placeholder = "Classification title"),
         numericInput("cls_position_count", "Number of positions", value = 1, min = 0, step = 1),
-        numericInput("cls_position_salary", "Estimated salary", value = NA, min = 0, step = 1000)),
+        # TODO: link "Estimated Cost" to the salary/benefit cost reference once available.
+        div(class = "cls-cost-field",
+          tags$label(`for` = "cls_position_salary", class = "control-label",
+            tags$a(href = "#", class = "cls-cost-link", `data-cls-cost-help` = "true", "Estimated Cost")),
+          numericInput("cls_position_salary", label = NULL, value = NA, min = 0, step = 1000))),
       div(class = "cls-field-full", textAreaInput("cls_position_justification", "Justify the need for creating additional positions", width = "100%", rows = 2, resize = "vertical")),
       div(class = "cls-field-full", textAreaInput("cls_position_explanation", "Explain how the additional positions are needed to maintain the current level of service", width = "100%", rows = 2, resize = "vertical")),
       div(class = "cls-form-actions", actionButton("cls_submit_position", label = tagList(icon("plus"), "Add position"), class = "civic-button secondary small"))
@@ -6438,7 +7211,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
 
   reminder <- if (can_edit) div(class = "cls-reminder",
     span(class = "cls-reminder-icon", icon("circle-info")),
-    span("This request must be sent to ", tags$strong(approver), ", the Agency Approver, and submitted before your agency's CLS deadline.")
+    span("This request must be sent to ", tags$strong(submitter), ", the Agency Submitter, and submitted before your agency's CLS deadline.")
   ) else NULL
 
   div(
@@ -6455,11 +7228,15 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   )
 }
 
-page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list()) {
+page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list(), cls_detail_origin = NULL) {
   if (identical(page, "services") && submitter_is_mayoral_service(db, agency_id)) {
     page <- "metrics"
   }
-  if (page %in% c("cls_requests", "cls_request_detail") && !can_view_cls_requests(app_roles)) {
+  if (identical(page, "cls_requests") && !can_view_cls_requests(app_roles)) {
+    # BBMR reviewers land back in their own workspace rather than the agency list.
+    page <- if (can_review_cls(app_roles)) "cls_review" else "landing"
+  }
+  if (identical(page, "cls_request_detail") && !can_open_cls_request(app_roles)) {
     page <- "landing"
   }
   if (identical(page, "cls_review") && !can_review_cls(app_roles)) {
@@ -6502,6 +7279,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
     publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
+    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db) else page_landing(db, agency_id, app_roles, agency_roles),
     bug_fix = if (can_view_application_admin(app_roles)) {
       page_bug_fix(
         db,
@@ -6521,7 +7299,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     services = page_services(db, agency_id, can_edit_plan),
     risks = page_risks(db, agency_id, can_edit_plan),
     cls_requests = page_cls_requests(db, agency_id, app_roles),
-    cls_request_detail = page_cls_request_detail(db, selected_cls_id, app_roles, agency_id),
+    cls_request_detail = page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin),
     cls_review = page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0)),
     page_landing(db, agency_id, app_roles, agency_roles)
   )
@@ -6531,8 +7309,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260712-1"),
-    tags$script(src = "app.js?v=20260712-1", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260730-1"),
+    tags$script(src = "app.js?v=20260730-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -6731,6 +7509,7 @@ server <- function(input, output, session) {
   current_page <- reactiveVal("login")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
+  pending_new_measure_default_city <- reactiveVal(FALSE)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -6746,7 +7525,11 @@ server <- function(input, output, session) {
   current_role_preview_agency_role <- reactiveVal(c("Admin"))
   feedback_modal_open <- reactiveVal(FALSE)
   current_cls_id <- reactiveVal(NA_integer_)
+  # Which page the open request was reached from, so Back returns there.
+  cls_detail_origin <- reactiveVal(NULL)
   cls_last_save <- reactiveVal(NULL)
+  cls_applied_status <- reactiveVal(NULL)
+  cls_applied_agency <- reactiveVal(NULL)
   service_open_flags <- new.env(parent = emptyenv())
   service_body_outputs_registered <- new.env(parent = emptyenv())
   section_draft_cache <- new.env(parent = emptyenv())
@@ -6804,11 +7587,24 @@ server <- function(input, output, session) {
     data
   }
 
-  refresh_app_data <- function() {
-    data <- load_app_data(database)
-    app_data(data)
-    register_service_body_outputs(data)
-    invisible(data)
+  # Reloads the entire database (~36 queries) in a background worker instead
+  # of blocking the shared single-threaded Shiny process. `after` runs once
+  # the fresh data has landed in app_data() -- put cleanup/notification code
+  # there instead of directly after the call, since this returns immediately.
+  refresh_app_data <- function(after = NULL, on_error = NULL) {
+    promises::future_promise({
+      connection <- connect_app_database()
+      on.exit(DBI::dbDisconnect(connection), add = TRUE)
+      load_app_data(connection)
+    }, seed = TRUE) %...>% (function(data) {
+      app_data(data)
+      register_service_body_outputs(data)
+      if (!is.null(after)) after()
+    }) %...!% (function(error) {
+      showNotification(paste("Couldn't refresh plan data:", conditionMessage(error)), type = "error", duration = 8)
+      if (!is.null(on_error)) on_error(error)
+    })
+    invisible(NULL)
   }
 
   notify_unknown_login_email <- function(email, context = "sign in", requested_entity = "", requested_agency_role = "") {
@@ -6816,7 +7612,7 @@ server <- function(input, output, session) {
     notice <- if (isTRUE(sent)) {
       "No Beacon account is associated with that email address. Melanie Lada has been notified."
     } else {
-      "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact performance@baltimorecity.gov."
+      "No Beacon account is associated with that email address. Beacon could not send the access notification, so please contact melanie.lada@baltimorecity.gov."
     }
     list(notice = notice, sent = isTRUE(sent))
   }
@@ -6828,7 +7624,7 @@ server <- function(input, output, session) {
     email <- tolower(trimws(user$email[[1]] %||% ""))
     user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
     if (!nrow(user_rows)) {
-      showNotification("That email address is not in the current user list. Contact performance@baltimorecity.gov for access.", type = "error", duration = 10)
+      showNotification("That email address is not in the current user list. Contact melanie.lada@baltimorecity.gov for access.", type = "error", duration = 10)
       return(FALSE)
     }
     user_id <- as.character(user_rows$user_id[[1]])
@@ -7100,6 +7896,9 @@ server <- function(input, output, session) {
   current_user_can_manage_measure_admin_fields <- function() {
     can_review_measures(current_user_app_roles())
   }
+  current_user_can_edit_locked_measure_data <- function() {
+    can_edit_locked_measure_data(current_user_app_roles())
+  }
   current_user_email <- function() {
     data <- app_data()
     user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
@@ -7182,7 +7981,12 @@ server <- function(input, output, session) {
       showClsRequests = can_view_cls_requests(current_user_app_roles()),
       showClsReview = can_review_cls(current_user_app_roles())
     ))
-    if (!can_view_cls_requests(current_user_app_roles()) && current_page() %in% c("cls_requests", "cls_request_detail")) {
+    if (!can_view_cls_requests(current_user_app_roles()) && identical(current_page(), "cls_requests")) {
+      next_page <- if (can_review_cls(current_user_app_roles())) "cls_review" else "landing"
+      current_page(next_page)
+      session$sendCustomMessage("set-page", next_page)
+    }
+    if (!can_open_cls_request(current_user_app_roles()) && identical(current_page(), "cls_request_detail")) {
       current_page("landing")
       session$sendCustomMessage("set-page", "landing")
     }
@@ -7312,6 +8116,11 @@ server <- function(input, output, session) {
     if (is.null(value) || length(value) == 0 || is.na(value)) return("")
     substr(as.character(value), 1, limit)
   }
+  values_differ <- function(a, b) {
+    if (is.na(a) && is.na(b)) return(FALSE)
+    if (is.na(a) || is.na(b)) return(TRUE)
+    !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
+  }
   has_two_or_fewer_decimals <- function(value) {
     is.na(value) || abs(value * 100 - round(value * 100)) < 0.000001
   }
@@ -7379,7 +8188,12 @@ server <- function(input, output, session) {
   is_blank_value <- function(value) {
     is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
   }
-  validate_measure_submit_requirements <- function(values, yearly_values, target_fy) {
+  # The next fiscal year's target and the most recently completed year's
+  # actual are required to publish the *plan* (see
+  # plan_measures_missing_required_fiscal_data()), not to save or submit an
+  # individual measure -- a measure can be fully defined and submitted for
+  # approval before that data exists.
+  validate_measure_submit_requirements <- function(values) {
     required_fields <- c(
       title = "Measure name",
       description = "Definition",
@@ -7396,11 +8210,7 @@ server <- function(input, output, session) {
       how_data_used = "How the data is used",
       why_meaningful = "Why this measure is meaningful"
     )
-    missing <- unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
-    target_row <- yearly_values[vapply(yearly_values, function(row) identical(as.integer(row$fiscal_year), as.integer(target_fy)), logical(1))]
-    target_missing <- !length(target_row) || is.na(target_row[[1]]$target_value)
-    if (target_missing) missing <- c(missing, paste(fy_label(target_fy), "Next Fiscal Year Target"))
-    missing
+    unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
   }
   collect_measure_form <- function() {
     data <- app_data()
@@ -7408,39 +8218,59 @@ server <- function(input, output, session) {
     plan <- current_plan(data, current_submitter_value())
     initial_cycle <- plan_scalar_integer(plan, "cycle_id")
     existing_id <- current_measure_id()
+    if (is.null(existing_id) || identical(existing_id, "new")) {
+      picker_value <- input$measure_owning_entity
+      if (!is.null(picker_value) && length(picker_value) == 1 && nzchar(picker_value)) {
+        resolved_owner <- resolve_owning_agency_id(data, picker_value)
+        if (!is.na(resolved_owner) && nzchar(resolved_owner)) agency_id <- resolved_owner
+      }
+    }
     existing <- if (is.null(existing_id) || identical(existing_id, "new")) data.frame() else data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
+    is_validated <- nrow(existing) > 0 && identical(existing$approval_status[[1]], "Validated")
+    is_admin <- current_user_can_edit_locked_measure_data()
+    # Once validated, every definition field reverts to its existing
+    # value for anyone but a SystemAdmin -- a tampered client request
+    # can't slip a change past the disabled UI control. save_measure_record()
+    # enforces the identical rule again server-side as a second guard.
+    definition_locked <- measure_definition_is_locked(is_validated) && !is_admin
+    existing_value <- function(field, fallback = NA) if (nrow(existing)) existing[[field]][[1]] else fallback
+    locked_or <- function(field, submitted) if (definition_locked) existing_value(field) else submitted
+    scope_editable <- current_user_can_manage_measure_admin_fields() && !definition_locked
     values <- list(
       measure_id = if (nrow(existing)) existing$measure_id[[1]] else NULL,
       agency_id = agency_id,
       initial_cycle = initial_cycle,
-      title = input$measure_title,
-      measure_type = input$measure_type,
-      description = input$measure_description,
-      data_source = input$measure_data_source,
-      data_owner = input$measure_data_owner,
-      data_owner_role = input$measure_data_owner_role,
-      update_frequency = input$measure_frequency,
-      formula = input$measure_formula,
-      desired_direction = input$measure_direction,
-      baseline_value = nullable_number(input$measure_baseline),
-      baseline_fy = nullable_number(input$measure_baseline_fy, TRUE),
-      format_type = input$measure_format,
-      display_unit = if (nzchar(trimws(input$measure_unit))) input$measure_unit else NA_character_,
-      context_required = input$measure_context,
-      replicability = if (current_user_can_manage_measure_admin_fields()) isTRUE(input$measure_replicability) else if (nrow(existing)) isTRUE(existing$replicability[[1]]) else FALSE,
-      disaggregation = input$measure_disaggregation,
-      data_location = input$measure_data_location,
-      collection_method = input$measure_collection_method,
-      how_data_used = input$measure_how_used,
-      why_meaningful = input$measure_why_meaningful,
-      proxy_measure = input$measure_proxy,
-      improvement_notes = input$measure_improvement_notes,
-      change_mapping = if (nrow(existing) && !is.na(existing$change_mapping[[1]])) existing$change_mapping[[1]] else "New",
-      pillar_id = nullable_number(input$measure_pillar, TRUE),
-      pillar_goal_id = nullable_number(input$measure_pillar_goal, TRUE),
-      is_city = input_bool(input$measure_is_city),
-      is_agency = input_bool(input$measure_is_agency),
-      is_service = input_bool(input$measure_is_service),
+      title = locked_or("title", input$measure_title),
+      measure_type = locked_or("measure_type", input$measure_type),
+      description = locked_or("description", input$measure_description),
+      data_source = locked_or("data_source", input$measure_data_source),
+      data_owner = locked_or("data_owner", input$measure_data_owner),
+      data_owner_role = locked_or("data_owner_role", input$measure_data_owner_role),
+      update_frequency = locked_or("update_frequency", input$measure_frequency),
+      formula = locked_or("formula", input$measure_formula),
+      desired_direction = locked_or("desired_direction", input$measure_direction),
+      baseline_value = locked_or("baseline_value", nullable_number(input$measure_baseline)),
+      baseline_fy = locked_or("baseline_fy", nullable_number(input$measure_baseline_fy, TRUE)),
+      format_type = locked_or("format_type", input$measure_format),
+      display_unit = locked_or("display_unit", if (nzchar(trimws(input$measure_unit))) input$measure_unit else NA_character_),
+      context_required = locked_or("context_required", input$measure_context),
+      replicability = if (scope_editable) isTRUE(input$measure_replicability) else isTRUE(existing_value("replicability", FALSE)),
+      disaggregation = locked_or("disaggregation", input$measure_disaggregation),
+      data_location = locked_or("data_location", input$measure_data_location),
+      collection_method = locked_or("collection_method", input$measure_collection_method),
+      how_data_used = locked_or("how_data_used", input$measure_how_used),
+      why_meaningful = locked_or("why_meaningful", input$measure_why_meaningful),
+      proxy_measure = locked_or("proxy_measure", input$measure_proxy),
+      improvement_notes = locked_or("improvement_notes", input$measure_improvement_notes),
+      change_mapping = measure_change_mapping_for_date(
+        if (nrow(existing)) existing$change_mapping[[1]] else NA_character_,
+        if (nrow(existing)) existing$created_date[[1]] else Sys.Date()
+      ),
+      pillar_id = if (scope_editable) nullable_number(input$measure_pillar, TRUE) else existing_value("pillar_id", NA_integer_),
+      pillar_goal_id = if (scope_editable) nullable_number(input$measure_pillar_goal, TRUE) else existing_value("pillar_goal_id", NA_integer_),
+      is_city = if (scope_editable) input_bool(input$measure_is_city) else isTRUE(existing_value("is_city", FALSE)),
+      is_agency = if (scope_editable) input_bool(input$measure_is_agency) else isTRUE(existing_value("is_agency", FALSE)),
+      is_service = if (scope_editable) input_bool(input$measure_is_service) else isTRUE(existing_value("is_service", FALSE)),
       approval_status = if (nrow(existing)) existing$approval_status[[1]] else "Draft",
       submitted_for_approval_at = if (nrow(existing)) existing$submitted_for_approval_at[[1]] else as.POSIXct(NA)
     )
@@ -7450,13 +8280,54 @@ server <- function(input, output, session) {
     values
   }
   collect_measure_years <- function() {
-    lapply(measure_entry_years(), function(year) list(
-      fiscal_year = year,
-      annual_actual = nullable_number(input[[paste0("measure_actual_", year)]]),
-      annual_actual_notes = limit_note(input[[paste0("measure_actual_notes_", year)]]),
-      target_value = nullable_number(input[[paste0("measure_target_", year)]]),
-      target_value_notes = limit_note(input[[paste0("measure_target_notes_", year)]])
-    ))
+    data <- app_data()
+    existing_id <- current_measure_id()
+    existing_measure <- if (is.null(existing_id) || identical(existing_id, "new")) {
+      data.frame()
+    } else {
+      data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
+    }
+    is_validated <- nrow(existing_measure) > 0 && identical(existing_measure$approval_status[[1]], "Validated")
+    existing_actuals <- if (is.null(existing_id) || identical(existing_id, "new")) {
+      data.frame()
+    } else {
+      data$performance_measure_actuals[data$performance_measure_actuals$measure_id == as.integer(existing_id), , drop = FALSE]
+    }
+    is_admin <- current_user_can_edit_locked_measure_data()
+    lapply(measure_entry_years(), function(year) {
+      existing_row <- existing_actuals[existing_actuals$fiscal_year == year, , drop = FALSE]
+      existing_actual <- if (nrow(existing_row)) existing_row$annual_actual[[1]] else NA_real_
+      existing_actual_notes <- if (nrow(existing_row)) existing_row$annual_actual_notes[[1]] else NA_character_
+      existing_target <- if (nrow(existing_row)) existing_row$target_value[[1]] else NA_real_
+      existing_target_notes <- if (nrow(existing_row)) existing_row$target_value_notes[[1]] else NA_character_
+
+      submitted_actual <- nullable_number(input[[paste0("measure_actual_", year)]])
+      submitted_actual_notes <- limit_note(input[[paste0("measure_actual_notes_", year)]])
+      submitted_target <- nullable_number(input[[paste0("measure_target_", year)]])
+      submitted_target_notes <- limit_note(input[[paste0("measure_target_notes_", year)]])
+
+      actual_locked <- measure_actual_is_locked(year, is_validated)
+      target_locked <- measure_target_is_locked(year, is_validated)
+
+      # Disabling the input already stops a non-admin from changing a locked
+      # field in the UI, but a locked field's stored value is what's kept
+      # here regardless of what a submitted request contains -- so a
+      # tampered client request can't slip an edit past the disabled control.
+      final_actual <- if (actual_locked && !is_admin) existing_actual else submitted_actual
+      final_actual_notes <- if (actual_locked && !is_admin) (existing_actual_notes %||% "") else submitted_actual_notes
+      final_target <- if (target_locked && !is_admin) existing_target else submitted_target
+      final_target_notes <- if (target_locked && !is_admin) (existing_target_notes %||% "") else submitted_target_notes
+
+      list(
+        fiscal_year = year,
+        annual_actual = final_actual,
+        annual_actual_notes = final_actual_notes,
+        target_value = final_target,
+        target_value_notes = final_target_notes,
+        actual_locked_change_needs_note = actual_locked && is_admin && values_differ(final_actual, existing_actual) && !nzchar(trimws(final_actual_notes %||% "")),
+        target_locked_change_needs_note = target_locked && is_admin && values_differ(final_target, existing_target) && !nzchar(trimws(final_target_notes %||% ""))
+      )
+    })
   }
   persist_measure <- function(submit = FALSE) {
     if (!submit && !current_user_can_submit_measure() && !current_user_can_review_measures()) {
@@ -7467,8 +8338,21 @@ server <- function(input, output, session) {
       showNotification("You do not have permission to submit measures for approval.", type = "error", duration = 8)
       return()
     }
+    existing_measure_id <- current_measure_id()
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
+    locked_changes_missing_note <- Filter(
+      function(row) isTRUE(row$actual_locked_change_needs_note) || isTRUE(row$target_locked_change_needs_note),
+      yearly_values
+    )
+    if (length(locked_changes_missing_note)) {
+      years_needing_notes <- vapply(locked_changes_missing_note, function(row) fy_label(row$fiscal_year), character(1))
+      showNotification(
+        paste("Add a note explaining the change before saving edits to locked historical data:", paste(years_needing_notes, collapse = ", ")),
+        type = "error", duration = 10
+      )
+      return()
+    }
     if (length(values$initial_cycle) != 1 || is.na(values$initial_cycle)) {
       showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before saving the measure.", type = "error", duration = 8)
       return()
@@ -7481,8 +8365,7 @@ server <- function(input, output, session) {
         showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
         return()
       }
-      target_fy <- plan_fiscal_year + 1L
-      missing_fields <- validate_measure_submit_requirements(values, yearly_values, target_fy)
+      missing_fields <- validate_measure_submit_requirements(values)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
         return()
@@ -7511,22 +8394,31 @@ server <- function(input, output, session) {
       return()
     }
     reported_by <- if (nrow(user_rows)) user_rows$user_id[[1]] else data$access_user_agency_access$user_id[[1]]
-    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit), error = function(error) error)
+    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit, is_admin = current_user_can_edit_locked_measure_data()), error = function(error) error)
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, current_submitter_value())), error = function(error) error)
+    link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
+    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, link_submitter_value)), error = function(error) error)
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
-    refresh_app_data()
-    current_measure_id(NULL)
-    showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
+    refresh_app_data(after = function() {
+      current_measure_id(NULL)
+      showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
+    })
   }
 
   observeEvent(input$open_measure_id, {
-    current_measure_id(as.character(input$open_measure_id))
+    raw_measure_id <- as.character(input$open_measure_id)
+    if (identical(raw_measure_id, "new:city")) {
+      pending_new_measure_default_city(TRUE)
+      current_measure_id("new")
+    } else {
+      pending_new_measure_default_city(FALSE)
+      current_measure_id(raw_measure_id)
+    }
   }, ignoreInit = TRUE)
 
   observeEvent(input$close_measure_modal, current_measure_id(NULL), ignoreInit = TRUE)
@@ -7544,9 +8436,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_measure_id(NULL)
-    showNotification("Measure deleted.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      current_measure_id(NULL)
+      showNotification("Measure deleted.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
@@ -7576,6 +8469,13 @@ server <- function(input, output, session) {
     if (nzchar(trimws(nm))) return(nm)
     as.character(u$email %||% "")
   }
+  # modified_by / reviewed_by store the user id; the name shown in the UI is
+  # resolved from access.user.full_name when the data is loaded.
+  cls_user_id <- function() {
+    u <- current_user()
+    if (is.null(u)) return(NA_integer_)
+    suppressWarnings(as.integer(u$user_id %||% NA_integer_))
+  }
   output$cls_save_status <- renderUI({
     saved_label <- function(ts, by) {
       by <- as.character(by %||% "")
@@ -7593,7 +8493,8 @@ server <- function(input, output, session) {
     if (!is.na(cls_id) && !is.null(data) && !is.null(data$budget_cls_request) && nrow(data$budget_cls_request)) {
       r <- data$budget_cls_request[data$budget_cls_request$cls_id == cls_id, , drop = FALSE]
       if (nrow(r)) {
-        return(saved_label(r$updated_at[[1]], r$modified_by[[1]]))
+        # modified_by is a user id; modified_by_name is the joined full_name.
+        return(saved_label(r$updated_at[[1]], r$modified_by_name[[1]] %||% ""))
       }
     }
     span(title = "Autosave enabled", "Autosave on")
@@ -7617,7 +8518,7 @@ server <- function(input, output, session) {
         amount_next_fy = input$cls_form_amount_next,
         amount_2next_fy = input$cls_form_amount_2next,
         plan_service_id = input$cls_form_service,
-        modified_by = cls_user_label()
+        modified_by = cls_user_id()
       ),
       error = function(error) error
     )
@@ -7632,6 +8533,7 @@ server <- function(input, output, session) {
   observeEvent(input$cls_create_open, {
     if (!cls_guard_edit()) return()
     current_cls_id(NA_integer_)
+    cls_detail_origin("cls_requests")
     cls_last_save(NULL)
     current_page("cls_request_detail")
     session$sendCustomMessage("set-page", "cls_request_detail")
@@ -7706,6 +8608,31 @@ server <- function(input, output, session) {
       type = "message", duration = 7
     )
   }, ignoreInit = TRUE)
+  output$cls_review_export_xlsx <- downloadHandler(
+    filename = function() paste0("cls-review-all-agencies-", format(Sys.time(), "%Y%m%d"), ".xlsx"),
+    content = function(file) {
+      if (!can_review_cls(current_user_app_roles())) stop("Only BBMR Reviewers can export the review workbook.")
+      sheets <- cls_review_export_sheets(ensure_app_data())
+      if (requireNamespace("writexl", quietly = TRUE)) {
+        writexl::write_xlsx(sheets, path = file)
+      } else {
+        utils::write.csv(sheets[["Requests and decisions"]], file, row.names = FALSE)
+      }
+    }
+  )
+  observeEvent(input$cls_review_apply_filters, {
+    cls_applied_status(if (is.null(input$cls_review_status_filter)) character(0) else as.character(input$cls_review_status_filter))
+    cls_applied_agency(if (is.null(input$cls_review_agency_filter)) character(0) else as.character(input$cls_review_agency_filter))
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_review_reset_filters, {
+    cls_applied_status(NULL)
+    cls_applied_agency(NULL)
+    data <- ensure_app_data()
+    rows <- cls_review_rows(data)
+    agencies <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
+    updateSelectInput(session, "cls_review_status_filter", choices = cls_status_choices, selected = cls_status_choices)
+    updateSelectInput(session, "cls_review_agency_filter", choices = agencies, selected = agencies)
+  }, ignoreInit = TRUE)
   observeEvent(input$cls_review_save, {
     if (!can_review_cls(current_user_app_roles())) {
       showNotification("Only BBMR Reviewers can record CLS review decisions.", type = "error", duration = 6)
@@ -7716,11 +8643,10 @@ server <- function(input, output, session) {
     result <- tryCatch(
       save_cls_review(
         database, cls_id,
-        evaluation_score = input[[paste0("cls_rv_score_", cls_id)]],
         analyst_notes = input[[paste0("cls_rv_notes_", cls_id)]],
         analyst_approval = input[[paste0("cls_rv_analyst_", cls_id)]],
         bbmr_approval = input[[paste0("cls_rv_bbmr_", cls_id)]],
-        reviewed_by = cls_user_label()
+        reviewed_by = cls_user_id()
       ),
       error = function(error) error
     )
@@ -7760,10 +8686,11 @@ server <- function(input, output, session) {
     showNotification("Request marked complete and sent for BBMR review.", type = "message", duration = 7)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_open_detail, {
-    if (!can_view_cls_requests(current_user_app_roles())) return()
+    if (!can_open_cls_request(current_user_app_roles())) return()
     cls_id <- suppressWarnings(as.integer(input$cls_open_detail$clsId))
     if (is.na(cls_id)) return()
     current_cls_id(cls_id)
+    cls_detail_origin(current_page())
     cls_last_save(NULL)
     current_page("cls_request_detail")
     session$sendCustomMessage("set-page", "cls_request_detail")
@@ -7779,9 +8706,9 @@ server <- function(input, output, session) {
         request_amount = input$cls_form_amount,
         one_time = isTRUE(input$cls_form_one_time),
         overall_summary = input$cls_form_summary,
-        justified = input$cls_form_justified,
         amount_next_fy = input$cls_form_amount_next,
-        amount_2next_fy = input$cls_form_amount_2next
+        amount_2next_fy = input$cls_form_amount_2next,
+        modified_by = cls_user_id()
       ),
       error = function(error) error
     )
@@ -7826,7 +8753,13 @@ server <- function(input, output, session) {
     cls_id <- suppressWarnings(as.integer(current_cls_id()))
     if (is.na(cls_id)) return()
     result <- tryCatch(
-      add_cls_request_line(database, cls_id, input$cls_line_category, input$cls_line_amount, input$cls_line_justification),
+      add_cls_request_line(database, cls_id, input$cls_line_category, input$cls_line_amount,
+                           input$cls_line_justification,
+                           # A typed category takes precedence over the picked one.
+                           spend_category = {
+                             typed <- trimws(as.character(input$cls_line_new_spend_category %||% ""))
+                             if (nzchar(typed)) typed else input$cls_line_spend_category
+                           }),
       error = function(error) error
     )
     if (inherits(result, "error")) {
@@ -7912,9 +8845,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    feedback_modal_open(FALSE)
-    showNotification("Feedback submitted. Thank you.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      feedback_modal_open(FALSE)
+      showNotification("Feedback submitted. Thank you.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$feedback_admin_update, {
     if (!current_user_can_view_application_admin()) {
@@ -7938,8 +8872,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Feedback request updated.", type = "message", duration = 5)
+    refresh_app_data(after = function() {
+      showNotification("Feedback request updated.", type = "message", duration = 5)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$feedback_admin_delete, {
     if (!current_user_can_view_application_admin()) {
@@ -7951,8 +8886,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Feedback request deleted.", type = "message", duration = 5)
+    refresh_app_data(after = function() {
+      showNotification("Feedback request deleted.", type = "message", duration = 5)
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$measure_review_decision, {
     if (!current_user_can_review_measures()) {
@@ -7975,8 +8911,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
+    refresh_app_data(after = function() {
+      showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$measure_cap_error, {
     message <- input$measure_cap_error$message %||% "No more than 5 measures are allowed."
@@ -7985,16 +8922,20 @@ server <- function(input, output, session) {
   observeEvent(input$confirm_deactivate_measure, {
     measure_id <- current_measure_id()
     if (is.null(measure_id) || identical(measure_id, "new")) return()
-    tryCatch({
-      set_measure_active(database, measure_id, current_agency_id(), FALSE)
-      refresh_app_data()
+    result <- tryCatch(set_measure_active(database, measure_id, current_agency_id(), FALSE), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error")
+      return()
+    }
+    refresh_app_data(after = function() {
       showNotification("Measure made inactive.", type = "message")
-    }, error = function(error) showNotification(conditionMessage(error), type = "error"))
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$reactivate_measure, {
     set_measure_active(database, current_measure_id(), current_agency_id(), TRUE)
-    refresh_app_data()
-    showNotification("Measure reactivated.", type = "message")
+    refresh_app_data(after = function() {
+      showNotification("Measure reactivated.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$open_risk_id, {
@@ -8091,9 +9032,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_team_access_id(NULL)
-    showNotification("Team role updated.", type = "message")
+    refresh_app_data(after = function() {
+      current_team_access_id(NULL)
+      showNotification("Team role updated.", type = "message")
+    })
   }, ignoreInit = FALSE)
   observeEvent(input$team_role_delete_confirmed_request, {
     if (!current_user_can_manage_team()) {
@@ -8121,9 +9063,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_team_access_id(NULL)
-    showNotification("Team access deleted.", type = "message")
+    refresh_app_data(after = function() {
+      current_team_access_id(NULL)
+      showNotification("Team access deleted.", type = "message")
+    })
   }, ignoreInit = TRUE)
   observeEvent(input$risk_save_request, {
     if (!current_user_can_edit_plan()) {
@@ -8135,16 +9078,20 @@ server <- function(input, output, session) {
     risk_id <- current_risk_id()
     risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
     result <- tryCatch(
-      save_service_risk(database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description),
+      save_service_risk(
+        database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description,
+        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_risk_id(NULL)
-    showNotification("Risk saved.", type = "message")
+    refresh_app_data(after = function() {
+      current_risk_id(NULL)
+      showNotification("Risk saved.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$risk_delete_confirmed_request, {
@@ -8157,16 +9104,20 @@ server <- function(input, output, session) {
     risk_id <- current_risk_id()
     risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
     result <- tryCatch(
-      delete_service_risk(database, risk_id, plan$plan_id[[1]]),
+      delete_service_risk(
+        database, risk_id, plan$plan_id[[1]],
+        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_risk_id(NULL)
-    showNotification("Risk deleted.", type = "message")
+    refresh_app_data(after = function() {
+      current_risk_id(NULL)
+      showNotification("Risk deleted.", type = "message")
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$duplicate_plan_from, {
@@ -8194,8 +9145,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification(paste(fy_label(source_plan$fiscal_year[[1]]), "plan copied into the current shared draft."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      showNotification(paste(fy_label(source_plan$fiscal_year[[1]]), "plan copied into the current shared draft."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$review_plan_request, {
@@ -8299,7 +9251,15 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    # No refresh_app_data() here on purpose: this observer fires on every
+    # scoring-input change (auto-saved, debounced), not just a single manual
+    # save, and refresh_app_data() reloads the ENTIRE database before
+    # output$page fully re-renders -- visibly collapsing/scrolling the page
+    # after every criterion score. The updated total score is already sent to
+    # the client below, so no server re-render is needed for that feedback.
+    # Terminal workflow actions on this plan (approve/route/publish) already
+    # call refresh_app_data() on their own, so app_data() is guaranteed fresh
+    # by the time it actually gates a workflow decision.
     session$sendCustomMessage("plan-review-save-result", list(
       ok = TRUE,
       source = source,
@@ -8332,8 +9292,9 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Plan reviewer assignment saved.", type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      showNotification("Plan reviewer assignment saved.", type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_review_approve_request, {
@@ -8393,18 +9354,19 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
-    review_action_label <- if (isTRUE(admin_route)) {
-      "Plan routed"
-    } else if (identical(next_status, "Returned")) {
-      "Plan returned"
-    } else {
-      "Reviewer approval saved"
-    }
-    showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the next approval step"
+      review_action_label <- if (isTRUE(admin_route)) {
+        "Plan routed"
+      } else if (identical(next_status, "Returned")) {
+        "Plan returned"
+      } else {
+        "Reviewer approval saved"
+      }
+      showNotification(paste(review_action_label, "and routed to", route_label, "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_gate_approve_request, {
@@ -8426,11 +9388,12 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    next_status <- plan_gate_next_status(plan$plan_status[[1]])
-    showNotification(paste("Approval stamp added. Plan routed to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      next_status <- plan_gate_next_status(plan$plan_status[[1]])
+      showNotification(paste("Approval stamp added. Plan routed to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_gate_return_request, {
@@ -8466,10 +9429,11 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification(paste("Plan returned to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification(paste("Plan returned to", agency_plan_status(next_status), "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$publishing_route_request, {
@@ -8496,9 +9460,10 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the selected queue"
-    showNotification(paste("Plan routed back to", route_label, "."), type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      route_label <- names(route_choices)[match(next_status, unname(route_choices))] %||% "the selected queue"
+      showNotification(paste("Plan routed back to", route_label, "."), type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$publish_plan_request, {
@@ -8509,19 +9474,44 @@ server <- function(input, output, session) {
     request <- input$publish_plan_request
     plan_id <- suppressWarnings(as.integer(request$planId))
     if (is.na(plan_id)) return()
+    data <- ensure_app_data()
+    plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+    goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
+    services <- plan_service_rows(data, plan)
+    selected_measure_ids <- plan_selected_measure_ids(data, plan, goals, services)
+    missing_fiscal_data <- plan_measures_missing_required_fiscal_data(data, plan, goals, services)
+    if (nrow(missing_fiscal_data)) {
+      recent_actual_fy <- fiscal_measure_snapshot_years()$actual_fy
+      next_target_fy <- current_fiscal_year() + 1L
+      showNotification(
+        paste0(
+          "Cannot publish: missing ", fy_label(recent_actual_fy), " actual or ", fy_label(next_target_fy), " target for ",
+          paste(head(missing_fiscal_data$title, 5), collapse = ", "),
+          if (nrow(missing_fiscal_data) > 5) paste0(" and ", nrow(missing_fiscal_data) - 5, " more") else ""
+        ),
+        type = "error", duration = 10
+      )
+      return()
+    }
     current_preview_user_id <- suppressWarnings(as.integer(current_role_preview_user_id() %||% NA_integer_))
     result <- tryCatch(
-      publish_agency_plan(database, plan_id, current_preview_user_id),
+      publish_agency_plan(
+        database, plan_id, current_preview_user_id,
+        required_measure_ids = selected_measure_ids,
+        actual_fy = fiscal_measure_snapshot_years()$actual_fy,
+        next_target_fy = current_fiscal_year() + 1L
+      ),
       error = function(error) error
     )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification("Plan published. Approved payload has been promoted to database records.", type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification("Plan published. Approved payload has been promoted to database records.", type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$plan_approval_stamp_request, {
@@ -8553,10 +9543,11 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    current_history_plan_id(plan_id)
-    current_history_include_review(TRUE)
-    showNotification(paste(approval_stage_label(stage), "approval stamp", if (identical(action, "remove")) "removed." else "added."), type = "message", duration = 6)
+    refresh_app_data(after = function() {
+      current_history_plan_id(plan_id)
+      current_history_include_review(TRUE)
+      showNotification(paste(approval_stage_label(stage), "approval stamp", if (identical(action, "remove")) "removed." else "added."), type = "message", duration = 6)
+    })
   }, ignoreInit = TRUE)
 
   observeEvent(input$export_plan_request, {
@@ -8568,6 +9559,11 @@ server <- function(input, output, session) {
     current_export_draft(NULL)
     draft_section_key <- as.character(request$draftSectionKey %||% "")
     draft_payload_json <- as.character(request$draftPayloadJson %||% "")
+    trigger_download <- function() {
+      current_export_plan_id(plan_id)
+      current_export_include_review(include_review)
+      session$sendCustomMessage("trigger-plan-download", list(type = export_type))
+    }
     if (
       nzchar(draft_section_key) &&
         nzchar(draft_payload_json) &&
@@ -8575,21 +9571,33 @@ server <- function(input, output, session) {
     ) {
       update_cached_section_draft(plan_id, draft_section_key, draft_payload_json)
       current_export_draft(list(plan_id = plan_id, section_key = draft_section_key))
-      tryCatch({
+      result <- tryCatch({
         data <- app_data()
         plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
         if (nrow(plan) && plan_is_editable(plan) && current_user_can_edit_plan()) {
           saved <- overwrite_section_draft(database, plan_id, draft_section_key, draft_payload_json)
           update_cached_section_draft(plan_id, draft_section_key, draft_payload_json, saved[1, , drop = FALSE])
-          refresh_app_data()
+          TRUE
+        } else {
+          FALSE
         }
-      }, error = function(error) {
-        showNotification(paste("Export will use the last saved draft:", conditionMessage(error)), type = "warning", duration = 8)
-      })
+      }, error = function(error) error)
+      if (inherits(result, "error")) {
+        showNotification(paste("Export will use the last saved draft:", conditionMessage(result)), type = "warning", duration = 8)
+        trigger_download()
+        return()
+      }
+      if (isTRUE(result)) {
+        # Unlike the other refresh_app_data() call sites, this one can't let
+        # the download trigger race ahead of the reload -- the export needs
+        # to reflect the just-saved draft. Waiting here only delays this
+        # user's own download trigger; the reload itself still runs in the
+        # background worker, so it doesn't block anyone else's session.
+        refresh_app_data(after = trigger_download, on_error = trigger_download)
+        return()
+      }
     }
-    current_export_plan_id(plan_id)
-    current_export_include_review(include_review)
-    session$sendCustomMessage("trigger-plan-download", list(type = export_type))
+    trigger_download()
   }, ignoreInit = TRUE)
 
   observeEvent(input$submit_plan_request, {
@@ -8605,9 +9613,24 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
-    showNotification("Plan submitted. Builder fields are locked while the plan is in review.", type = "message", duration = 8)
+    refresh_app_data(after = function() {
+      showNotification("Plan submitted. Builder fields are locked while the plan is in review.", type = "message", duration = 8)
+    })
   }, ignoreInit = TRUE)
+
+  output$download_measure_validation_csv <- downloadHandler(
+    filename = function() paste0("measure-validation-", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+    content = function(file) {
+      utils::write.csv(measure_validation_export_rows(app_data()), file, row.names = FALSE, na = "")
+    }
+  )
+
+  output$download_measure_data_csv <- downloadHandler(
+    filename = function() paste0("measure-data-", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+    content = function(file) {
+      utils::write.csv(measure_data_export_rows(app_data()), file, row.names = FALSE, na = "")
+    }
+  )
 
   output$download_plan_pdf <- downloadHandler(
     filename = function() {
@@ -8702,11 +9725,12 @@ server <- function(input, output, session) {
 
       result <- save_section_draft(database, plan_id, section_key, payload_json, revision)
       if (isTRUE(result$ok)) {
+        # Update the non-reactive draft cache only -- output$page already reads
+        # fresh draft content via data_with_cached_section_draft() on every
+        # render. Writing to app_data() here would force a full-page
+        # re-render on every autosave tick (matching the goals_draft_quiet_save
+        # / service_metrics_draft_save pattern, which never write to app_data()).
         update_cached_section_draft(plan_id, section_key, payload_json, result$row)
-        cached_data <- app_data()
-        if (!is.null(cached_data)) {
-          app_data(data_with_cached_section_draft(cached_data, plan_id, section_key))
-        }
         session$sendCustomMessage("shared-draft-result", list(
           ok = TRUE,
           planId = plan_id,
@@ -8731,106 +9755,11 @@ server <- function(input, output, session) {
     })
   }, ignoreInit = TRUE)
 
-  observeEvent(input$service_description_draft_save, {
-    request <- input$service_description_draft_save
-    plan_id <- suppressWarnings(as.integer(request$planId))
-    section_key <- as.character(request$sectionKey %||% "services")
-    service_id <- as.character(request$serviceId %||% "")
-    field_id <- as.character(request$fieldId %||% "")
-    value <- as.character(request$value %||% "")
-    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id) || !grepl("^service_description_", field_id)) {
-      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "The service description save request was incomplete."))
-      return()
-    }
-    tryCatch({
-      if (!current_user_can_edit_plan()) {
-        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "You do not have permission to edit this plan."))
-        return()
-      }
-      data <- app_data()
-      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
-      if (!nrow(plan) || !plan_is_editable(plan)) {
-        session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = "This plan is locked and cannot be edited."))
-        return()
-      }
-      existing <- get_section_draft(database, plan_id, "services")
-      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
-      if (is.null(payload) || !is.list(payload)) payload <- list()
-      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
-      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
-      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
-      payload$values[[field_id]] <- value
-      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
-      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
-      row <- saved[1, , drop = FALSE]
-      update_cached_section_draft(plan_id, "services", payload_json, row)
-      session$sendCustomMessage("service-description-draft-result", list(
-        ok = TRUE,
-        planId = plan_id,
-        sectionKey = "services",
-        fieldId = field_id,
-        revision = row$revision[[1]],
-        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
-      ))
-    }, error = function(error) {
-      session$sendCustomMessage("service-description-draft-result", list(ok = FALSE, message = conditionMessage(error)))
-    })
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$service_metrics_draft_save, {
-    request <- input$service_metrics_draft_save
-    plan_id <- suppressWarnings(as.integer(request$planId))
-    section_key <- as.character(request$sectionKey %||% "services")
-    service_id <- as.character(request$serviceId %||% "")
-    metric_ids <- suppressWarnings(as.integer(unlist(request$metricIds %||% list())))
-    metric_ids <- metric_ids[!is.na(metric_ids)]
-    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(service_id)) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "The service metrics save request was incomplete."))
-      return()
-    }
-    if (length(metric_ids) > 5L) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "A service can have no more than 5 metrics."))
-      return()
-    }
-    tryCatch({
-      if (!current_user_can_edit_plan()) {
-        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "You do not have permission to edit this plan."))
-        return()
-      }
-      data <- app_data()
-      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
-      if (!nrow(plan) || !plan_is_editable(plan)) {
-        session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = "This plan is locked and cannot be edited."))
-        return()
-      }
-      existing <- get_section_draft(database, plan_id, "services")
-      payload <- if (is.null(existing)) NULL else tryCatch(jsonlite::fromJSON(existing$payload[[1]], simplifyVector = FALSE), error = function(error) NULL)
-      if (is.null(payload) || !is.list(payload)) payload <- list()
-      if (is.null(payload$values) || !is.list(payload$values)) payload$values <- list()
-      if (is.null(payload$serviceMetrics) || !is.list(payload$serviceMetrics)) payload$serviceMetrics <- list()
-      payload$savedAt <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
-      payload$serviceMetrics[service_id] <- list(as.list(metric_ids))
-      payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
-      saved <- overwrite_section_draft(database, plan_id, "services", payload_json)
-      row <- saved[1, , drop = FALSE]
-      update_cached_section_draft(plan_id, "services", payload_json, row)
-      cached_data <- app_data()
-      if (!is.null(cached_data)) {
-        app_data(data_with_cached_section_draft(cached_data, plan_id, "services"))
-      }
-      session$sendCustomMessage("service-metrics-draft-result", list(
-        ok = TRUE,
-        planId = plan_id,
-        sectionKey = "services",
-        serviceId = service_id,
-        metricIds = as.list(metric_ids),
-        revision = row$revision[[1]],
-        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
-      ))
-    }, error = function(error) {
-      session$sendCustomMessage("service-metrics-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", serviceId = service_id, message = conditionMessage(error)))
-    })
-  }, ignoreInit = TRUE)
+  # NOTE: service_description_draft_save / service_metrics_draft_save
+  # observers were removed 2026-07-24 -- confirmed dead (app.js's
+  # flushServiceDescriptionAutosave()/flushServiceMetricsAutosave() are
+  # defined but never called; the live Services autosave path is
+  # services_draft_quiet_save below, via scheduleServicesQuietAutosave()).
 
   observeEvent(input$goals_draft_quiet_save, {
     request <- input$goals_draft_quiet_save
@@ -8857,9 +9786,10 @@ server <- function(input, output, session) {
         session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = "The goals draft could not be read."))
         return()
       }
-      saved <- overwrite_section_draft(database, plan_id, "goals", payload_json)
+      saved <- save_goals_draft_merged(database, plan_id, payload_json)
       row <- saved[1, , drop = FALSE]
-      update_cached_section_draft(plan_id, "goals", payload_json, row)
+      merged_payload_json <- get_section_draft(database, plan_id, "goals")$payload[[1]]
+      update_cached_section_draft(plan_id, "goals", merged_payload_json, row)
       session$sendCustomMessage("goals-draft-result", list(
         ok = TRUE,
         planId = plan_id,
@@ -8869,6 +9799,51 @@ server <- function(input, output, session) {
       ))
     }, error = function(error) {
       session$sendCustomMessage("goals-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "goals", message = conditionMessage(error)))
+    })
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$services_draft_quiet_save, {
+    request <- input$services_draft_quiet_save
+    plan_id <- suppressWarnings(as.integer(request$planId))
+    section_key <- as.character(request$sectionKey %||% "services")
+    payload_json <- as.character(request$payloadJson %||% "")
+    if (is.na(plan_id) || !identical(section_key, "services") || !nzchar(payload_json)) {
+      session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "The services save request was incomplete."))
+      return()
+    }
+    tryCatch({
+      if (!current_user_can_edit_plan()) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "You do not have permission to edit this plan."))
+        return()
+      }
+      data <- app_data()
+      plan <- data$planning_agency_plan[data$planning_agency_plan$plan_id == plan_id, , drop = FALSE]
+      if (!nrow(plan) || !plan_is_editable(plan)) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "This plan is locked and cannot be edited."))
+        return()
+      }
+      payload <- tryCatch(jsonlite::fromJSON(payload_json, simplifyVector = FALSE), error = function(error) NULL)
+      if (is.null(payload) || !is.list(payload)) {
+        session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = "The services draft could not be read."))
+        return()
+      }
+      if (!is.null(payload$values) && is.list(payload$values)) {
+        payload$values <- payload$values[!grepl("^service_metric_", names(payload$values))]
+        payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+      }
+      saved <- save_services_draft_quiet_merged(database, plan_id, payload_json)
+      row <- saved[1, , drop = FALSE]
+      merged_payload_json <- get_section_draft(database, plan_id, "services")$payload[[1]]
+      update_cached_section_draft(plan_id, "services", merged_payload_json, row)
+      session$sendCustomMessage("services-draft-result", list(
+        ok = TRUE,
+        planId = plan_id,
+        sectionKey = "services",
+        revision = row$revision[[1]],
+        updatedAt = format(row$updated_at[[1]], "%Y-%m-%dT%H:%M:%S")
+      ))
+    }, error = function(error) {
+      session$sendCustomMessage("services-draft-result", list(ok = FALSE, planId = plan_id, sectionKey = "services", message = conditionMessage(error)))
     })
   }, ignoreInit = TRUE)
 
@@ -9080,9 +10055,11 @@ server <- function(input, output, session) {
         status = feedback_filter_values(input$feedback_status_filter)
       ),
       selected_cls_id = current_cls_id(),
+      cls_detail_origin = cls_detail_origin(),
+      # Filters apply only when Apply is pressed (NULL = show everything).
       cls_review_filters = list(
-        status = if (is.null(input$cls_review_status_filter)) character(0) else as.character(input$cls_review_status_filter),
-        agency = if (is.null(input$cls_review_agency_filter)) character(0) else as.character(input$cls_review_agency_filter)
+        status = cls_applied_status() %||% character(0),
+        agency = cls_applied_agency() %||% character(0)
       )
     )
   })
@@ -9108,7 +10085,10 @@ server <- function(input, output, session) {
       current_user_can_manage_measure_admin_fields(),
       target_fy,
       current_user_can_submit_measure() || current_user_can_review_measures(),
-      can_delete_measures(current_user_app_roles())
+      can_delete_measures(current_user_app_roles()),
+      current_user_can_edit_locked_measure_data(),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city()),
+      identical(measure_id, "new") && isTRUE(pending_new_measure_default_city())
     )
   })
 

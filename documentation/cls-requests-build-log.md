@@ -274,3 +274,45 @@ Three changes from the plain-English review:
    — the source list had the comparisons reversed.
 
 **Status:** ✅ verified live; committed.
+
+## Entry 12 — Making incomplete requests impossible to miss
+
+Six items from the last review pass.
+
+1. **Red row + badge on the list page.** A new helper `cls_request_gaps(db, row)` returns
+   which required pieces a request is still missing (name, type, summary, FY28 amount, or a
+   breakdown that doesn't add up to the amount). Rows with gaps get
+   `.cls-request-row-missing` — a pink fill and a 3px red left edge — and the name carries a
+   solid-red **MISSING INFO** pill. The tooltip reads *"This request has missing
+   information. Still needed: …"* and lists the actual gaps, and the badge is
+   keyboard-focusable so the tooltip isn't mouse-only.
+2. **The balance banner is properly red when out of balance.** `.cls-remaining-over`
+   already applied in both directions (under- and over-described); it now renders as a red
+   panel with a red border, a heavy red left edge, bold dark-red text and a ⚠ marker,
+   instead of the near-invisible tint it had. The ⚠ is a CSS `::before` on
+   `.cls-remaining-text` so it survives the JS rewriting the text on every keystroke.
+3. **"You have missing fields."** Clicking back from an unfinished request alerts that;
+   a complete one still says *"This request has been justified."*
+4. **Reviewers can't wander into the agency list.** The back destination is no longer
+   inferred from roles alone. `cls_detail_origin` records the page the request was opened
+   from and `page_cls_request_detail()` takes it as `origin_page`: anyone arriving from CLS
+   Review returns to CLS Review, even if they also hold an agency role. Verified across six
+   role/origin combinations.
+5. **Info panels collapse.** Re-verified after the two earlier fixes (computed-style read,
+   id lookup scoped to the owning field): four clicks on each icon give
+   none → block → none → block → none, with four copies of the same id in the document.
+6. **All eight review fields on one line.** `.cls-rv-submitted` moved from eight equal
+   columns to weighted ones (Service widest, the money columns narrowest), so **Positions**
+   no longer wraps. Below 1120px the type shrinks rather than wrapping; the four-column
+   fallback now waits until 820px. `cls_detail_field()` adds a `title` so the few values
+   that do get truncated are still readable on hover.
+
+**Verified live** against the running stack: `cls_request_gaps()` flags exactly one of
+seven seeded requests; the rendered list page carries one `.cls-request-row-missing`
+of three rows; the back-link matrix resolves correctly for BBMR-only, BBMR+SystemAdmin,
+BBMR+Writer and Writer-only, from both origins. Browser-tested on the real rendered pages:
+the banner reads *"The total request needs to explain $185,000.00"* in red, both alerts
+fire on the right requests, both dropdown types toggle closed, and all eight review fields
+measure to a single line at 900px and above with nothing clipped.
+
+**Status:** ✅ built and verified live; not yet committed.

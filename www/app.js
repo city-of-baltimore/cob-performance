@@ -6,11 +6,16 @@
   var autosaveTimer = null;
   var serviceDescriptionAutosaveTimer = null;
   var serviceMetricsAutosaveTimer = null;
+  var servicesQuietAutosaveTimer = null;
   var goalsQuietAutosaveTimer = null;
   var reviewAutosaveTimer = null;
   var pendingServiceDescriptionSave = null;
   var pendingServiceMetricsSave = null;
+  var pendingServicesQuietSave = null;
   var pendingGoalsQuietSave = null;
+  var draftSaveQueue = [];
+  var activeDraftSave = null;
+  var activeDraftSaveTimer = null;
   var backgroundSaveCount = 0;
   var backgroundSaveClearTimer = null;
   var pendingNavigationPage = null;
@@ -24,6 +29,9 @@
   var authRestorePending = false;
   var authRestoreAttempted = false;
   var openServiceIds = new Set();
+  var openGoalIds = new Set();
+  var serviceMetricUiState = {};
+  var serviceMetricUiVersion = {};
 
   function dismissGoalDeleteDialog() {
     pendingGoalDeletion = null;
@@ -43,6 +51,7 @@
   function clsPageRoot() { return document.querySelector(".cls-detail-shell"); }
   function clsFieldInput(container) { return container.querySelector("input, textarea, select"); }
   function clsWordCount(s) { s = (s || "").trim(); return s ? s.split(/\s+/).length : 0; }
+  var CLS_SUMMARY_WORD_LIMIT = 150;
   function clsLineTotal() {
     var total = 0;
     document.querySelectorAll(".cls-line-table .cls-line-row[data-cls-line-amount]").forEach(function (row) {
@@ -51,6 +60,15 @@
     });
     return total;
   }
+  function clsPositionTotal() {
+    var total = 0;
+    document.querySelectorAll(".cls-position-table .cls-position-row[data-cls-position-amount]").forEach(function (row) {
+      var v = parseFloat(row.getAttribute("data-cls-position-amount"));
+      if (!isNaN(v)) total += v;
+    });
+    return total;
+  }
+  function clsAccountedTotal() { return clsLineTotal() + clsPositionTotal(); }
   function clsRequestAmount() {
     var el = document.getElementById("cls_form_amount");
     if (!el) return 0;
@@ -66,38 +84,48 @@
     var box = document.getElementById("cls_summary_wordcount");
     if (!ta || !box) return;
     var wc = clsWordCount(ta.value);
-    var over = wc - 300;
+    var limit = CLS_SUMMARY_WORD_LIMIT;
+    var over = wc - limit;
     if (over > 0) {
       ta.classList.add("cls-over-limit");
       box.classList.add("cls-over-limit");
-      box.textContent = "This response is " + over + " word" + (over === 1 ? "" : "s") + " over the 300-word limit. Anything beyond 300 words will be cut off for review.";
+      box.textContent = "This response is " + over + " word" + (over === 1 ? "" : "s") + " over the " + limit +
+        "-word limit. Anything beyond " + limit + " words will be cut off for review.";
     } else {
       ta.classList.remove("cls-over-limit");
       box.classList.remove("cls-over-limit");
-      box.textContent = wc + " / 300 words";
+      box.textContent = wc + " / " + limit + " words";
     }
   }
-  function clsUpdateRemaining() {
-    var note = document.querySelector(".cls-remaining-note");
+  function clsUpdateRemaining(scope) {
+    var root = scope || document;
+    var note = root.querySelector(".cls-remaining-note");
     if (!note) return;
     var text = note.querySelector(".cls-remaining-text");
     if (!text) return;
-    var amt = clsRequestAmount();
-    var total = clsLineTotal();
-    var remaining = amt - total;
+    var amtEl = root.querySelector("#cls_form_amount");
+    var amt = amtEl ? (parseFloat(amtEl.value) || 0) : 0;
+    var accounted = 0;
+    root.querySelectorAll("[data-cls-line-amount], [data-cls-position-amount]").forEach(function (row) {
+      var v = parseFloat(row.getAttribute("data-cls-line-amount") || row.getAttribute("data-cls-position-amount"));
+      if (!isNaN(v)) accounted += v;
+    });
+    var remaining = amt - accounted;
     note.classList.remove("cls-remaining-ok", "cls-remaining-over");
     if (amt <= 0) {
-      text.textContent = "Enter the request amount above, then use the Add Details button to break it out by expenditure object.";
+      text.textContent = "Enter the FY28 Amount above, then describe it by object or positions.";
       return;
     }
     if (Math.abs(remaining) < 0.005) {
       note.classList.add("cls-remaining-ok");
-      text.textContent = "The line totals match the request amount of " + clsMoney(amt) + ". This request is fully broken out.";
+      text.textContent = "The total request of " + clsMoney(amt) + " is fully described by object and positions.";
     } else if (remaining > 0) {
-      text.textContent = "Use the Add Details button to describe the remaining " + clsMoney(remaining) + " in this request. The line totals should equal the request amount.";
+      // Unbalanced either way is a problem, so both directions read as an error.
+      note.classList.add("cls-remaining-over");
+      text.textContent = "The total request needs to explain " + clsMoney(remaining) + ". Describe the request amount by object or positions.";
     } else {
       note.classList.add("cls-remaining-over");
-      text.textContent = "The line totals exceed the request amount by " + clsMoney(Math.abs(remaining)) + ". Reduce the line items or increase the request amount.";
+      text.textContent = "The total request exceeds " + clsMoney(Math.abs(remaining)) + ". Reduce the request amount by object or positions.";
     }
   }
   function clsUpdateRequired() {
@@ -107,18 +135,35 @@
       c.classList.toggle("cls-field-missing", empty);
     });
   }
-  function clsValidate() { clsUpdateWordCount(); clsUpdateRemaining(); clsUpdateRequired(); }
-  function clsRequestIsComplete() {
-    if (!clsPageRoot()) return false;
+  function clsValidate() {
+    clsUpdateWordCount();
+    clsUpdateRequired();
+    // Each request shell totals only its own objects and positions.
+    var shells = document.querySelectorAll(".cls-detail-shell");
+    if (shells.length) shells.forEach(function (s) { clsUpdateRemaining(s); });
+    else clsUpdateRemaining();
+  }
+  // Scoped to one request shell: the page can contain more than one form
+  // (and a "new" form with empty fields must not make a saved request look
+  // incomplete).
+  function clsRequestIsComplete(scope) {
+    var root = scope || clsPageRoot();
+    if (!root) return false;
     var ok = true;
-    document.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+    root.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
       var el = clsFieldInput(c);
       if (!el || !(el.value || "").trim()) ok = false;
     });
-    var ta = document.getElementById("cls_form_summary");
-    if (ta && clsWordCount(ta.value) > 300) ok = false;
-    var amt = clsRequestAmount();
-    if (amt <= 0 || Math.abs(amt - clsLineTotal()) >= 0.005) ok = false;
+    var ta = root.querySelector("#cls_form_summary, [id$='cls_form_summary']");
+    if (ta && clsWordCount(ta.value) > CLS_SUMMARY_WORD_LIMIT) ok = false;
+    var amtEl = root.querySelector("#cls_form_amount");
+    var amt = amtEl ? (parseFloat(amtEl.value) || 0) : 0;
+    var total = 0;
+    root.querySelectorAll("[data-cls-line-amount], [data-cls-position-amount]").forEach(function (row) {
+      var v = parseFloat(row.getAttribute("data-cls-line-amount") || row.getAttribute("data-cls-position-amount"));
+      if (!isNaN(v)) total += v;
+    });
+    if (amt <= 0 || Math.abs(amt - total) >= 0.005) ok = false;
     return ok;
   }
   function clsApplyOneTime() {
@@ -133,22 +178,56 @@
       });
     }
   }
+  function clsApplyOneTimeLabel() {
+    var cb = document.getElementById("cls_form_one_time");
+    var label = document.getElementById("cls_onetime_label");
+    if (cb && label) label.textContent = cb.checked ? "One-Time Request" : "Recurring Request";
+  }
+  function clsClearPositionForm() {
+    ["cls_position_classification", "cls_position_salary", "cls_position_justification",
+     "cls_position_explanation"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.value !== "") { el.value = ""; el.dispatchEvent(new Event("change", { bubbles: true })); }
+    });
+    var count = document.getElementById("cls_position_count");
+    if (count) { count.value = "1"; count.dispatchEvent(new Event("change", { bubbles: true })); }
+  }
   function clsApplyPositionsToggle() {
     var cb = document.getElementById("cls_add_positions_toggle");
     var body = document.getElementById("cls_positions_body");
-    if (cb && body) body.style.display = cb.checked ? "" : "none";
+    if (!cb || !body) return;
+    body.style.display = cb.checked ? "" : "none";
+    // Unchecking abandons whatever was being typed, so clear the entry fields.
+    if (!cb.checked) clsClearPositionForm();
+  }
+  function clsToggleInfoPanel(id, button) {
+    // Look inside the field that owns the button first: ids repeat if more than
+    // one request form is present, and getElementById would find the wrong one.
+    var panel = null;
+    if (button) {
+      var field = button.closest(".cls-field-full") || button.closest(".cls-detail-shell");
+      if (field) panel = field.querySelector("#cls_info_" + id) || field.querySelector(".cls-info-panel");
+    }
+    if (!panel) panel = document.getElementById("cls_info_" + id);
+    if (!panel) return;
+    // Read the rendered state, not the inline style: after the first toggle the
+    // inline style is "" (visible), which an empty-string check misread as closed.
+    var isHidden = window.getComputedStyle(panel).display === "none";
+    panel.style.display = isHidden ? "block" : "none";
+    if (button) button.setAttribute("aria-expanded", isHidden ? "true" : "false");
   }
   function clsSyncTitle() {
     var name = document.getElementById("cls_form_name");
     var title = document.querySelector(".cls-detail-title");
-    if (name && title) {
-      var v = (name.value || "").trim();
-      title.textContent = v || "New CLS request";
-    }
+    var v = name ? (name.value || "").trim() : "";
+    if (name && title) title.textContent = v || "New CLS request";
+    var intro = document.querySelector(".cls-intro-name");
+    if (intro) intro.textContent = v || "request";
   }
   function clsInitPage() {
     if (!clsPageRoot()) return;
     clsApplyOneTime();
+    clsApplyOneTimeLabel();
     clsApplyPositionsToggle();
     clsSyncTitle();
     clsValidate();
@@ -170,7 +249,7 @@
   });
   document.addEventListener("change", function (event) {
     if (!event.target) return;
-    if (event.target.id === "cls_form_one_time") { clsApplyOneTime(); clsValidate(); }
+    if (event.target.id === "cls_form_one_time") { clsApplyOneTime(); clsApplyOneTimeLabel(); clsValidate(); }
     if (event.target.id === "cls_add_positions_toggle") { clsApplyPositionsToggle(); }
     if (event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
     if (event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
@@ -185,8 +264,10 @@
 
   function navigateToPage(page) {
     if (page !== "services") openServiceIds.clear();
+    if (page !== "goals") openGoalIds.clear();
     setActivePage(page);
     closeMobileNav();
+    window.scrollTo(0, 0);
     if (window.Shiny) {
       window.Shiny.setInputValue("current_page", page, { priority: "event" });
     }
@@ -251,8 +332,7 @@
     dismissGoalDeleteDialog();
     var builderPage = currentBuilderPage();
     if (builderPage && builderPage.querySelector(".services-page")) {
-      flushServiceDescriptionAutosave();
-      flushServiceMetricsAutosave();
+      flushServicesQuietAutosave();
       clearPendingNavigation();
       navigateToPage(page);
       return;
@@ -545,6 +625,7 @@
     window.Shiny.addCustomMessageHandler("shared-draft-result", handleDraftSaveResult);
     window.Shiny.addCustomMessageHandler("service-description-draft-result", handleServiceDescriptionDraftResult);
     window.Shiny.addCustomMessageHandler("service-metrics-draft-result", handleServiceMetricsDraftResult);
+    window.Shiny.addCustomMessageHandler("services-draft-result", handleServicesDraftResult);
     window.Shiny.addCustomMessageHandler("goals-draft-result", handleGoalsDraftResult);
     window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
     window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
@@ -581,6 +662,82 @@
     if (chip) chip.textContent = values.length + " " + (values.length === 1 ? "Metric" : "Metrics");
   }
 
+  function serviceMetricStateKey(editor) {
+    if (!editor) return "";
+    var page = editor.closest(".builder-page-content");
+    var serviceId = editor.getAttribute("data-service-id") || "";
+    var planId = page ? page.getAttribute("data-plan-id") || "" : "";
+    return planId && serviceId ? planId + "::" + serviceId : "";
+  }
+
+  function findServiceEditor(page, serviceId) {
+    if (!page || !serviceId) return null;
+    var candidates = Array.from(page.querySelectorAll(".service-editor")).filter(function (candidate) {
+      return candidate.getAttribute("data-service-id") === String(serviceId);
+    });
+    if (!candidates.length) return null;
+    var openCandidates = candidates.filter(function (candidate) { return candidate.open; });
+    var visibleCandidates = (openCandidates.length ? openCandidates : candidates).filter(function (candidate) {
+      return candidate.offsetParent !== null || candidate.getClientRects().length > 0;
+    });
+    return (visibleCandidates.length ? visibleCandidates : (openCandidates.length ? openCandidates : candidates))[0];
+  }
+
+  function serviceMetricRowValues(editor, keepBlanks) {
+    var container = editor && editor.querySelector(".service-metric-selectors");
+    if (!container) return [];
+    var values = Array.from(container.querySelectorAll("select")).map(function (select) {
+      return select.value || "";
+    });
+    return keepBlanks ? values : values.filter(function (value) { return value !== ""; });
+  }
+
+  function rememberServiceMetricUiState(editor, bumpVersion) {
+    var key = serviceMetricStateKey(editor);
+    if (!key) return;
+    serviceMetricUiState[key] = serviceMetricRowValues(editor, true);
+    if (bumpVersion !== false) serviceMetricUiVersion[key] = (serviceMetricUiVersion[key] || 0) + 1;
+  }
+
+  function currentServiceMetricUiVersion(editor) {
+    var key = serviceMetricStateKey(editor);
+    return key ? (serviceMetricUiVersion[key] || 0) : 0;
+  }
+
+  function applyServiceMetricUiState(editor) {
+    var key = serviceMetricStateKey(editor);
+    if (!key || !serviceMetricUiState[key]) return;
+    var values = serviceMetricUiState[key];
+    var container = editor.querySelector(".service-metric-selectors");
+    var picker = container && container.closest(".kpi-picker");
+    var firstSelect = container && container.querySelector("select");
+    if (!container || !picker || !firstSelect || !values.length) return;
+    while (container.querySelectorAll(".kpi-select-row").length > 1) {
+      container.querySelector(".kpi-select-row:last-child").remove();
+    }
+    firstSelect.value = values[0] || "";
+    values.slice(1).forEach(function (value) {
+      addKpiSelector(picker, value, { skipRemember: true });
+    });
+    updateKpiPreview(firstSelect);
+    updateServiceEditorMetricMetadata(editor);
+  }
+
+  function normalizeKpiSelectorRows(picker) {
+    var container = picker && picker.querySelector(".kpi-selectors");
+    if (!container) return;
+    var goalId = container.getAttribute("data-goal-id");
+    var serviceId = container.getAttribute("data-service-id");
+    Array.from(container.querySelectorAll(".kpi-select-row")).forEach(function (row, index) {
+      var select = row.querySelector("select");
+      if (select) {
+        var nextIndex = index + 1;
+        select.id = goalId ? "goal_kpi_" + goalId + "_" + nextIndex : "service_metric_" + serviceId + "_" + nextIndex;
+        select.name = select.id;
+      }
+    });
+  }
+
   function csvValueSet(value) {
     return new Set(String(value || "").split(",").map(function (item) {
       return item.trim();
@@ -599,14 +756,7 @@
   }
 
   function requestServiceBody(editor) {
-    if (!editor || !editor.open || editor.dataset.serviceBodyRequested === "true") return;
-    var serviceId = editor.getAttribute("data-service-id") || "";
-    if (!serviceId || !window.Shiny) return;
-    editor.dataset.serviceBodyRequested = "true";
-    window.Shiny.setInputValue("service_lazy_open", {
-      serviceId: serviceId,
-      nonce: Date.now()
-    }, { priority: "event" });
+    return;
   }
 
   function restoreOpenServiceDrawers() {
@@ -619,6 +769,18 @@
       var body = editor.querySelector(".service-editor-body");
       if (body) body.setAttribute("aria-hidden", "false");
       requestServiceBody(editor);
+    });
+  }
+
+  function restoreOpenGoalDrawers() {
+    var page = document.querySelector(".goals-page");
+    if (!page || !openGoalIds.size) return;
+    page.querySelectorAll(".goal-editor[data-goal-id]").forEach(function (editor) {
+      var goalId = editor.getAttribute("data-goal-id") || "";
+      if (!openGoalIds.has(goalId)) return;
+      editor.open = true;
+      var body = editor.querySelector(".goal-editor-body");
+      if (body) body.setAttribute("aria-hidden", "false");
     });
   }
 
@@ -796,6 +958,31 @@
       requestSignOut();
       return;
     }
+    var clsRvToggle = event.target.closest("[data-cls-rv-toggle]");
+    if (clsRvToggle && !clsRvToggle.classList.contains("cls-rv-header-row")) {
+      var rvRow = clsRvToggle.closest(".cls-rv-row");
+      var rvBody = rvRow ? rvRow.querySelector(".cls-rv-body") : null;
+      if (!rvBody) rvBody = document.getElementById("cls_rv_body_" + clsRvToggle.getAttribute("data-cls-rv-toggle"));
+      if (rvBody) {
+        // Read the rendered state so a second click collapses the row.
+        var rvHidden = window.getComputedStyle(rvBody).display === "none";
+        rvBody.style.display = rvHidden ? "block" : "none";
+        clsRvToggle.setAttribute("aria-expanded", rvHidden ? "true" : "false");
+      }
+      return;
+    }
+    var clsInfoBtn = event.target.closest("[data-cls-info]");
+    if (clsInfoBtn) {
+      event.preventDefault();
+      clsToggleInfoPanel(clsInfoBtn.getAttribute("data-cls-info"), clsInfoBtn);
+      return;
+    }
+    var clsCostHelp = event.target.closest("[data-cls-cost-help]");
+    if (clsCostHelp) {
+      // Placeholder until the salary/benefit cost reference is wired up.
+      event.preventDefault();
+      return;
+    }
     var clsSubmitOne = event.target.closest("[data-cls-submit]");
     if (clsSubmitOne && window.Shiny) {
       window.Shiny.setInputValue("cls_submit_one", {
@@ -848,8 +1035,14 @@
       return;
     }
     var clsBackLink = event.target.closest(".cls-back-link");
-    if (clsBackLink && clsRequestIsComplete()) {
-      window.alert("This request has been justified.");
+    if (clsBackLink) {
+      var backShell = clsBackLink.closest(".cls-detail-shell");
+      // Only nag when there is actually a request being edited.
+      if (backShell && backShell.querySelector("#cls_form_amount")) {
+        window.alert(clsRequestIsComplete(backShell)
+          ? "This request has been justified."
+          : "You have missing fields.");
+      }
       // fall through to the [data-page] navigation below
     }
     var clsOpen = event.target.closest("[data-cls-open]");
@@ -979,7 +1172,13 @@
     if (addButton) {
       sendPage(addButton.getAttribute("data-page") || "metrics");
     }
-    window.Shiny.setInputValue("open_measure_id", addButton ? "new" : row.getAttribute("data-measure-id"), { priority: "event" });
+    // "new:city" (vs. plain "new") tells the server to pre-check "Citywide
+    // measure" for this new measure -- used by the Add button on the
+    // Action Plan Measures page, so a measure created from there doesn't
+    // silently fail to show back up in that same list until someone
+    // remembers to check the box by hand.
+    var newMeasureValue = addButton && addButton.getAttribute("data-default-city") === "true" ? "new:city" : "new";
+    window.Shiny.setInputValue("open_measure_id", addButton ? newMeasureValue : row.getAttribute("data-measure-id"), { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {
@@ -1358,12 +1557,20 @@
     if (!input || input.value === "") return;
     var value = input.value;
     if (format === "Percent") {
-      value = value.replace(/[^\d.]/g, "");
-      if (value.indexOf(".") !== -1) value = value.slice(0, value.indexOf("."));
-      var percent = Number(value);
+      var raw = value.replace(/[^\d.]/g, "");
+      var percent = Number(raw);
       if (Number.isNaN(percent)) {
         input.value = "";
         return;
+      }
+      // A value like "0.75" is a leftover habit from when percents were
+      // stored as decimal fractions -- convert to 75 instead of silently
+      // truncating everything after the decimal point (the previous
+      // behavior turned "0.75" into "0" with no warning). A bare whole
+      // number like "1" (no decimal point) is left as 1, since that's a
+      // legitimate "1%" under the current whole-number convention.
+      if (percent > 0 && percent <= 1 && raw.indexOf(".") !== -1) {
+        percent = percent * 100;
       }
       input.value = String(Math.max(0, Math.min(100, Math.round(percent))));
       return;
@@ -1421,7 +1628,14 @@
     }
     if (!event.target.matches(".measure-value-input")) return;
     var formatSelect = document.getElementById("measure_format");
-    normalizeMeasureNumberInput(event.target, formatSelect ? formatSelect.value : "Count");
+    var format = formatSelect ? formatSelect.value : "Count";
+    // Percent only normalizes on change (blur), not on every keystroke --
+    // normalizing mid-typing mangled a decimal like "0.75" before the
+    // user finished typing it (the "0." got stripped after just two
+    // characters). Letting the full value land first, then converting
+    // fractions like 0.75 -> 75 on blur, is what actually fixes it.
+    if (format === "Percent") return;
+    normalizeMeasureNumberInput(event.target, format);
   });
 
   function updateKpiPreview(control) {
@@ -1535,6 +1749,7 @@
     if (!event.target.matches(".kpi-select-row select")) return;
     updateKpiPreview(event.target);
     updateServiceEditorMetricMetadata(event.target.closest(".service-editor"));
+    rememberServiceMetricUiState(event.target.closest(".service-editor"));
     updateAllKpiAvailability(event.target.closest(".goals-page, .services-page"));
   });
 
@@ -1555,7 +1770,8 @@
     refreshMetricAvailabilityForSelect(event.target);
   });
 
-  function addKpiSelector(picker, value) {
+  function addKpiSelector(picker, value, options) {
+    options = options || {};
     var container = picker.querySelector(".kpi-selectors");
     var sourceRow = container && container.querySelector(".kpi-select-row");
     if (!container || !sourceRow) return null;
@@ -1593,9 +1809,19 @@
       row.appendChild(removeButton);
     }
     container.appendChild(row);
-    if (window.Shiny && window.Shiny.bindAll) window.Shiny.bindAll(row);
+    normalizeKpiSelectorRows(picker);
     updateAllKpiAvailability(picker.closest(".goals-page, .services-page"));
+    if (!options.skipRemember && serviceId) rememberServiceMetricUiState(container.closest(".service-editor"));
     return select;
+  }
+
+  function unbindDraftOnlyControls(root) {
+    if (!root || !window.Shiny || !window.Shiny.unbindAll) return;
+    root.querySelectorAll(".goals-page .kpi-picker, .goals-page .initiative-picker, .services-page .kpi-picker").forEach(function (picker) {
+      if (picker.dataset.draftOnlyUnbound === "true") return;
+      window.Shiny.unbindAll(picker);
+      picker.dataset.draftOnlyUnbound = "true";
+    });
   }
 
   document.addEventListener("click", function (event) {
@@ -1619,11 +1845,12 @@
     }
     addKpiSelector(picker, "");
     updateServiceEditorMetricMetadata(addButton.closest(".service-editor"));
+    rememberServiceMetricUiState(addButton.closest(".service-editor"));
     if (page && page.matches(".goals-page")) updateGoalRequirements(page);
     if (page && page.matches(".services-page")) {
-      setGoalsSaveStatus("Select a metric to autosave this service.");
+      setGoalsSaveStatus("Not saved yet");
     } else if (page && page.matches(".goals-page")) {
-      setGoalsSaveStatus("Select a KPI to autosave this goal.");
+      setGoalsSaveStatus("Not saved yet");
     } else {
       scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
     }
@@ -1642,20 +1869,23 @@
         onlySelect.value = "";
         updateKpiPreview(onlySelect);
       }
+      normalizeKpiSelectorRows(picker);
       updateServiceEditorMetricMetadata(serviceEditor);
+      rememberServiceMetricUiState(serviceEditor);
       updateAllKpiAvailability(page);
-      scheduleServiceMetricsAutosave(page.closest(".builder-page-content"), serviceEditor, 500);
+      scheduleServiceMetricsAutosave(page.closest(".builder-page-content"), serviceEditor, 1600);
       return;
     }
-    if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(row);
     row.remove();
+    normalizeKpiSelectorRows(picker);
     updateServiceEditorMetricMetadata(serviceEditor);
+    rememberServiceMetricUiState(serviceEditor);
     updateAllKpiAvailability(page);
     if (page && page.matches(".goals-page")) updateGoalRequirements(page);
     if (page && page.matches(".services-page")) {
-      scheduleServiceMetricsAutosave(page.closest(".builder-page-content"), serviceEditor, 500);
+      scheduleServiceMetricsAutosave(page.closest(".builder-page-content"), serviceEditor, 1600);
     } else if (page && page.matches(".goals-page")) {
-      scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 500);
+      scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 1600);
     } else {
       scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
     }
@@ -1689,7 +1919,6 @@
       row.appendChild(removeButton);
     }
     container.appendChild(row);
-    if (window.Shiny && window.Shiny.bindAll) window.Shiny.bindAll(row);
     return textarea;
   }
 
@@ -1699,17 +1928,16 @@
     var page = addButton.closest(".goals-page");
     addInitiativeInput(addButton.closest(".initiative-picker"), "");
     updateGoalRequirements(page);
-    setGoalsSaveStatus("Add initiative text to autosave this goal.");
+    setGoalsSaveStatus("Not saved yet");
   });
 
   document.addEventListener("click", function (event) {
     var removeButton = event.target.closest(".initiative-remove-button");
     if (!removeButton) return;
     var row = removeButton.closest(".initiative-input-row");
-    if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(row);
     row.remove();
     updateGoalRequirements(removeButton.closest(".goals-page"));
-    scheduleGoalsQuietAutosave(removeButton.closest(".builder-page-content"), 500);
+    scheduleGoalsQuietAutosave(removeButton.closest(".builder-page-content"), 300);
   });
 
   function updateScrollProxy(proxy) {
@@ -1762,6 +1990,84 @@
     if (status) status.textContent = message;
   }
 
+  function lockPageHeightForAutosave() {
+    var page = document.getElementById("page");
+    if (!page) return;
+    var height = Math.max(page.offsetHeight || 0, page.scrollHeight || 0);
+    if (height > 0) page.style.setProperty("--autosave-page-min-height", height + "px");
+  }
+
+  function unlockPageHeightAfterAutosave() {
+    if (draftSaveQueue.length || activeDraftSave) return;
+    window.setTimeout(function () {
+      if (draftSaveQueue.length || activeDraftSave) return;
+      var page = document.getElementById("page");
+      if (page) page.style.removeProperty("--autosave-page-min-height");
+    }, 250);
+  }
+
+  function enqueueDraftSave(inputName, payload) {
+    if (!window.Shiny || !window.Shiny.setInputValue || !inputName || !payload) return false;
+    if (inputName === "service_metrics_draft_save" && payload.planId != null && payload.serviceId != null) {
+      draftSaveQueue = draftSaveQueue.filter(function (item) {
+        return !(
+          item.inputName === inputName &&
+          item.payload &&
+          String(item.payload.planId) === String(payload.planId) &&
+          String(item.payload.serviceId) === String(payload.serviceId)
+        );
+      });
+    }
+    if (inputName === "goals_draft_quiet_save" && payload.planId != null) {
+      draftSaveQueue = draftSaveQueue.filter(function (item) {
+        return !(
+          item.inputName === inputName &&
+          item.payload &&
+          String(item.payload.planId) === String(payload.planId)
+        );
+      });
+    }
+    if (inputName === "services_draft_quiet_save" && payload.planId != null) {
+      draftSaveQueue = draftSaveQueue.filter(function (item) {
+        return !(
+          item.inputName === inputName &&
+          item.payload &&
+          String(item.payload.planId) === String(payload.planId)
+        );
+      });
+    }
+    draftSaveQueue.push({ inputName: inputName, payload: payload });
+    processDraftSaveQueue();
+    return true;
+  }
+
+  function processDraftSaveQueue() {
+    if (activeDraftSave || !draftSaveQueue.length || !window.Shiny || !window.Shiny.setInputValue) return;
+    activeDraftSave = draftSaveQueue.shift();
+    lockPageHeightForAutosave();
+    document.body.classList.add("builder-autosave-active");
+    if (activeDraftSaveTimer) window.clearTimeout(activeDraftSaveTimer);
+    activeDraftSaveTimer = window.setTimeout(function () {
+      if (!activeDraftSave) return;
+      setGoalsSaveStatus("Still saving. Your browser recovery copy is available if this takes too long.");
+      completeDraftSaveQueue();
+    }, 12000);
+    window.Shiny.setInputValue(activeDraftSave.inputName, activeDraftSave.payload, { priority: "event" });
+  }
+
+  function completeDraftSaveQueue() {
+    if (activeDraftSaveTimer) {
+      window.clearTimeout(activeDraftSaveTimer);
+      activeDraftSaveTimer = null;
+    }
+    activeDraftSave = null;
+    if (!draftSaveQueue.length) {
+      document.body.classList.remove("builder-autosave-active");
+      unlockPageHeightAfterAutosave();
+    }
+    processDraftSaveQueue();
+  }
+
   function currentBuilderPage() {
     return document.querySelector(".builder-page-content[data-plan-locked='false']");
   }
@@ -1783,7 +2089,7 @@
       updateGoalRequirements(goalsPage);
     }
     builderPage.dataset.autosaveDirty = "false";
-    setGoalsSaveStatus(reason === "manual" ? "Saving shared draft..." : "Autosaving...");
+    setGoalsSaveStatus(reason === "manual" ? "Saving shared draft..." : "Saving...");
     if (window.Shiny && window.Shiny.setInputValue) {
       var savePayload = {
         planId: Number(builderPage.getAttribute("data-plan-id")),
@@ -1798,7 +2104,6 @@
           setGoalsSaveStatus("Still saving. Your browser recovery copy is available if this takes too long.");
         }
       }, 8000);
-      if (reason !== "manual") beginBackgroundAutosave();
       window.Shiny.setInputValue("shared_draft_save", savePayload, { priority: "event" });
       return true;
     } else {
@@ -1812,7 +2117,7 @@
     var goalsPage = builderPage && builderPage.querySelector(".goals-page");
     if (!builderPage || !builderPage.isConnected || builderPage.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
     builderPage.dataset.autosaveDirty = "true";
-    setGoalsSaveStatus("Unsaved changes. Autosaving...");
+    setGoalsSaveStatus("Unsaved changes. Saving soon...");
     var draft = goalsPage ? collectGoalsDraft(goalsPage) : collectBuilderDraft(builderPage);
     window.localStorage.setItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(builderPage), JSON.stringify(draft));
     if (autosaveTimer) window.clearTimeout(autosaveTimer);
@@ -1825,20 +2130,7 @@
     if (!page || !input || !input.id) return;
     var match = input.id.match(/^service_description_(.+)$/);
     if (!match) return;
-    setGoalsSaveStatus("Unsaved changes. Autosaving...");
-    var draft = collectBuilderDraft(page);
-    window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
-    pendingServiceDescriptionSave = {
-      planId: Number(page.getAttribute("data-plan-id")),
-      sectionKey: page.getAttribute("data-section-key"),
-      serviceId: match[1],
-      fieldId: input.id,
-      value: input.value
-    };
-    if (serviceDescriptionAutosaveTimer) window.clearTimeout(serviceDescriptionAutosaveTimer);
-    serviceDescriptionAutosaveTimer = window.setTimeout(function () {
-      flushServiceDescriptionAutosave();
-    }, delay || 500);
+    scheduleServicesQuietAutosave(page, delay || 1100);
   }
 
   function flushServiceDescriptionAutosave() {
@@ -1849,10 +2141,8 @@
     if (!pendingServiceDescriptionSave || !window.Shiny || !window.Shiny.setInputValue) return false;
     var payload = Object.assign({}, pendingServiceDescriptionSave, { nonce: Date.now() });
     pendingServiceDescriptionSave = null;
-    setGoalsSaveStatus("Autosaving...");
-    beginBackgroundAutosave();
-    window.Shiny.setInputValue("service_description_draft_save", payload, { priority: "event" });
-    return true;
+    setGoalsSaveStatus("Saving...");
+    return enqueueDraftSave("service_description_draft_save", payload);
   }
 
   function scheduleServiceMetricsAutosave(page, editor, delay) {
@@ -1860,21 +2150,45 @@
     var serviceId = editor.getAttribute("data-service-id") || "";
     if (!serviceId) return;
     updateServiceEditorMetricMetadata(editor);
-    setGoalsSaveStatus("Unsaved changes. Autosaving...");
+    rememberServiceMetricUiState(editor);
+    scheduleServicesQuietAutosave(page, delay || 700);
+  }
+
+  function scheduleServicesQuietAutosave(page, delay) {
+    if (!page || !page.isConnected || page.dataset.restoringDraft === "true") return;
+    page.dataset.autosaveDirty = "true";
+    page.querySelectorAll(".service-editor").forEach(updateServiceEditorMetricMetadata);
+    setGoalsSaveStatus("Unsaved changes. Saving soon...");
     var draft = collectBuilderDraft(page);
     window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
-    var metricIds = selectedMetricsFromEditor(editor);
-    pendingServiceMetricsSave = {
+    pendingServicesQuietSave = {
       planId: Number(page.getAttribute("data-plan-id")),
       sectionKey: page.getAttribute("data-section-key"),
-      serviceId: serviceId,
-      metricIds: metricIds.length ? metricIds : [""],
-      cleared: metricIds.length === 0
+      payloadJson: JSON.stringify(draft)
     };
-    if (serviceMetricsAutosaveTimer) window.clearTimeout(serviceMetricsAutosaveTimer);
-    serviceMetricsAutosaveTimer = window.setTimeout(function () {
-      flushServiceMetricsAutosave();
-    }, delay || 500);
+    if (servicesQuietAutosaveTimer) window.clearTimeout(servicesQuietAutosaveTimer);
+    servicesQuietAutosaveTimer = window.setTimeout(function () {
+      flushServicesQuietAutosave();
+    }, delay || 1100);
+  }
+
+  function flushServicesQuietAutosave() {
+    if (servicesQuietAutosaveTimer) {
+      window.clearTimeout(servicesQuietAutosaveTimer);
+      servicesQuietAutosaveTimer = null;
+    }
+    if (!pendingServicesQuietSave || !window.Shiny || !window.Shiny.setInputValue) return false;
+    var page = document.querySelector(".builder-page-content[data-section-key='services']");
+    if (page) {
+      page.querySelectorAll(".service-editor").forEach(updateServiceEditorMetricMetadata);
+      var draft = collectBuilderDraft(page);
+      window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
+      pendingServicesQuietSave.payloadJson = JSON.stringify(draft);
+    }
+    var payload = Object.assign({}, pendingServicesQuietSave, { nonce: Date.now() });
+    pendingServicesQuietSave = null;
+    setGoalsSaveStatus("Saving...");
+    return enqueueDraftSave("services_draft_quiet_save", payload);
   }
 
   function flushServiceMetricsAutosave() {
@@ -1883,12 +2197,25 @@
       serviceMetricsAutosaveTimer = null;
     }
     if (!pendingServiceMetricsSave || !window.Shiny || !window.Shiny.setInputValue) return false;
+    var page = document.querySelector(".builder-page-content[data-section-key='services']");
+    var serviceId = String(pendingServiceMetricsSave.serviceId || "");
+    var editor = pendingServiceMetricsSave.editorRef;
+    if (!editor || !editor.isConnected || editor.getAttribute("data-service-id") !== serviceId) {
+      editor = findServiceEditor(page, serviceId);
+    }
+    if (editor) {
+      updateServiceEditorMetricMetadata(editor);
+      rememberServiceMetricUiState(editor, false);
+      var metricIds = serviceMetricRowValues(editor, false);
+      pendingServiceMetricsSave.metricIds = metricIds.length ? metricIds : [""];
+      pendingServiceMetricsSave.cleared = metricIds.length === 0;
+      pendingServiceMetricsSave.uiVersion = currentServiceMetricUiVersion(editor);
+    }
     var payload = Object.assign({}, pendingServiceMetricsSave, { nonce: Date.now() });
+    delete payload.editorRef;
     pendingServiceMetricsSave = null;
-    setGoalsSaveStatus("Autosaving...");
-    beginBackgroundAutosave();
-    window.Shiny.setInputValue("service_metrics_draft_save", payload, { priority: "event" });
-    return true;
+    setGoalsSaveStatus("Saving...");
+    return enqueueDraftSave("service_metrics_draft_save", payload);
   }
 
   function scheduleGoalsQuietAutosave(page, delay) {
@@ -1906,7 +2233,7 @@
     if (goalsQuietAutosaveTimer) window.clearTimeout(goalsQuietAutosaveTimer);
     goalsQuietAutosaveTimer = window.setTimeout(function () {
       flushGoalsQuietAutosave();
-    }, delay || 900);
+    }, delay || 1100);
   }
 
   function flushGoalsQuietAutosave() {
@@ -1917,8 +2244,8 @@
     if (!pendingGoalsQuietSave || !window.Shiny || !window.Shiny.setInputValue) return false;
     var payload = Object.assign({}, pendingGoalsQuietSave, { nonce: Date.now() });
     pendingGoalsQuietSave = null;
-    window.Shiny.setInputValue("goals_draft_quiet_save", payload, { priority: "event" });
-    return true;
+    setGoalsSaveStatus("Saving...");
+    return enqueueDraftSave("goals_draft_quiet_save", payload);
   }
 
   function builderDraftKey(page) {
@@ -1932,6 +2259,10 @@
     var serviceMetrics = {};
     page.querySelectorAll("textarea[id], input[id]:not([type='button']):not([type='submit']), select[id]").forEach(function (input) {
       if (input.type === "checkbox") return;
+      // Service metric selections are stored canonically in serviceMetrics.
+      // Keeping them again in values can replay stale row indexes after a
+      // middle metric is removed and the remaining selects are renumbered.
+      if (/^service_metric_/.test(input.id || "")) return;
       values[input.id] = input.value;
     });
     page.querySelectorAll(".service-editor[data-service-id]").forEach(function (editor) {
@@ -1992,6 +2323,7 @@
       });
     }
     Object.keys(draft.values).forEach(function (id) {
+      if (/^service_metric_/.test(id || "")) return;
       var control = document.getElementById(id);
       if (!control) return;
       control.value = draft.values[id];
@@ -2297,7 +2629,7 @@
       page.dataset.autosaveDirty = "false";
       var goalsPage = page.querySelector(".goals-page");
       window.localStorage.removeItem(goalsPage ? goalsDraftKey(goalsPage) : builderDraftKey(page));
-      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      setGoalsSaveStatus("Saved");
       if (pendingNavigationPage) {
         var nextPage = pendingNavigationPage;
         clearPendingNavigation();
@@ -2320,13 +2652,14 @@
 
   function handleServiceDescriptionDraftResult(message) {
     endBackgroundAutosave();
+    completeDraftSaveQueue();
     var page = document.querySelector(".builder-page-content[data-section-key='services']");
     if (!page) return;
     if (message && message.ok) {
       page.dataset.autosaveDirty = "false";
       if (message.revision != null) page.dataset.draftRevision = String(message.revision);
       window.localStorage.removeItem(builderDraftKey(page));
-      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      setGoalsSaveStatus("Saved");
       return;
     }
     setGoalsSaveStatus((message && message.message) || "The service description could not be saved. Your browser recovery copy is still available.");
@@ -2334,28 +2667,41 @@
 
   function handleServiceMetricsDraftResult(message) {
     endBackgroundAutosave();
+    completeDraftSaveQueue();
     var page = document.querySelector(".builder-page-content[data-section-key='services']");
     if (!page) return;
     if (message && message.ok) {
       page.dataset.autosaveDirty = "false";
       if (message.revision != null) page.dataset.draftRevision = String(message.revision);
-      var serviceId = String(message.serviceId || "");
-      var editor = serviceId ? Array.from(page.querySelectorAll(".service-editor")).find(function (candidate) {
-        return candidate.getAttribute("data-service-id") === serviceId;
-      }) : null;
-      if (editor) {
-        updateServiceEditorMetricMetadata(editor);
-      }
-      updateAllKpiAvailability(page.querySelector(".services-page"));
+      // Keep the currently visible metric editor as the source of truth.
+      // Touching selector rows here can replay stale server-rendered order
+      // while someone is editing a service drawer.
       window.localStorage.removeItem(builderDraftKey(page));
-      setGoalsSaveStatus("Autosaved at " + new Date(message.updatedAt).toLocaleTimeString() + ".");
+      setGoalsSaveStatus("Saved");
       return;
     }
     setGoalsSaveStatus((message && message.message) || "The service metrics could not be saved. Your browser recovery copy is still available.");
   }
 
+  function handleServicesDraftResult(message) {
+    endBackgroundAutosave();
+    completeDraftSaveQueue();
+    var page = document.querySelector(".builder-page-content[data-section-key='services']");
+    if (!page) return;
+    if (message && message.ok) {
+      page.dataset.autosaveDirty = "false";
+      if (message.revision != null) page.dataset.draftRevision = String(message.revision);
+      window.localStorage.removeItem(builderDraftKey(page));
+      setGoalsSaveStatus("Saved");
+      return;
+    }
+    page.dataset.autosaveDirty = "true";
+    setGoalsSaveStatus((message && message.message) || "The services draft could not be saved. Your browser recovery copy is still available.");
+  }
+
   function handleGoalsDraftResult(message) {
     endBackgroundAutosave();
+    completeDraftSaveQueue();
     var page = document.querySelector(".builder-page-content[data-section-key='goals']");
     if (!page) return;
     if (message && message.ok) {
@@ -2367,6 +2713,7 @@
         updateAllKpiAvailability(goalsPage);
         window.localStorage.removeItem(goalsDraftKey(goalsPage));
       }
+      setGoalsSaveStatus("Saved");
       return;
     }
     page.dataset.autosaveDirty = "true";
@@ -2411,6 +2758,8 @@
     var page = document.querySelector(".goals-page");
     if (!page || page.dataset.goalsInitialized === "true") return;
     page.dataset.goalsInitialized = "true";
+    unbindDraftOnlyControls(page);
+    restoreOpenGoalDrawers();
     page.querySelectorAll(".goal-editor").forEach(function (editor) {
       var body = editor.querySelector(".goal-editor-body");
       if (body) body.setAttribute("aria-hidden", editor.open ? "false" : "true");
@@ -2444,6 +2793,7 @@
     var page = document.querySelector(".services-page");
     if (!page || page.dataset.servicesInitialized === "true") return;
     page.dataset.servicesInitialized = "true";
+    unbindDraftOnlyControls(page);
     restoreOpenServiceDrawers();
     page.querySelectorAll(".service-editor").forEach(function (editor) {
       var body = editor.querySelector(".service-editor-body");
@@ -2468,6 +2818,11 @@
   document.addEventListener("toggle", function (event) {
     if (!event.target.matches) return;
     if (event.target.matches(".goal-editor")) {
+      var goalId = event.target.getAttribute("data-goal-id") || "";
+      if (goalId) {
+        if (event.target.open) openGoalIds.add(goalId);
+        else openGoalIds.delete(goalId);
+      }
       var body = event.target.querySelector(".goal-editor-body");
       if (body) body.setAttribute("aria-hidden", event.target.open ? "false" : "true");
     }
@@ -2493,6 +2848,8 @@
     window.setTimeout(function () {
       var page = target.closest(".services-page");
       var editor = target.closest(".service-editor");
+      unbindDraftOnlyControls(target);
+      applyServiceMetricUiState(editor);
       updateServiceEditorMetricMetadata(editor);
       if (page) updateAllKpiAvailability(page);
       disableLockedBuilderControls(target.closest(".builder-page-content"));
@@ -2503,14 +2860,15 @@
     var page = event.target.closest(".builder-page-content");
     var goalsPage = event.target.closest(".goals-page");
     if (!page || page.dataset.restoringDraft === "true" || (goalsPage && goalsPage.dataset.restoringDraft === "true")) return;
+    if (event.target.matches(".kpi-select-row select")) return;
     if (goalsPage && event.target.matches("textarea[id^='goal_statement_'], .initiative-inputs textarea")) {
       updateGoalRequirements(goalsPage);
-      scheduleGoalsQuietAutosave(page, 900);
+      scheduleGoalsQuietAutosave(page, 1200);
       return;
     }
     if (event.target.closest(".services-page") && event.target.matches("textarea[id^='service_description_']")) {
       page.dataset.autosaveDirty = "false";
-      scheduleServiceDescriptionAutosave(page, event.target, 500);
+      scheduleServiceDescriptionAutosave(page, event.target, 1200);
       return;
     }
     scheduleBuilderAutosave(page, event.target.closest(".services-page") ? 250 : 900);
@@ -2523,17 +2881,17 @@
     if (goalsPage && event.target.matches("select[id^='goal_alignment_']")) {
       updateGoalAlignmentSummary(event.target.closest(".goal-editor"));
       updateGoalRequirements(goalsPage);
-      scheduleGoalsQuietAutosave(page, 500);
+      scheduleGoalsQuietAutosave(page, 700);
       return;
     }
     if (goalsPage && event.target.matches(".kpi-select-row select")) {
       updateGoalRequirements(goalsPage);
       updateAllKpiAvailability(goalsPage);
-      scheduleGoalsQuietAutosave(page, 700);
+      scheduleGoalsQuietAutosave(page, 1600);
       return;
     }
     if (event.target.closest(".services-page") && event.target.matches(".kpi-select-row select")) {
-      scheduleServiceMetricsAutosave(page, event.target.closest(".service-editor"), 1200);
+      scheduleServiceMetricsAutosave(page, event.target.closest(".service-editor"), 1600);
       return;
     }
     scheduleBuilderAutosave(page);
@@ -2560,7 +2918,7 @@
     addGoalEditor(page);
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 500);
+    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 700);
   });
 
   document.addEventListener("click", function (event) {
@@ -2591,7 +2949,7 @@
     editor.remove();
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
-    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 500);
+    scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 700);
   });
 
   document.addEventListener("click", function (event) {
@@ -2619,8 +2977,7 @@
     var submitButton = event.target.closest("[data-submit-plan]");
     if (!submitButton) return;
     if (!window.confirm("Are you sure you want to submit this plan? Fields will lock while it is in review.")) return;
-    flushServiceDescriptionAutosave();
-    flushServiceMetricsAutosave();
+    flushServicesQuietAutosave();
     flushGoalsQuietAutosave();
     saveBuilderDraft(currentBuilderPage(), "auto", { onlyIfDirty: true });
     if (window.Shiny && window.Shiny.setInputValue) {

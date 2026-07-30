@@ -118,6 +118,87 @@ consolidate_user_performance_roles <- function(connection) {
   invisible(consolidated)
 }
 
+apply_agency_fiscal_analyst_seed <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
+  if (!file.exists(path)) return(invisible(FALSE))
+  seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+  if (!all(c("agency_id", "analyst_name") %in% names(seed))) {
+    warning("Skipping agency fiscal analyst seed; missing agency_id/analyst_name columns")
+    return(invisible(FALSE))
+  }
+  for (i in seq_len(nrow(seed))) {
+    agency_id <- trimws(as.character(seed$agency_id[[i]] %||% ""))
+    analyst_name <- trimws(as.character(seed$analyst_name[[i]] %||% ""))
+    if (!nzchar(agency_id) || !nzchar(analyst_name)) next
+    DBI::dbExecute(
+      connection,
+      "UPDATE reference.agency SET fiscal_analyst = $2 WHERE agency_id = $1",
+      params = list(agency_id, analyst_name)
+    )
+  }
+  invisible(TRUE)
+}
+
+apply_agency_fiscal_analyst_seed_once <- function(connection, path = file.path("database", "seed", "agency_fiscal_analyst_seed.csv")) {
+  seed_name <- "agency_fiscal_analyst_seed"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  apply_agency_fiscal_analyst_seed(connection, path)
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
+# application.seed_applied tracks one-time data operations so they run
+# exactly once per database rather than re-applying (and silently reverting
+# admin edits/deletions) on every app restart.
+seed_already_applied <- function(connection, seed_name) {
+  isTRUE(DBI::dbGetQuery(
+    connection,
+    "SELECT EXISTS (SELECT 1 FROM application.seed_applied WHERE seed_name = $1)",
+    params = list(seed_name)
+  )[[1]])
+}
+
+mark_seed_applied <- function(connection, seed_name) {
+  DBI::dbExecute(
+    connection,
+    "INSERT INTO application.seed_applied (seed_name) VALUES ($1) ON CONFLICT (seed_name) DO NOTHING",
+    params = list(seed_name)
+  )
+}
+
+# application.log_row_change() (see ensure_review_schema()) reads this
+# transaction-local setting to attribute an audit_log row to whoever made
+# the change, for tables that don't already carry an editor column of
+# their own. Must be called inside the same DBI::dbWithTransaction() block
+# as the write it's meant to attribute -- set_config(..., true) is
+# transaction-local (like SET LOCAL), so it has no effect on a write that
+# runs in a separate implicit transaction.
+set_audit_actor <- function(connection, user_id) {
+  user_id <- suppressWarnings(as.integer(user_id))
+  DBI::dbExecute(
+    connection,
+    "SELECT set_config('app.current_user_id', $1, true)",
+    params = list(if (is.na(user_id)) NA_character_ else as.character(user_id))
+  )
+}
+
+apply_user_entity_access_seed_once <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
+  seed_name <- "user_entity_access_seed"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  # This CSV is a one-time bulk import from early in the project, not a
+  # perpetual sync source -- team membership is managed live through the
+  # Team & Roles UI from here on. Re-running it on every restart was
+  # silently re-inserting deleted access rows and overwriting role changes
+  # admins had made since. A database that already has real access rows is
+  # treated as already seeded (skip re-applying, just record the marker); a
+  # genuinely empty database still gets the one-time initial population.
+  already_has_data <- isTRUE(DBI::dbGetQuery(connection, "SELECT EXISTS (SELECT 1 FROM access.user_entity_access LIMIT 1)")[[1]])
+  if (!already_has_data) {
+    apply_user_entity_access_seed(connection, path)
+  }
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
 apply_user_entity_access_seed <- function(connection, path = file.path("database", "seed", "user_entity_access_seed.csv")) {
   if (!file.exists(path)) return(invisible(FALSE))
   seed <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -261,8 +342,147 @@ ensure_measure_identity_sequences <- function(connection) {
   invisible(TRUE)
 }
 
+# Small introspection helpers so migrations can be conditional on what a given
+# database already has, rather than relying on ALTER ... IF EXISTS alone.
+column_exists <- function(connection, schema, table, column) {
+  nrow(DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT 1 FROM information_schema.columns",
+      "WHERE table_schema = $1 AND table_name = $2 AND column_name = $3"
+    ),
+    params = list(schema, table, column)
+  )) > 0
+}
+
+column_type <- function(connection, schema, table, column) {
+  row <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT data_type FROM information_schema.columns",
+      "WHERE table_schema = $1 AND table_name = $2 AND column_name = $3"
+    ),
+    params = list(schema, table, column)
+  )
+  if (!nrow(row)) NA_character_ else as.character(row$data_type[[1]])
+}
+
+# Convert a text "who touched this" column that stored a display name into an
+# integer FK to access.user. Postgres rejects a subquery inside
+# ALTER COLUMN ... USING, so this goes add -> backfill by name -> swap.
+retype_modified_by_to_user_id <- function(connection, schema, table, column) {
+  qualified <- paste0(schema, ".", table)
+  if (!column_exists(connection, schema, table, column)) {
+    DBI::dbExecute(connection, sprintf("ALTER TABLE %s ADD COLUMN %s integer", qualified, column))
+  }
+  if (!identical(column_type(connection, schema, table, column), "text")) {
+    return(invisible(FALSE))
+  }
+  tmp <- paste0(column, "_uid")
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s integer", qualified, tmp))
+  DBI::dbExecute(
+    connection,
+    sprintf(
+      paste(
+        "UPDATE %1$s SET %2$s = u.user_id FROM access.\"user\" u",
+        "WHERE u.full_name = %1$s.%3$s AND %1$s.%3$s IS NOT NULL"
+      ),
+      qualified, tmp, column
+    )
+  )
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s DROP COLUMN %s", qualified, column))
+  DBI::dbExecute(connection, sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", qualified, tmp, column))
+  invisible(TRUE)
+}
+
 ensure_review_schema <- function(connection) {
   ensure_measure_identity_sequences(connection)
+  DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS application.seed_applied (",
+      "seed_name varchar(200) PRIMARY KEY,",
+      "applied_at timestamptz NOT NULL DEFAULT now()",
+      ")"
+    )
+  )
+
+  # Generic history log: captures the row as it was immediately before an
+  # UPDATE/DELETE on a handful of plan-builder tables that either have no
+  # history at all today, or -- for reference.service -- are a shared
+  # reference table that a single plan's approval can silently overwrite
+  # for every other agency using that service. See set_audit_actor() for
+  # how changed_by gets populated for tables that don't already track an
+  # editor on the row itself.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS application.audit_log (",
+      "audit_id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,",
+      "table_name text NOT NULL,",
+      "row_pk text NOT NULL,",
+      "operation varchar(10) NOT NULL,",
+      "old_data jsonb NOT NULL,",
+      "changed_by integer REFERENCES access.\"user\"(user_id),",
+      "changed_at timestamptz NOT NULL DEFAULT now()",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_audit_log_table_row ON application.audit_log(table_name, row_pk)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at ON application.audit_log(changed_at)")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE OR REPLACE FUNCTION application.log_row_change() RETURNS trigger AS $BODY$",
+      "DECLARE actor_id integer;",
+      "BEGIN",
+      "  actor_id := NULLIF(current_setting('app.current_user_id', true), '')::integer;",
+      "  IF actor_id IS NULL AND (to_jsonb(OLD) ? 'updated_by') THEN",
+      "    actor_id := NULLIF(to_jsonb(OLD) ->> 'updated_by', '')::integer;",
+      "  END IF;",
+      "  INSERT INTO application.audit_log (table_name, row_pk, operation, old_data, changed_by)",
+      "  VALUES (TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME, to_jsonb(OLD) ->> TG_ARGV[0], TG_OP, to_jsonb(OLD), actor_id);",
+      # A BEFORE trigger's return value becomes the row Postgres actually
+      # writes. RETURN OLD unconditionally (matching the target_schema.sql
+      # copy of this same function, before the 2026-07-24 fix) silently
+      # discarded every UPDATE to the 5 audited tables: the update
+      # "succeeded" with no error, but the row was rewritten with its own
+      # pre-update value. DELETE still needs OLD. Keep both copies of this
+      # function in sync -- see the header comment on target_schema.sql.
+      "  IF TG_OP = 'DELETE' THEN",
+      "    RETURN OLD;",
+      "  END IF;",
+      "  RETURN NEW;",
+      "END;",
+      "$BODY$ LANGUAGE plpgsql"
+    )
+  )
+  audit_targets <- list(
+    list(schema_table = "planning.plan_section_draft", trigger = "trg_audit_plan_section_draft", pk = "draft_id"),
+    list(schema_table = "reference.service", trigger = "trg_audit_reference_service", pk = "service_id"),
+    list(schema_table = "performance.agency_goal", trigger = "trg_audit_agency_goal", pk = "agency_goal_id"),
+    list(schema_table = "performance.overview_vision", trigger = "trg_audit_overview_vision", pk = "mv_id"),
+    list(schema_table = "performance.service_risk", trigger = "trg_audit_service_risk", pk = "risk_id")
+  )
+  for (target in audit_targets) {
+    DBI::dbExecute(
+      connection,
+      sprintf(
+        "CREATE OR REPLACE TRIGGER %s BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION application.log_row_change('%s')",
+        target$trigger, target$schema_table, target$pk
+      )
+    )
+  }
+
+  # save_service_risk()'s UPDATE has always set updated_at; the live
+  # database already carries this column (and several others -- risk_id,
+  # created_at, modified_by, plan_service_id -- that target_schema.sql
+  # doesn't declare at all, confirming the schema has drifted further
+  # from that file than documented). Declared here too so a fresh install
+  # matches reality instead of erroring the first time a risk is edited.
+  DBI::dbExecute(connection, "ALTER TABLE performance.service_risk ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
+  DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS fiscal_analyst varchar(200)")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
   DBI::dbExecute(
     connection,
@@ -397,11 +617,20 @@ ensure_review_schema <- function(connection) {
       "added_by integer REFERENCES access.\"user\"(user_id),",
       "approved_at timestamptz NOT NULL DEFAULT now(),",
       "notes text,",
-      "created_at timestamptz NOT NULL DEFAULT now()",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer REFERENCES access.\"user\"(user_id)",
       ")"
     )
   )
+  # Backfills these two columns onto databases where this table already
+  # existed before they were added above -- CREATE TABLE IF NOT EXISTS alone
+  # is a no-op against an existing table, so without this an
+  # already-provisioned database (e.g. production) would never pick them up.
+  DBI::dbExecute(connection, "ALTER TABLE workflow.plan_approval_stamp ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()")
+  DBI::dbExecute(connection, "ALTER TABLE workflow.plan_approval_stamp ADD COLUMN IF NOT EXISTS modified_by integer REFERENCES access.\"user\"(user_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_plan_stage ON workflow.plan_approval_stamp(plan_id, approval_stage, approved_at DESC)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_modified_by ON workflow.plan_approval_stamp(modified_by)")
   DBI::dbExecute(
     connection,
     paste(
@@ -430,85 +659,100 @@ ensure_review_schema <- function(connection) {
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_agency ON workflow.entity_role_assignment(agency_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_entity ON workflow.entity_role_assignment(entity_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_users ON workflow.entity_role_assignment(submitter_user_id, reviewer_user_id, deputy_mayor_user_id, ca_office_user_id)")
-  DBI::dbExecute(
-    connection,
-    paste(
-      "DELETE FROM access.user_entity_access uea",
-      "USING workflow.entity_role_assignment era",
-      "WHERE uea.entity_id = era.entity_id",
-      "AND uea.user_id IN (era.reviewer_user_id, era.deputy_mayor_user_id, era.ca_office_user_id)",
-      "AND uea.user_id IS DISTINCT FROM era.submitter_user_id"
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_modified_by ON workflow.entity_role_assignment(modified_by)")
+  # This reconciliation backfilled access.user_entity_access from
+  # access.user_agency_access and the legacy workflow.entity_role_assignment
+  # import table -- a one-time migration from when entity-level access was
+  # introduced, not a perpetual sync. Re-running it on every restart was
+  # deleting entity access for reviewer/DM/CA users every time, and
+  # silently re-inserting entity access rows admins had deleted through the
+  # Team & Roles UI, as long as the underlying agency-level access or the
+  # stale legacy assignment row still existed. Gated to run once.
+  if (!seed_already_applied(connection, "entity_access_legacy_reconciliation")) {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "DELETE FROM access.user_entity_access uea",
+        "USING workflow.entity_role_assignment era",
+        "WHERE uea.entity_id = era.entity_id",
+        "AND uea.user_id IN (era.reviewer_user_id, era.deputy_mayor_user_id, era.ca_office_user_id)",
+        "AND uea.user_id IS DISTINCT FROM era.submitter_user_id"
+      )
     )
-  )
-  DBI::dbExecute(
-    connection,
-    paste(
-      "INSERT INTO access.user_entity_access",
-      "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
-      "SELECT DISTINCT source.user_id, source.entity_id, source.agency_id, source.service_id, source.agency_role, source.agency_roles,",
-      "source.access_level, source.budget_access, source.adaptive_planning, source.performance_plan_access",
-      "FROM (",
-      "  SELECT era.submitter_user_id AS user_id, era.entity_id, era.agency_id, NULL::varchar(20) AS service_id,",
-      "    'Agency Staff'::varchar(30) AS agency_role, 'Agency Staff'::text AS agency_roles,",
-      "    'Submit'::varchar(20) AS access_level, false AS budget_access, false AS adaptive_planning, true AS performance_plan_access",
-      "  FROM workflow.entity_role_assignment era",
-      "  WHERE era.submitter_user_id IS NOT NULL AND era.entity_id IS NOT NULL",
-      "  UNION ALL",
-      "  SELECT uaa.user_id, pes.entity_id, uaa.agency_id, uaa.service_id, uaa.agency_role,",
-      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
-      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
-      "  FROM access.user_agency_access uaa",
-      "  JOIN reference.plan_entity_service pes ON pes.service_id = uaa.service_id",
-      "  JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
-      "  JOIN (",
-      "    SELECT pes2.service_id, COUNT(DISTINCT pe2.entity_id)::integer AS entity_count",
-      "    FROM reference.plan_entity_service pes2",
-      "    JOIN reference.plan_entity pe2 ON pe2.entity_id = pes2.entity_id",
-      "    WHERE pe2.active AND pe2.has_own_plan",
-      "    GROUP BY pes2.service_id",
-      "  ) counts ON counts.service_id = uaa.service_id AND counts.entity_count = 1",
-      "  WHERE pe.active AND pe.has_own_plan AND uaa.service_id IS NOT NULL",
-      "  UNION ALL",
-      "  SELECT uaa.user_id, pe.entity_id, uaa.agency_id, NULL::varchar(20) AS service_id, uaa.agency_role,",
-      "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
-      "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
-      "  FROM access.user_agency_access uaa",
-      "  JOIN reference.plan_entity pe ON pe.parent_agency_id = uaa.agency_id AND pe.entity_type = 'Agency'",
-      "  WHERE (uaa.service_id IS NULL OR trim(uaa.service_id) = '')",
-      "    AND pe.active AND pe.has_own_plan",
-      "    AND NOT EXISTS (",
-      "      SELECT 1",
-      "      FROM access.user_entity_access existing",
-      "      JOIN reference.plan_entity existing_entity ON existing_entity.entity_id = existing.entity_id",
-      "      WHERE existing.user_id = uaa.user_id",
-      "        AND existing_entity.parent_agency_id = uaa.agency_id",
-      "        AND existing_entity.entity_type <> 'Agency'",
-      "    )",
-      "    AND NOT EXISTS (",
-      "      SELECT 1",
-      "      FROM access.user_agency_access specific_uaa",
-      "      JOIN reference.plan_entity_service specific_pes ON specific_pes.service_id = specific_uaa.service_id",
-      "      JOIN reference.plan_entity specific_entity ON specific_entity.entity_id = specific_pes.entity_id",
-      "      JOIN (",
-      "        SELECT pes3.service_id, COUNT(DISTINCT pe3.entity_id)::integer AS entity_count",
-      "        FROM reference.plan_entity_service pes3",
-      "        JOIN reference.plan_entity pe3 ON pe3.entity_id = pes3.entity_id",
-      "        WHERE pe3.active AND pe3.has_own_plan",
-      "        GROUP BY pes3.service_id",
-      "      ) specific_counts ON specific_counts.service_id = specific_uaa.service_id AND specific_counts.entity_count = 1",
-      "      WHERE specific_uaa.user_id = uaa.user_id",
-      "        AND specific_uaa.agency_id = uaa.agency_id",
-      "        AND specific_uaa.service_id IS NOT NULL",
-      "        AND specific_entity.parent_agency_id = uaa.agency_id",
-      "        AND specific_entity.entity_type <> 'Agency'",
-      "    )",
-      ") source",
-      "JOIN access.\"user\" u ON u.user_id = source.user_id AND u.active",
-      "WHERE source.user_id IS NOT NULL",
-      "ON CONFLICT (user_id, entity_id) DO NOTHING"
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO access.user_entity_access",
+        "(user_id, entity_id, agency_id, service_id, agency_role, agency_roles, access_level, budget_access, adaptive_planning, performance_plan_access)",
+        "SELECT DISTINCT source.user_id, source.entity_id, source.agency_id, source.service_id, source.agency_role, source.agency_roles,",
+        "source.access_level, source.budget_access, source.adaptive_planning, source.performance_plan_access",
+        "FROM (",
+        "  SELECT era.submitter_user_id AS user_id, era.entity_id, era.agency_id, NULL::varchar(20) AS service_id,",
+        "    'Agency Staff'::varchar(30) AS agency_role, 'Agency Staff'::text AS agency_roles,",
+        "    'Submit'::varchar(20) AS access_level, false AS budget_access, false AS adaptive_planning, true AS performance_plan_access",
+        "  FROM workflow.entity_role_assignment era",
+        "  WHERE era.submitter_user_id IS NOT NULL AND era.entity_id IS NOT NULL",
+        "  UNION ALL",
+        "  SELECT uaa.user_id, pes.entity_id, uaa.agency_id, uaa.service_id, uaa.agency_role,",
+        "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+        "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+        "  FROM access.user_agency_access uaa",
+        "  JOIN reference.plan_entity_service pes ON pes.service_id = uaa.service_id",
+        "  JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
+        "  JOIN (",
+        "    SELECT pes2.service_id, COUNT(DISTINCT pe2.entity_id)::integer AS entity_count",
+        "    FROM reference.plan_entity_service pes2",
+        "    JOIN reference.plan_entity pe2 ON pe2.entity_id = pes2.entity_id",
+        "    WHERE pe2.active AND pe2.has_own_plan",
+        "    GROUP BY pes2.service_id",
+        "  ) counts ON counts.service_id = uaa.service_id AND counts.entity_count = 1",
+        "  WHERE pe.active AND pe.has_own_plan AND uaa.service_id IS NOT NULL",
+        "  UNION ALL",
+        "  SELECT uaa.user_id, pe.entity_id, uaa.agency_id, NULL::varchar(20) AS service_id, uaa.agency_role,",
+        "    COALESCE(NULLIF(uaa.agency_roles, ''), uaa.agency_role) AS agency_roles,",
+        "    uaa.access_level, uaa.budget_access, false AS adaptive_planning, uaa.performance_plan_access",
+        "  FROM access.user_agency_access uaa",
+        "  JOIN reference.plan_entity pe ON pe.parent_agency_id = uaa.agency_id AND pe.entity_type = 'Agency'",
+        "  WHERE (uaa.service_id IS NULL OR trim(uaa.service_id) = '')",
+        "    AND pe.active AND pe.has_own_plan",
+        "    AND NOT EXISTS (",
+        "      SELECT 1",
+        "      FROM access.user_entity_access existing",
+        "      JOIN reference.plan_entity existing_entity ON existing_entity.entity_id = existing.entity_id",
+        "      WHERE existing.user_id = uaa.user_id",
+        "        AND existing_entity.parent_agency_id = uaa.agency_id",
+        "        AND existing_entity.entity_type <> 'Agency'",
+        "    )",
+        "    AND NOT EXISTS (",
+        "      SELECT 1",
+        "      FROM access.user_agency_access specific_uaa",
+        "      JOIN reference.plan_entity_service specific_pes ON specific_pes.service_id = specific_uaa.service_id",
+        "      JOIN reference.plan_entity specific_entity ON specific_entity.entity_id = specific_pes.entity_id",
+        "      JOIN (",
+        "        SELECT pes3.service_id, COUNT(DISTINCT pe3.entity_id)::integer AS entity_count",
+        "        FROM reference.plan_entity_service pes3",
+        "        JOIN reference.plan_entity pe3 ON pe3.entity_id = pes3.entity_id",
+        "        WHERE pe3.active AND pe3.has_own_plan",
+        "        GROUP BY pes3.service_id",
+        "      ) specific_counts ON specific_counts.service_id = specific_uaa.service_id AND specific_counts.entity_count = 1",
+        "      WHERE specific_uaa.user_id = uaa.user_id",
+        "        AND specific_uaa.agency_id = uaa.agency_id",
+        "        AND specific_uaa.service_id IS NOT NULL",
+        "        AND specific_entity.parent_agency_id = uaa.agency_id",
+        "        AND specific_entity.entity_type <> 'Agency'",
+        "    )",
+        ") source",
+        "JOIN access.\"user\" u ON u.user_id = source.user_id AND u.active",
+        "WHERE source.user_id IS NOT NULL",
+        "ON CONFLICT (user_id, entity_id) DO NOTHING"
+      )
     )
-  )
-  apply_user_entity_access_seed(connection)
+    mark_seed_applied(connection, "entity_access_legacy_reconciliation")
+  }
+  apply_user_entity_access_seed_once(connection)
+  apply_agency_fiscal_analyst_seed_once(connection)
+  apply_change_mapping_by_created_date_once(connection)
+  apply_percent_value_scale_backfill_once(connection)
   DBI::dbExecute(connection, "CREATE SCHEMA IF NOT EXISTS application")
   DBI::dbExecute(
     connection,
@@ -548,28 +792,35 @@ ensure_review_schema <- function(connection) {
       "request_amount numeric(18,2),",
       "one_time boolean NOT NULL DEFAULT false,",
       "overall_summary text,",
-      "justified varchar(10),",
-      "completed boolean NOT NULL DEFAULT false,",
+      "status varchar(30) NOT NULL DEFAULT 'In Progress',",
       "amount_next_fy numeric(18,2),",
       "amount_2next_fy numeric(18,2),",
       "created_at timestamptz NOT NULL DEFAULT now(),",
       "updated_at timestamptz NOT NULL DEFAULT now(),",
-      "modified_by text",
+      "modified_by integer REFERENCES access.user(user_id)",
       ")"
     )
   )
-  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request ADD COLUMN IF NOT EXISTS modified_by text")
-  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request ALTER COLUMN modified_by TYPE text USING modified_by::text")
-  # Workflow status replaces the plain completed flag for display; `completed` is
-  # kept in sync (true once a request reaches BBMR) for the target-schema field.
+  # `status` is the single source of truth for where a request sits in the
+  # workflow. It replaced the target schema's `completed` BIT, which could only
+  # express two of the six states the workflow needs.
   DBI::dbExecute(connection, "ALTER TABLE budget.cls_request ADD COLUMN IF NOT EXISTS status varchar(30) NOT NULL DEFAULT 'In Progress'")
-  DBI::dbExecute(
-    connection,
-    paste(
-      "UPDATE budget.cls_request SET status = CASE WHEN completed THEN 'BBMR Review' ELSE 'In Progress' END",
-      "WHERE status IS NULL OR status NOT IN ('In Progress','Agency Review','BBMR Review','Approved','Denied','Partially Approved')"
+  if (column_exists(connection, "budget", "cls_request", "completed")) {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "UPDATE budget.cls_request SET status = CASE WHEN completed THEN 'BBMR Review' ELSE 'In Progress' END",
+        "WHERE status IS NULL OR status NOT IN ('In Progress','Agency Review','BBMR Review','Approved','Denied','Partially Approved')"
+      )
     )
-  )
+    DBI::dbExecute(connection, "ALTER TABLE budget.cls_request DROP COLUMN completed")
+  }
+  # Retired: `justified` was an early validation flag with no UI and no meaning
+  # now that gaps are computed from the line items.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request DROP COLUMN IF EXISTS justified")
+  # modified_by holds the user id; the display name is resolved from
+  # access.user.full_name at render time rather than copied in here.
+  retype_modified_by_to_user_id(connection, "budget", "cls_request", "modified_by")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_plan_service ON budget.cls_request(plan_service_id)")
   DBI::dbExecute(
     connection,
@@ -578,12 +829,14 @@ ensure_review_schema <- function(connection) {
       "line_id serial PRIMARY KEY,",
       "cls_id integer NOT NULL REFERENCES budget.cls_request(cls_id) ON DELETE CASCADE,",
       "object_category varchar(200),",
+      "spend_category varchar(200),",
       "amount numeric(18,2),",
       "justification text,",
       "sort_order integer NOT NULL DEFAULT 0",
       ")"
     )
   )
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request_line ADD COLUMN IF NOT EXISTS spend_category varchar(200)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_line_cls ON budget.cls_request_line(cls_id)")
   DBI::dbExecute(
     connection,
@@ -606,16 +859,68 @@ ensure_review_schema <- function(connection) {
       "CREATE TABLE IF NOT EXISTS budget.cls_review (",
       "review_id serial PRIMARY KEY,",
       "cls_id integer NOT NULL UNIQUE REFERENCES budget.cls_request(cls_id) ON DELETE CASCADE,",
-      "evaluation_score numeric(6,2),",
       "analyst_notes text,",
       "analyst_approval varchar(20),",
       "bbmr_approval varchar(20),",
-      "reviewed_by text,",
+      "reviewed_by integer REFERENCES access.user(user_id),",
       "updated_at timestamptz NOT NULL DEFAULT now()",
       ")"
     )
   )
+  # Retired: the evaluation score came off the CLS Review page, so the column had
+  # no writer left.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review DROP COLUMN IF EXISTS evaluation_score")
+  retype_modified_by_to_user_id(connection, "budget", "cls_review", "reviewed_by")
+  # USER_ROLE.assigned_by from the target schema: which admin granted the role.
+  DBI::dbExecute(connection, "ALTER TABLE access.user_role ADD COLUMN IF NOT EXISTS assigned_by integer REFERENCES access.user(user_id)")
 
+  # Foreign-key columns with no covering index (found via a live pg_constraint
+  # audit). target_schema.sql only runs on a fresh database, so already-
+  # provisioned databases (local Docker, Fly Postgres) need these applied here.
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_agency_id ON access.user_entity_access(agency_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_service_id ON access.user_entity_access(service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_entity_access_modified_by ON access.user_entity_access(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_user_role_pillar_id ON access.user_role(pillar_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_amendment_initiated_by ON amendment.plan_amendment(initiated_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_feedback_request_assigned_admin_id ON application.feedback_request(assigned_admin_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_coa_request_reviewed_by ON budget.coa_request(reviewed_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_slide_deck_export_generated_by ON output.slide_deck_export(generated_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_measure_actuals_reported_by ON performance.measure_actuals(reported_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_performance_measure_pillar_goal_id ON performance.performance_measure(pillar_goal_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_pillar_alignment_pillar_id ON performance.plan_pillar_alignment(pillar_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_changed_by ON performance.pm_service_reassignment(changed_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_cycle_id ON performance.pm_service_reassignment(cycle_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_measure_id ON performance.pm_service_reassignment(measure_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_new_service_id ON performance.pm_service_reassignment(new_service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_pm_service_reassignment_old_service_id ON performance.pm_service_reassignment(old_service_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_service_goal_link_agency_goal_id ON performance.service_goal_link(agency_goal_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_service_goal_link_initiative_id ON performance.service_goal_link(initiative_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_agency_plan_assigned_reviewer ON planning.agency_plan(assigned_reviewer)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_cycle_created_by ON planning.plan_cycle(created_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_measure_review_modified_by ON review.measure_review(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_ca_office_user_id ON workflow.entity_role_assignment(ca_office_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_deputy_mayor_user_id ON workflow.entity_role_assignment(deputy_mayor_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_modified_by ON workflow.entity_role_assignment(modified_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_entity_role_assignment_reviewer_user_id ON workflow.entity_role_assignment(reviewer_user_id)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_added_by ON workflow.plan_approval_stamp(added_by)")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_plan_approval_stamp_approved_by ON workflow.plan_approval_stamp(approved_by)")
+  # Enforce one performance role per user. Every code path that writes
+  # access.user_role already checks for an existing row first (see
+  # save_team_role_assignment, save_entity_team_role_assignment,
+  # apply_user_entity_access_seed), so this should never fire in normal
+  # operation -- it's a safety net against a bad import or manual edit
+  # silently giving someone two conflicting roles.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "DO $$",
+      "BEGIN",
+      "  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_role_user_id_key') THEN",
+      "    ALTER TABLE access.user_role ADD CONSTRAINT user_role_user_id_key UNIQUE (user_id);",
+      "  END IF;",
+      "END $$;"
+    )
+  )
   invisible(TRUE)
 }
 
@@ -623,7 +928,7 @@ load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
     reference_agency = query(
-      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
+      "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan, fiscal_analyst FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
     ),
     reference_pillar = query(
       "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"
@@ -844,19 +1149,21 @@ load_app_data <- function(connection) {
     budget_cls_request = query(
       paste(
         "SELECT cr.cls_id, cr.plan_service_id, cr.request_name, cr.request_type, cr.request_amount,",
-        "cr.one_time, cr.overall_summary, cr.justified, cr.completed, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
+        "cr.one_time, cr.overall_summary, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
         "cr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
-        "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at, cr.modified_by,",
+        "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at,",
+        "cr.modified_by, modifier.full_name AS modified_by_name,",
         "ps.plan_id, ps.service_id, agp.agency_id",
         "FROM budget.cls_request cr",
         "JOIN performance.plan_service ps ON ps.plan_service_id = cr.plan_service_id",
         "LEFT JOIN planning.agency_plan agp ON agp.plan_id = ps.plan_id",
+        "LEFT JOIN access.\"user\" modifier ON modifier.user_id = cr.modified_by",
         "ORDER BY cr.created_at DESC, cr.cls_id DESC"
       )
     ),
     budget_cls_request_line = query(
       paste(
-        "SELECT line_id, cls_id, object_category, amount, justification, sort_order",
+        "SELECT line_id, cls_id, object_category, spend_category, amount, justification, sort_order",
         "FROM budget.cls_request_line ORDER BY cls_id, sort_order, line_id"
       )
     ),
@@ -868,9 +1175,11 @@ load_app_data <- function(connection) {
     ),
     budget_cls_review = query(
       paste(
-        "SELECT review_id, cls_id, evaluation_score, analyst_notes, analyst_approval, bbmr_approval, reviewed_by,",
-        "updated_at AT TIME ZONE 'America/New_York' AS updated_at",
-        "FROM budget.cls_review"
+        "SELECT rv.review_id, rv.cls_id, rv.analyst_notes, rv.analyst_approval, rv.bbmr_approval,",
+        "rv.reviewed_by, reviewer.full_name AS reviewed_by_name,",
+        "rv.updated_at AT TIME ZONE 'America/New_York' AS updated_at",
+        "FROM budget.cls_review rv",
+        "LEFT JOIN access.\"user\" reviewer ON reviewer.user_id = rv.reviewed_by"
       )
     )
   )
@@ -878,33 +1187,51 @@ load_app_data <- function(connection) {
   action_plan_initiatives <- query(
     "SELECT pillar_goal_id, initiative_title, sort_order FROM reference.action_plan_initiative ORDER BY pillar_goal_id, sort_order"
   )
-  action_plan_measures <- query(
-    paste(
-      "SELECT pillar_id, measure_name, desired_direction, display_unit, baseline_value, current_value, target_value, sort_order",
-      "FROM reference.action_plan_measure ORDER BY pillar_id, sort_order"
+  # Real Action Plan measures: any performance_measure marked Citywide
+  # (is_city = TRUE), via the measure editor's admin-only "Citywide
+  # measure"/"Action Plan pillar" fields (see measure_review_app_roles in
+  # app.R). Replaces the old reference.action_plan_measure table, which
+  # held dummy data generated by another bot, not real measures (found
+  # 2026-07-27; the table itself is dropped, see
+  # database/schema/target_schema.sql). Latest actual/target uses the
+  # same "last complete year / this year's target" snapshot shown on the
+  # Measures page's summary column, for consistency. Exposed as its own
+  # top-level data$city_measures (not scoped to a pillar -- a measure can
+  # be marked Citywide before a pillar is assigned, and the Action Plan
+  # Measures admin page needs to surface those too) and also used below,
+  # filtered per pillar, for each pillar's modal.
+  city_measure_target_fy <- current_fiscal_year()
+  city_measure_actual_fy <- city_measure_target_fy - 1L
+  data$city_measures <- query(
+    sprintf(
+      paste(
+        "SELECT pm.measure_id, pm.pillar_id, pm.pillar_goal_id, pm.title, pm.desired_direction,",
+        "pm.display_unit, pm.format_type, pm.approval_status, pm.agency_id,",
+        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name,",
+        "p.pillar_name, pg.goal_code AS pillar_goal_code, pg.goal_title AS pillar_goal_title,",
+        "actual_row.annual_actual AS current_value, target_row.target_value AS target_value",
+        "FROM performance.performance_measure pm",
+        "JOIN reference.agency a ON a.agency_id = pm.agency_id",
+        "LEFT JOIN reference.pillar p ON p.pillar_id = pm.pillar_id",
+        "LEFT JOIN reference.pillar_goal pg ON pg.pillar_goal_id = pm.pillar_goal_id",
+        "LEFT JOIN performance.measure_actuals actual_row ON actual_row.measure_id = pm.measure_id AND actual_row.fiscal_year = %d",
+        "LEFT JOIN performance.measure_actuals target_row ON target_row.measure_id = pm.measure_id AND target_row.fiscal_year = %d",
+        # A Citywide measure's entity_link (if any) names the specific
+        # mayoral service/quasi-agency that actually owns it -- e.g. OPI,
+        # not just the shared parent agency (Mayor's Office) every mayoral
+        # suboffice measure is otherwise indistinguishable under. Pick one
+        # deterministically since a measure could in principle have more
+        # than one link row.
+        "LEFT JOIN LATERAL (",
+        "  SELECT mel.public_name FROM performance.measure_entity_link mel",
+        "  WHERE mel.measure_id = pm.measure_id ORDER BY mel.updated_at DESC LIMIT 1",
+        ") mel ON TRUE",
+        "WHERE pm.is_city AND pm.active",
+        "ORDER BY p.pillar_name NULLS FIRST, pm.title"
+      ),
+      city_measure_actual_fy, city_measure_target_fy
     )
   )
-  normalize_measure_name <- function(value) {
-    trimws(tolower(gsub("[^a-z0-9]+", " ", as.character(value))))
-  }
-  match_action_plan_measure <- function(measure_name) {
-    if (!nrow(data$performance_performance_measure)) return(list(measure_id = NA_integer_, match_type = NA_character_, match_distance = NA_real_))
-    action_key <- normalize_measure_name(measure_name)
-    measure_keys <- normalize_measure_name(data$performance_performance_measure$title)
-    exact_matches <- which(measure_keys == action_key)
-    if (length(exact_matches)) {
-      row <- data$performance_performance_measure[exact_matches[[1]], , drop = FALSE]
-      return(list(measure_id = row$measure_id[[1]], match_type = "Exact title match", match_distance = 0))
-    }
-    distances <- as.numeric(utils::adist(action_key, measure_keys, ignore.case = TRUE))
-    normalized <- distances / pmax(nchar(action_key), nchar(measure_keys))
-    best <- which.min(normalized)
-    if (length(best) && !is.na(normalized[[best]]) && normalized[[best]] <= 0.25) {
-      row <- data$performance_performance_measure[best, , drop = FALSE]
-      return(list(measure_id = row$measure_id[[1]], match_type = "Close title match", match_distance = normalized[[best]]))
-    }
-    list(measure_id = NA_integer_, match_type = NA_character_, match_distance = NA_real_)
-  }
   data$strategic_plan <- lapply(seq_len(nrow(data$reference_pillar)), function(index) {
     pillar <- data$reference_pillar[index, , drop = FALSE]
     pillar_goals <- data$reference_pillar_goal[data$reference_pillar_goal$pillar_id == pillar$pillar_id, , drop = FALSE]
@@ -913,20 +1240,17 @@ load_app_data <- function(connection) {
       initiatives <- action_plan_initiatives$initiative_title[action_plan_initiatives$pillar_goal_id == goal$pillar_goal_id]
       list(code = goal$goal_code[[1]], title = goal$goal_title[[1]], lead = goal$goal_lead[[1]], initiatives = initiatives)
     })
-    pillar_measures <- action_plan_measures[action_plan_measures$pillar_id == pillar$pillar_id, , drop = FALSE]
+    pillar_measures <- data$city_measures[!is.na(data$city_measures$pillar_id) & data$city_measures$pillar_id == pillar$pillar_id, , drop = FALSE]
     metrics <- lapply(seq_len(nrow(pillar_measures)), function(measure_index) {
       measure <- pillar_measures[measure_index, , drop = FALSE]
-      matched_measure <- match_action_plan_measure(measure$measure_name[[1]])
       list(
-        name = measure$measure_name[[1]],
-        baseline = as.numeric(measure$baseline_value[[1]]),
+        measure_id = measure$measure_id[[1]],
+        name = measure$title[[1]],
         current = as.numeric(measure$current_value[[1]]),
         target = as.numeric(measure$target_value[[1]]),
         direction = measure$desired_direction[[1]],
         unit = if (is.na(measure$display_unit[[1]])) NULL else measure$display_unit[[1]],
-        matched_measure_id = matched_measure$measure_id,
-        match_type = matched_measure$match_type,
-        match_distance = matched_measure$match_distance
+        format_type = measure$format_type[[1]]
       )
     })
     list(
@@ -1009,6 +1333,22 @@ delete_feedback_request <- function(connection, feedback_id) {
 
 # ---- CLS (Current Level of Service) budget requests -------------------------
 
+# PLACEHOLDER DATA. Spend categories are a chart-of-accounts concept (the SC6xxx
+# codes in the budget system). These stand-ins let the field be used and tested;
+# replace them with the real COA spend-category list when it is available.
+cls_spend_category_choices <- c(
+  "SC6001 - Professional Services",
+  "SC6002 - Consultants",
+  "SC6003 - Non-Operating Costs (NOC)",
+  "SC6004 - Subcontractors",
+  "SC6005 - Software and Subscriptions",
+  "SC6006 - Fuel and Lubricants",
+  "SC6007 - Building Maintenance",
+  "SC6008 - Fleet Parts and Repairs",
+  "SC6009 - Training and Travel",
+  "SC6010 - Office Supplies"
+)
+
 cls_object_choices <- c(
   "Transfers",
   "Salaries",
@@ -1056,7 +1396,7 @@ nullable_integer_param <- function(value) {
 
 create_cls_request <- function(connection, plan_service_id, request_name, request_type = NULL,
                                request_amount = NULL, one_time = FALSE, overall_summary = NULL,
-                               justified = NULL, amount_next_fy = NULL, amount_2next_fy = NULL) {
+                               amount_next_fy = NULL, amount_2next_fy = NULL, modified_by = NULL) {
   plan_service_id <- as.integer(plan_service_id)
   if (is.na(plan_service_id)) stop("Choose a service for this request.")
   request_name <- trimws(as.character(request_name %||% ""))
@@ -1069,37 +1409,34 @@ create_cls_request <- function(connection, plan_service_id, request_name, reques
   if (!nrow(service_rows)) stop("That service is no longer available.")
   request_type <- as.character(request_type %||% "")
   if (!nzchar(request_type)) request_type <- NA_character_
-  justified <- as.character(justified %||% "")
-  if (!justified %in% c("Yes", "No")) justified <- NA_character_
   DBI::dbGetQuery(
     connection,
     paste(
       "INSERT INTO budget.cls_request",
-      "(plan_service_id, request_name, request_type, request_amount, one_time, overall_summary, justified, amount_next_fy, amount_2next_fy)",
-      "VALUES ($1::integer, $2::text, $3::text, $4::numeric, $5::boolean, NULLIF($6::text, ''), $7::text, $8::numeric, $9::numeric)",
+      "(plan_service_id, request_name, request_type, request_amount, one_time, overall_summary, amount_next_fy, amount_2next_fy, modified_by)",
+      "VALUES ($1::integer, $2::text, $3::text, $4::numeric, $5::boolean, NULLIF($6::text, ''), $7::numeric, $8::numeric, $9::integer)",
       "RETURNING cls_id"
     ),
     params = list(
       plan_service_id, request_name, request_type,
       nullable_numeric_param(request_amount), isTRUE(one_time),
-      as.character(overall_summary %||% ""), justified,
-      nullable_numeric_param(amount_next_fy), nullable_numeric_param(amount_2next_fy)
+      as.character(overall_summary %||% ""),
+      nullable_numeric_param(amount_next_fy), nullable_numeric_param(amount_2next_fy),
+      nullable_integer_param(modified_by)
     )
   )$cls_id[[1]]
 }
 
 update_cls_request <- function(connection, cls_id, request_name, request_type = NULL,
                                request_amount = NULL, one_time = FALSE, overall_summary = NULL,
-                               justified = NULL, completed = FALSE, amount_next_fy = NULL,
-                               amount_2next_fy = NULL, plan_service_id = NULL, modified_by = NULL) {
+                               amount_next_fy = NULL, amount_2next_fy = NULL,
+                               plan_service_id = NULL, modified_by = NULL) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
   request_name <- trimws(as.character(request_name %||% ""))
   if (!nzchar(request_name)) stop("Add a request name.")
   request_type <- as.character(request_type %||% "")
   if (!nzchar(request_type)) request_type <- NA_character_
-  justified <- as.character(justified %||% "")
-  if (!justified %in% c("Yes", "No")) justified <- NA_character_
   plan_service_id <- suppressWarnings(as.integer(plan_service_id %||% NA_integer_))
   if (!is.na(plan_service_id)) {
     service_rows <- DBI::dbGetQuery(
@@ -1109,7 +1446,7 @@ update_cls_request <- function(connection, cls_id, request_name, request_type = 
     )
     if (!nrow(service_rows)) stop("That service is no longer available.")
   }
-  # justified/completed are preserved (managed outside this edit form), so they are
+  # `status` is managed by the hand-off actions, not this edit form, so it is
   # intentionally omitted from the SET clause.
   DBI::dbExecute(
     connection,
@@ -1119,7 +1456,7 @@ update_cls_request <- function(connection, cls_id, request_name, request_type = 
       "one_time = $5::boolean, overall_summary = NULLIF($6::text, ''),",
       "amount_next_fy = $7::numeric, amount_2next_fy = $8::numeric,",
       "plan_service_id = COALESCE($9::integer, plan_service_id),",
-      "modified_by = COALESCE(NULLIF($10::text, ''), modified_by),",
+      "modified_by = COALESCE($10::integer, modified_by),",
       "updated_at = now() WHERE cls_id = $1"
     ),
     params = list(
@@ -1127,7 +1464,7 @@ update_cls_request <- function(connection, cls_id, request_name, request_type = 
       isTRUE(one_time), as.character(overall_summary %||% ""),
       nullable_numeric_param(amount_next_fy), nullable_numeric_param(amount_2next_fy),
       if (is.na(plan_service_id)) NA_integer_ else plan_service_id,
-      as.character(modified_by %||% "")
+      nullable_integer_param(modified_by)
     )
   )
   invisible(cls_id)
@@ -1142,8 +1479,8 @@ cls_status_choices <- c(
   "Denied"
 )
 
-# `completed` (the target-schema BIT) is true once a request has left the agency
-# for BBMR, so the two stay consistent.
+# "Complete" now means only "has left the agency for BBMR" - derived from status,
+# which replaced the target schema's `completed` BIT.
 cls_status_is_complete <- function(status) {
   as.character(status) %in% c("BBMR Review", "Approved", "Partially Approved", "Denied")
 }
@@ -1155,11 +1492,11 @@ set_plan_cls_status <- function(connection, plan_id, status, modified_by = NULL,
   status <- as.character(status %||% "")
   if (!status %in% cls_status_choices) stop("Choose a valid request status.")
   sql <- paste(
-    "UPDATE budget.cls_request SET status = $2::varchar, completed = $3::boolean, updated_at = now(),",
-    "modified_by = COALESCE(NULLIF($4::text, ''), modified_by)",
+    "UPDATE budget.cls_request SET status = $2::varchar, updated_at = now(),",
+    "modified_by = COALESCE($3::integer, modified_by)",
     "WHERE plan_service_id IN (SELECT plan_service_id FROM performance.plan_service WHERE plan_id = $1)"
   )
-  params <- list(plan_id, status, cls_status_is_complete(status), as.character(modified_by %||% ""))
+  params <- list(plan_id, status, nullable_integer_param(modified_by))
   if (length(only_from)) {
     placeholders <- paste0("$", seq_along(only_from) + length(params), "::varchar", collapse = ", ")
     sql <- paste0(sql, " AND status IN (", placeholders, ")")
@@ -1178,10 +1515,10 @@ set_cls_status <- function(connection, cls_id, status, modified_by = NULL) {
   DBI::dbExecute(
     connection,
     paste(
-      "UPDATE budget.cls_request SET status = $2::varchar, completed = $3::boolean, updated_at = now(),",
-      "modified_by = COALESCE(NULLIF($4::text, ''), modified_by) WHERE cls_id = $1"
+      "UPDATE budget.cls_request SET status = $2::varchar, updated_at = now(),",
+      "modified_by = COALESCE($3::integer, modified_by) WHERE cls_id = $1"
     ),
-    params = list(cls_id, status, cls_status_is_complete(status), as.character(modified_by %||% ""))
+    params = list(cls_id, status, nullable_integer_param(modified_by))
   )
   invisible(cls_id)
 }
@@ -1192,7 +1529,7 @@ mark_plan_cls_complete <- function(connection, plan_id, modified_by = NULL) {
 
 # BBMR review record for a CLS request — kept separate so the submitted request
 # data is retained unchanged while reviewers add their evaluation.
-save_cls_review <- function(connection, cls_id, evaluation_score = NULL, analyst_notes = NULL,
+save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
                             analyst_approval = NULL, bbmr_approval = NULL, reviewed_by = NULL) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
@@ -1203,13 +1540,13 @@ save_cls_review <- function(connection, cls_id, evaluation_score = NULL, analyst
   DBI::dbExecute(
     connection,
     paste(
-      "INSERT INTO budget.cls_review (cls_id, evaluation_score, analyst_notes, analyst_approval, bbmr_approval, reviewed_by, updated_at)",
-      "VALUES ($1::integer, $2::numeric, NULLIF($3::text, ''), $4::text, $5::text, NULLIF($6::text, ''), now())",
-      "ON CONFLICT (cls_id) DO UPDATE SET evaluation_score = EXCLUDED.evaluation_score,",
+      "INSERT INTO budget.cls_review (cls_id, analyst_notes, analyst_approval, bbmr_approval, reviewed_by, updated_at)",
+      "VALUES ($1::integer, NULLIF($2::text, ''), $3::text, $4::text, $5::integer, now())",
+      "ON CONFLICT (cls_id) DO UPDATE SET",
       "analyst_notes = EXCLUDED.analyst_notes, analyst_approval = EXCLUDED.analyst_approval,",
       "bbmr_approval = EXCLUDED.bbmr_approval, reviewed_by = EXCLUDED.reviewed_by, updated_at = now()"
     ),
-    params = list(cls_id, nullable_numeric_param(evaluation_score), as.character(analyst_notes %||% ""), analyst_approval, bbmr_approval, as.character(reviewed_by %||% ""))
+    params = list(cls_id, as.character(analyst_notes %||% ""), analyst_approval, bbmr_approval, nullable_integer_param(reviewed_by))
   )
   # A BBMR decision advances the request's workflow status.
   decided <- switch(
@@ -1240,7 +1577,8 @@ delete_cls_request <- function(connection, cls_id) {
   invisible(cls_id)
 }
 
-add_cls_request_line <- function(connection, cls_id, object_category = NULL, amount = NULL, justification = NULL) {
+add_cls_request_line <- function(connection, cls_id, object_category = NULL, amount = NULL, justification = NULL,
+                                 spend_category = NULL) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
   next_sort <- DBI::dbGetQuery(
@@ -1251,11 +1589,12 @@ add_cls_request_line <- function(connection, cls_id, object_category = NULL, amo
   DBI::dbGetQuery(
     connection,
     paste(
-      "INSERT INTO budget.cls_request_line (cls_id, object_category, amount, justification, sort_order)",
-      "VALUES ($1::integer, NULLIF($2::text, ''), $3::numeric, NULLIF($4::text, ''), $5::integer)",
+      "INSERT INTO budget.cls_request_line (cls_id, object_category, spend_category, amount, justification, sort_order)",
+      "VALUES ($1::integer, NULLIF($2::text, ''), NULLIF($3::text, ''), $4::numeric, NULLIF($5::text, ''), $6::integer)",
       "RETURNING line_id"
     ),
-    params = list(cls_id, as.character(object_category %||% ""), nullable_numeric_param(amount), as.character(justification %||% ""), as.integer(next_sort))
+    params = list(cls_id, as.character(object_category %||% ""), as.character(spend_category %||% ""),
+                  nullable_numeric_param(amount), as.character(justification %||% ""), as.integer(next_sort))
   )$line_id[[1]]
 }
 
@@ -1292,18 +1631,224 @@ delete_cls_request_position <- function(connection, pos_id) {
   invisible(pos_id)
 }
 
-save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE) {
+# Baltimore's fiscal year runs July 1 - June 30, named by the calendar
+# year it ends in (e.g. FY2027 = July 1, 2026 - June 30, 2027). Computed
+# fresh from the real date (not tied to whichever planning cycle happens
+# to be active) since the validated-measure lock below is meant to track
+# the calendar, not the plan cycle. `today` is a parameter (not always
+# Sys.Date() internally) so this is deterministically testable against a
+# specific date rather than only ever reflecting whenever a test happens
+# to run.
+current_fiscal_year <- function(today = Sys.Date()) {
+  calendar_year <- as.integer(format(today, "%Y"))
+  fiscal_year_start <- as.Date(sprintf("%s-07-01", calendar_year))
+  if (today >= fiscal_year_start) calendar_year + 1L else calendar_year
+}
+
+# July 1 of the calendar year before fiscal_year -- e.g. FY27 starts
+# 2026-07-01.
+fiscal_year_start_date <- function(fiscal_year) {
+  as.Date(sprintf("%d-07-01", as.integer(fiscal_year) - 1L))
+}
+
+# "New" means established during the current fiscal year -- not "was
+# ever marked New," which let a measure stay exempt from the recent-
+# actual/next-target publish requirement forever after its first save.
+# Only re-evaluates measures whose existing status is already New/blank;
+# a real classification (Removed, Replaced, Modified) is left alone, since
+# those track something other than "how old is this."
+measure_change_mapping_for_date <- function(existing_mapping, created_date, today = Sys.Date()) {
+  is_new_or_unset <- is.na(existing_mapping) || identical(existing_mapping, "New")
+  if (!is_new_or_unset) return(existing_mapping)
+  if (is.na(created_date)) return("New")
+  if (as.Date(created_date) >= fiscal_year_start_date(current_fiscal_year(today))) "New" else "Unchanged"
+}
+
+# One-time backfill for existing measures created before this fiscal year
+# that are still marked "New" (or never had change_mapping set at all) --
+# see measure_change_mapping_for_date() above. Gated so it runs exactly
+# once per database (including production, automatically on its next
+# deploy/restart -- direct production DB access isn't available from this
+# environment, so self-applying via the same seed_applied marker used
+# elsewhere is how this reaches prod, not a manually-run script).
+apply_change_mapping_by_created_date_once <- function(connection) {
+  seed_name <- "change_mapping_by_created_date_backfill"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  boundary <- fiscal_year_start_date(current_fiscal_year())
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.performance_measure",
+      "SET change_mapping = 'Unchanged', last_updated = now()",
+      "WHERE (change_mapping IS NULL OR change_mapping = 'New') AND created_date < $1"
+    ),
+    params = list(boundary)
+  )
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
+# Percent measures used to be entered as decimal fractions (0.61 for 61%);
+# the app now requires whole numbers (61), and a value of exactly 1 reads
+# as "1%" instead of the "100%" it was meant to be.
+#
+# Rule: only a NON-INTEGER value (0.61, 0.9954, 1.015...) is touched here.
+# Confirmed against both local dev and production (2026-07-28): zero
+# Percent actual/target values >= 2 have any decimal precision, meaning
+# nobody has ever entered a fractional-but-not-whole percent under the
+# current whole-number rule -- so any decimal-precision value is
+# unambiguously pre-dating that rule and safe to *100 automatically.
+# A clean integer (0, 1, 2, 45, 100...) is never touched here, INCLUDING
+# the one genuinely ambiguous case, a bare "1" (could mean 1% already
+# correct, or 100% under the old convention) -- that requires comparing
+# each measure's own history and was resolved manually, per-row, not by
+# this blanket rule (see outputs/percent_*_review.xlsx from 2026-07-28).
+#
+# Scoped to measure_ids when given (tests use this -- the database also
+# holds real, already-correct tiny percentages like 0.01, and re-running
+# the unscoped version a second time would be a no-op anyway since 0.01
+# is non-integer only on the FIRST pass -- scoping just keeps a test from
+# touching unrelated rows). NULL (the production/default case) means
+# every Percent measure.
+percent_value_scale_backfill <- function(connection, measure_ids = NULL) {
+  scope_clause <- ""
+  scope_params <- list()
+  if (!is.null(measure_ids)) {
+    measure_ids <- unique(suppressWarnings(as.integer(measure_ids)))
+    measure_ids <- measure_ids[!is.na(measure_ids)]
+    if (!length(measure_ids)) return(invisible(FALSE))
+    placeholders <- paste0("$", seq_along(measure_ids), collapse = ", ")
+    scope_clause <- sprintf("AND pm.measure_id IN (%s)", placeholders)
+    scope_params <- as.list(measure_ids)
+  }
+  actual_sql <- paste(
+    "UPDATE performance.measure_actuals ma",
+    "SET annual_actual = round(ma.annual_actual * 100, 2), updated_at = now()",
+    "FROM performance.performance_measure pm",
+    "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+    "AND ma.annual_actual IS NOT NULL AND ma.annual_actual != round(ma.annual_actual)",
+    scope_clause
+  )
+  target_sql <- paste(
+    "UPDATE performance.measure_actuals ma",
+    "SET target_value = round(ma.target_value * 100, 2), updated_at = now()",
+    "FROM performance.performance_measure pm",
+    "WHERE pm.measure_id = ma.measure_id AND pm.format_type = 'Percent'",
+    "AND ma.target_value IS NOT NULL AND ma.target_value != round(ma.target_value)",
+    scope_clause
+  )
+  # dbExecute()'s params argument must be omitted entirely (not passed as an
+  # empty list) when the statement has no placeholders -- some DBI/RPostgres
+  # versions treat params = list() on a zero-placeholder query as an error
+  # ("Query does not require parameters"), which only surfaces on the
+  # unscoped call path (measure_ids = NULL), i.e. exactly how
+  # ensure_review_schema() calls this on every app boot.
+  if (length(scope_params)) {
+    DBI::dbExecute(connection, actual_sql, params = scope_params)
+    DBI::dbExecute(connection, target_sql, params = scope_params)
+  } else {
+    DBI::dbExecute(connection, actual_sql)
+    DBI::dbExecute(connection, target_sql)
+  }
+  invisible(TRUE)
+}
+
+# Gated the same way as apply_change_mapping_by_created_date_once(): runs
+# once per database, automatically on next restart, reaching production
+# without needing direct DB access.
+apply_percent_value_scale_backfill_once <- function(connection) {
+  seed_name <- "percent_value_scale_backfill"
+  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
+  percent_value_scale_backfill(connection)
+  mark_seed_applied(connection, seed_name)
+  invisible(TRUE)
+}
+
+# Once a measure is validated, its historic data and definition lock to
+# everyone except a SystemAdmin (see can_edit_locked_measure_data() in
+# app.R), except the current fiscal year's actual (still being actively
+# reported) and the following fiscal year's target (still being actively
+# planned). All three return FALSE for a not-yet-validated measure, so
+# nothing is locked until validation happens. Enforced in two places:
+# app.R's collect_measure_form()/collect_measure_years() (so a tampered
+# client request can't slip a change past a disabled UI control) and
+# again here in save_measure_record() itself, since that's the only
+# function that actually writes these rows -- a second, independent
+# guard rather than trusting a single call site to always get it right.
+measure_actual_is_locked <- function(year, is_validated) {
+  # The most recently completed fiscal year's actual stays open too (not
+  # just the current year's) -- publishing requires it be reported, so a
+  # non-admin must still be able to fill it in after validation.
+  isTRUE(is_validated) && as.integer(year) < current_fiscal_year() - 1L
+}
+
+measure_target_is_locked <- function(year, is_validated) {
+  isTRUE(is_validated) && as.integer(year) <= current_fiscal_year()
+}
+
+measure_definition_is_locked <- function(is_validated) {
+  isTRUE(is_validated)
+}
+
+save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE, is_admin = FALSE) {
   DBI::dbWithTransaction(connection, {
+    is_validated <- !is.null(values$measure_id) && identical(values$approval_status, "Validated")
+    # A non-admin can only ever touch the current fiscal year's actual and
+    # the following fiscal year's target on a validated measure -- every
+    # other field gets forced back to its existing value below, before
+    # this function ever writes anything. Since that kind of save doesn't
+    # represent a real change requiring re-review, it shouldn't knock the
+    # measure back to Draft the way any other edit to a
+    # Validated/PendingApproval/Returned measure normally does. An admin's
+    # edit to genuinely locked content still goes through the existing
+    # re-validation-required path below.
+    revalidation_required <- !is.null(values$measure_id) &&
+      values$approval_status %in% c("Validated", "PendingApproval", "Returned") &&
+      !(is_validated && !is_admin)
+    if (is_validated && !is_admin && !is.null(values$measure_id)) {
+      existing_measure <- DBI::dbGetQuery(
+        connection,
+        paste(
+          "SELECT title, measure_type, description, data_source, data_owner, data_owner_role, update_frequency, formula,",
+          "desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required, replicability,",
+          "disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
+          "pillar_id, pillar_goal_id, is_city, is_agency, is_service",
+          "FROM performance.performance_measure WHERE measure_id = $1"
+        ),
+        params = list(as.integer(values$measure_id))
+      )
+      if (nrow(existing_measure)) {
+        for (field in names(existing_measure)) values[[field]] <- existing_measure[[field]][[1]]
+      }
+      existing_actuals <- DBI::dbGetQuery(
+        connection,
+        "SELECT fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals WHERE measure_id = $1",
+        params = list(as.integer(values$measure_id))
+      )
+      yearly_values <- lapply(yearly_values, function(year_value) {
+        existing_row <- existing_actuals[existing_actuals$fiscal_year == year_value$fiscal_year, , drop = FALSE]
+        if (!nrow(existing_row)) return(year_value)
+        if (measure_actual_is_locked(year_value$fiscal_year, is_validated)) {
+          year_value$annual_actual <- existing_row$annual_actual[[1]]
+          year_value$annual_actual_notes <- existing_row$annual_actual_notes[[1]]
+        }
+        if (measure_target_is_locked(year_value$fiscal_year, is_validated)) {
+          year_value$target_value <- existing_row$target_value[[1]]
+          year_value$target_value_notes <- existing_row$target_value_notes[[1]]
+        }
+        year_value
+      })
+    }
     status <- if (submit) {
       "PendingApproval"
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
+    } else if (revalidation_required) {
       "Draft"
     } else {
       values$approval_status
     }
     submitted_at <- if (submit) {
       Sys.time()
-    } else if (!is.null(values$measure_id) && values$approval_status %in% c("Validated", "PendingApproval", "Returned")) {
+    } else if (revalidation_required) {
       as.POSIXct(NA)
     } else {
       values$submitted_for_approval_at
@@ -2016,29 +2561,22 @@ save_team_role_assignment <- function(connection, access_id, agency_id, full_nam
       "UPDATE access.user_agency_access SET agency_role = $2::varchar(30), agency_roles = $3, access_level = CASE WHEN $2::text = 'Agency Staff' THEN 'ReadOnly' WHEN $2::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END WHERE access_id = $1",
       params = list(access_id, agency_role, agency_roles_value)
     )
-    existing_role <- DBI::dbGetQuery(
+    # Upserting on the user_id unique constraint (rather than a
+    # SELECT-then-branch) keeps this atomic: two overlapping saves for the
+    # same user_id (a double-click, or two admins saving around the same
+    # time) used to both see "no existing row" and race to INSERT, with the
+    # second hitting user_role_user_id_key and failing the whole save.
+    DBI::dbExecute(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
-      params = list(user_id)
+      paste(
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)",
+        "VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        "ON CONFLICT (user_id) DO UPDATE SET",
+        "app_role = EXCLUDED.app_role, agency_id = NULL, budget_access = EXCLUDED.budget_access,",
+        "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access"
+      ),
+      params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    if (nrow(existing_role)) {
-      DBI::dbExecute(
-        connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
-        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-      DBI::dbExecute(
-        connection,
-        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
-        params = list(user_id, existing_role$user_role_id[[1]])
-      )
-    } else {
-      DBI::dbExecute(
-        connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
-        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-    }
   })
   invisible(TRUE)
 }
@@ -2113,29 +2651,22 @@ save_entity_team_role_assignment <- function(connection, entity_access_id, entit
       "UPDATE access.user_entity_access SET agency_id = $2::varchar(20), service_id = $3::varchar(20), agency_role = $4::varchar(30), agency_roles = $5, access_level = CASE WHEN $4::text = 'Agency Staff' THEN 'ReadOnly' WHEN $4::text IN ('Agency Head', 'Agency Director') THEN 'Submit' ELSE 'Edit' END, budget_access = $6, adaptive_planning = $7, performance_plan_access = $8, updated_at = now() WHERE entity_access_id = $1",
       params = list(entity_access_id, agency_id, service_id, agency_role, agency_roles_value, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    existing_role <- DBI::dbGetQuery(
+    # Upserting on the user_id unique constraint (rather than a
+    # SELECT-then-branch) keeps this atomic: two overlapping saves for the
+    # same user_id (a double-click, or two admins saving around the same
+    # time) used to both see "no existing row" and race to INSERT, with the
+    # second hitting user_role_user_id_key and failing the whole save.
+    DBI::dbExecute(
       connection,
-      "SELECT user_role_id FROM access.user_role WHERE user_id = $1 ORDER BY user_role_id LIMIT 1",
-      params = list(user_id)
+      paste(
+        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access)",
+        "VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
+        "ON CONFLICT (user_id) DO UPDATE SET",
+        "app_role = EXCLUDED.app_role, agency_id = NULL, budget_access = EXCLUDED.budget_access,",
+        "adaptive_planning = EXCLUDED.adaptive_planning, performance_plan_access = EXCLUDED.performance_plan_access"
+      ),
+      params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
     )
-    if (nrow(existing_role)) {
-      DBI::dbExecute(
-        connection,
-        "UPDATE access.user_role SET app_role = $2::varchar(30), agency_id = NULL, budget_access = $3, adaptive_planning = $4, performance_plan_access = $5 WHERE user_role_id = $1",
-        params = list(existing_role$user_role_id[[1]], performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-      DBI::dbExecute(
-        connection,
-        "DELETE FROM access.user_role WHERE user_id = $1 AND user_role_id <> $2",
-        params = list(user_id, existing_role$user_role_id[[1]])
-      )
-    } else {
-      DBI::dbExecute(
-        connection,
-        "INSERT INTO access.user_role (user_id, app_role, agency_id, budget_access, adaptive_planning, performance_plan_access) VALUES ($1, $2::varchar(30), NULL, $3, $4, $5)",
-        params = list(user_id, performance_role, isTRUE(budget_access), isTRUE(adaptive_planning), isTRUE(performance_plan_access))
-      )
-    }
   })
   invisible(TRUE)
 }
@@ -2237,7 +2768,7 @@ risk_type_values <- c(
   "technology", "environmental", "staffing", "legislation", "cross-agency inputs", "other"
 )
 
-save_service_risk <- function(connection, risk_id, plan_id, risk_type, description) {
+save_service_risk <- function(connection, risk_id, plan_id, risk_type, description, changed_by = NULL) {
   if (is.null(risk_type) || length(risk_type) == 0 || is.na(risk_type)) risk_type <- ""
   risk_type <- trimws(tolower(as.character(risk_type)))
   if (!nzchar(risk_type) || !risk_type %in% risk_type_values) stop("Risk type is required")
@@ -2252,25 +2783,32 @@ save_service_risk <- function(connection, risk_id, plan_id, risk_type, descripti
     )
     return(row$risk_id[[1]])
   }
-  changed <- DBI::dbExecute(
-    connection,
-    "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
-    params = list(as.integer(risk_id), as.integer(plan_id), risk_type, description)
-  )
-  if (changed != 1) stop("Risk not found for this plan")
-  as.integer(risk_id)
+  result <- DBI::dbWithTransaction(connection, {
+    set_audit_actor(connection, changed_by)
+    changed <- DBI::dbExecute(
+      connection,
+      "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
+      params = list(as.integer(risk_id), as.integer(plan_id), risk_type, description)
+    )
+    if (changed != 1) stop("Risk not found for this plan")
+    as.integer(risk_id)
+  })
+  result
 }
 
-delete_service_risk <- function(connection, risk_id, plan_id) {
+delete_service_risk <- function(connection, risk_id, plan_id, changed_by = NULL) {
   risk_id <- suppressWarnings(as.integer(risk_id))
   plan_id <- suppressWarnings(as.integer(plan_id))
   if (is.na(risk_id) || is.na(plan_id)) stop("Risk not found.")
-  changed <- DBI::dbExecute(
-    connection,
-    "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
-    params = list(risk_id, plan_id)
-  )
-  if (changed != 1) stop("Risk not found for this plan.")
+  DBI::dbWithTransaction(connection, {
+    set_audit_actor(connection, changed_by)
+    changed <- DBI::dbExecute(
+      connection,
+      "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
+      params = list(risk_id, plan_id)
+    )
+    if (changed != 1) stop("Risk not found for this plan.")
+  })
   invisible(TRUE)
 }
 
@@ -2338,6 +2876,140 @@ overwrite_section_draft <- function(connection, plan_id, section_key, payload, u
     ),
     params = list(as.integer(plan_id), as.character(section_key), as.character(payload), updated_by)
   )
+}
+
+# Parses a stored section-draft payload, warning (rather than silently
+# returning NULL) if it's corrupted. Every caller that hits this treats a
+# NULL as "no draft exists yet" and proceeds from scratch -- correct for a
+# genuinely missing row, but for a *corrupted* one it means whatever was
+# stored is discarded with zero trace. A warning at least makes that
+# discoverable (visible in `flyctl logs`) instead of indistinguishable from
+# the normal "first save ever" case. jsonb columns shouldn't normally hold
+# invalid JSON, so this is defensive, not expected to fire in practice.
+parse_stored_draft_payload <- function(payload_text, context = "") {
+  tryCatch(
+    jsonlite::fromJSON(payload_text, simplifyVector = FALSE),
+    error = function(error) {
+      warning(
+        "Failed to parse stored section-draft payload",
+        if (nzchar(context)) paste0(" (", context, ")") else "",
+        ": ", conditionMessage(error),
+        call. = FALSE
+      )
+      NULL
+    }
+  )
+}
+
+# Shared by every draft-payload merge below: existing entries survive
+# unless the incoming payload actually has that same key, in which case
+# incoming wins for that key only.
+merge_named_list <- function(existing_list, incoming_list) {
+  if (is.null(existing_list) || !is.list(existing_list)) existing_list <- list()
+  if (is.null(incoming_list) || !is.list(incoming_list)) incoming_list <- list()
+  merged <- existing_list
+  for (key in names(incoming_list)) merged[[key]] <- incoming_list[[key]]
+  merged
+}
+
+# Deep-merges an incoming Goals-section draft payload against whatever is
+# already stored, keyed by field id / goal id, instead of replacing it
+# outright. Every team member's "quiet" autosave sends a full snapshot of
+# their own browser's Goals page, and that browser only syncs with the
+# shared draft once per page load -- so a tab that's been open a while has
+# no idea about a goal/field a teammate added afterward. A blind overwrite
+# (the previous behavior) silently erased it the moment that stale tab's
+# next autosave landed. Merging means a save that doesn't mention a given
+# field or goal id leaves the existing value alone.
+#
+# Trade-off: this can't distinguish "my browser never knew this goal
+# existed" from "I just deleted this goal" -- both look identical (the
+# payload just doesn't mention that goal id). A goal deleted by one team
+# member could reappear if another team member's already-stale tab saves
+# afterward. Accepted as a much narrower, more visible failure mode than
+# the one being fixed (any conflicting save silently dropping *all* of
+# another user's unsynced additions, every time -- reported 2026-07-24).
+merge_goals_draft_payload <- function(existing, incoming) {
+  if (is.null(existing) || !is.list(existing)) return(incoming)
+  merged <- incoming
+  merged$values <- merge_named_list(existing$values, incoming$values)
+  merged$kpis <- merge_named_list(existing$kpis, incoming$kpis)
+  merged$initiatives <- merge_named_list(existing$initiatives, incoming$initiatives)
+  existing_goal_ids <- if (is.null(existing$goalIds)) character(0) else vapply(existing$goalIds, as.character, character(1))
+  incoming_goal_ids <- if (is.null(incoming$goalIds)) character(0) else vapply(incoming$goalIds, as.character, character(1))
+  merged$goalIds <- as.list(union(existing_goal_ids, incoming_goal_ids))
+  merged
+}
+
+# Same idea as merge_goals_draft_payload(), for the Services page's "quiet"
+# autosave (services_draft_quiet_save in app.R, fed by
+# scheduleServicesQuietAutosave()/collectBuilderDraft() in app.js) --
+# discovered 2026-07-24 to be the *actual* live Services autosave path.
+# save_services_draft_field()/with_section_draft_lock() below were added
+# earlier the same day believing service_description_draft_save and
+# service_metrics_draft_save were the live path; they turned out to be
+# unreachable from the client (flushServiceDescriptionAutosave() and
+# flushServiceMetricsAutosave() are defined in app.js but never called),
+# so that fix touched code the browser never actually invokes. This is the
+# one that matters: collectBuilderDraft() sends a full snapshot of every
+# values/serviceMetrics key on the page, same as Goals' collectGoalsDraft(),
+# and was going through the same blind overwrite_section_draft() Goals used
+# to. No goalIds-equivalent array to reconcile here, just two dictionaries.
+merge_services_draft_payload <- function(existing, incoming) {
+  if (is.null(existing) || !is.list(existing)) return(incoming)
+  merged <- incoming
+  merged$values <- merge_named_list(existing$values, incoming$values)
+  merged$serviceMetrics <- merge_named_list(existing$serviceMetrics, incoming$serviceMetrics)
+  merged
+}
+
+# Runs `mutate` against the current section-draft payload under a row
+# lock, then saves whatever it returns -- an atomic read-modify-write, so
+# two concurrent saves to the same (plan_id, section_key) draft serialize
+# against each other correctly instead of both reading the same stale
+# payload and racing to overwrite it. `mutate` receives the current payload
+# as a parsed list (NULL if no draft row exists yet) and must return the
+# full new payload to store. Shared by both save_goals_draft_merged() and
+# the Services per-field/per-metric save path below -- Services was found
+# to have the same class of lost-update race as Goals (2026-07-24), just
+# narrower in scope (each save already only touches one field/service
+# instead of a whole-page snapshot).
+with_section_draft_lock <- function(connection, plan_id, section_key, mutate, updated_by = NULL) {
+  plan_id <- as.integer(plan_id)
+  section_key <- as.character(section_key)
+  DBI::dbWithTransaction(connection, {
+    existing_row <- DBI::dbGetQuery(
+      connection,
+      "SELECT payload::text AS payload FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = $2 FOR UPDATE",
+      params = list(plan_id, section_key)
+    )
+    existing_payload <- if (nrow(existing_row)) {
+      parse_stored_draft_payload(existing_row$payload[[1]], context = paste0("plan_id=", plan_id, " section_key=", section_key))
+    } else {
+      NULL
+    }
+    new_payload <- mutate(existing_payload)
+    new_payload_json <- jsonlite::toJSON(new_payload, auto_unbox = TRUE, null = "null")
+    overwrite_section_draft(connection, plan_id, section_key, new_payload_json, updated_by)
+  })
+}
+
+save_goals_draft_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+  incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
+  with_section_draft_lock(connection, plan_id, "goals", function(existing_payload) {
+    merge_goals_draft_payload(existing_payload, incoming_payload)
+  }, updated_by)
+}
+
+# The actual fix for Services' "quiet" full-snapshot autosave -- see
+# merge_services_draft_payload()'s comment for why this is the one that
+# matters (a same-day, since-removed save_services_draft_field() targeted
+# the wrong, unreachable code path first).
+save_services_draft_quiet_merged <- function(connection, plan_id, payload_json, updated_by = NULL) {
+  incoming_payload <- jsonlite::fromJSON(payload_json, simplifyVector = FALSE)
+  with_section_draft_lock(connection, plan_id, "services", function(existing_payload) {
+    merge_services_draft_payload(existing_payload, incoming_payload)
+  }, updated_by)
 }
 
 submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {
@@ -2624,6 +3296,7 @@ approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
     approved_by <- users$user_id[[1]]
   }
   DBI::dbWithTransaction(connection, {
+    set_audit_actor(connection, approved_by)
     apply_plan_drafts_to_records(connection, plan_id)
     changed <- DBI::dbGetQuery(
       connection,
@@ -2651,7 +3324,49 @@ approve_agency_plan <- function(connection, plan_id, approved_by = NULL) {
   invisible(plan_id)
 }
 
-publish_agency_plan <- function(connection, plan_id, published_by = NULL) {
+# Given a set of measure_ids, returns the subset that are not marked "New"
+# (a measure added this cycle has nothing prior to report yet) and are
+# missing either the most recently completed year's actual (actual_fy) or
+# the upcoming budget year's target (next_target_fy) -- both required to
+# publish a *plan*, never to save or submit an individual measure. Re-
+# queries fresh from the database rather than trusting a caller-supplied
+# "already checked" flag -- the goal/service *selection* logic (which
+# measure_ids belong to a plan) still lives in app.R's
+# plan_selected_measure_ids(), since duplicating that in SQL here would
+# risk drifting out of sync with its draft/administration-service handling.
+measure_ids_missing_required_fiscal_data <- function(connection, measure_ids, actual_fy, next_target_fy) {
+  measure_ids <- unique(suppressWarnings(as.integer(measure_ids)))
+  measure_ids <- measure_ids[!is.na(measure_ids)]
+  if (!length(measure_ids)) return(integer(0))
+  placeholders <- paste0("$", seq_along(measure_ids) + 2L, collapse = ", ")
+  rows <- DBI::dbGetQuery(
+    connection,
+    sprintf(
+      paste(
+        "SELECT pm.measure_id FROM performance.performance_measure pm",
+        "WHERE pm.measure_id IN (%s)",
+        "AND (pm.change_mapping IS NULL OR pm.change_mapping != 'New')",
+        "AND (",
+        "  NOT EXISTS (",
+        "    SELECT 1 FROM performance.measure_actuals ma",
+        "    WHERE ma.measure_id = pm.measure_id AND ma.fiscal_year = $1 AND ma.annual_actual IS NOT NULL",
+        "    AND ma.annual_actual_notes IS NOT NULL AND btrim(ma.annual_actual_notes) <> ''",
+        "  )",
+        "  OR NOT EXISTS (",
+        "    SELECT 1 FROM performance.measure_actuals mt",
+        "    WHERE mt.measure_id = pm.measure_id AND mt.fiscal_year = $2 AND mt.target_value IS NOT NULL",
+        "    AND mt.target_value_notes IS NOT NULL AND btrim(mt.target_value_notes) <> ''",
+        "  )",
+        ")"
+      ),
+      placeholders
+    ),
+    params = c(list(as.integer(actual_fy), as.integer(next_target_fy)), as.list(measure_ids))
+  )
+  rows$measure_id
+}
+
+publish_agency_plan <- function(connection, plan_id, published_by = NULL, required_measure_ids = NULL, actual_fy = NULL, next_target_fy = NULL) {
   plan_id <- as.integer(plan_id)
   published_by <- if (is.null(published_by) || is.na(published_by)) NA_integer_ else as.integer(published_by)
   if (is.na(published_by)) {
@@ -2669,6 +3384,24 @@ publish_agency_plan <- function(connection, plan_id, published_by = NULL) {
     if (!identical(plan$plan_status[[1]], "Approved")) {
       stop("Only plans in the ready-to-publish queue can be published.")
     }
+    if (length(required_measure_ids) && !is.null(actual_fy) && !is.null(next_target_fy)) {
+      missing_ids <- measure_ids_missing_required_fiscal_data(connection, required_measure_ids, actual_fy, next_target_fy)
+      if (length(missing_ids)) {
+        id_placeholders <- paste0("$", seq_along(missing_ids), collapse = ", ")
+        titles <- DBI::dbGetQuery(
+          connection,
+          sprintf("SELECT title FROM performance.performance_measure WHERE measure_id IN (%s) ORDER BY title", id_placeholders),
+          params = as.list(as.integer(missing_ids))
+        )$title
+        stop(sprintf(
+          "Cannot publish: FY%02d actual or FY%02d target missing for %s%s",
+          actual_fy %% 100L, next_target_fy %% 100L,
+          paste(head(titles, 5), collapse = ", "),
+          if (length(titles) > 5) sprintf(" and %d more", length(titles) - 5) else ""
+        ))
+      }
+    }
+    set_audit_actor(connection, published_by)
     apply_plan_drafts_to_records(connection, plan_id)
     DBI::dbExecute(
       connection,

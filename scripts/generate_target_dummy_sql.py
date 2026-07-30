@@ -118,7 +118,7 @@ TARGET_COLUMNS: dict[str, list[str]] = {
     "budget.general_fund_change": ["change_id", "plan_service_id", "object_type", "description", "dollar_change", "position_change", "service_impact", "sort_order"],
     "budget.key_spend_category": ["ksc_id", "plan_service_id", "category", "amount", "description"],
     "budget.proposal_narrative": ["narrative_id", "plan_service_id", "major_changes", "service_impact", "position_impact", "equity_narrative", "assumed_rates_desc", "grant_award_desc"],
-    "budget.cls_request": ["cls_id", "plan_service_id", "request_name", "request_type", "request_amount", "one_time", "overall_summary", "justified", "completed", "amount_next_fy", "amount_2next_fy"],
+    "budget.cls_request": ["cls_id", "plan_service_id", "request_name", "request_type", "request_amount", "one_time", "overall_summary", "status", "amount_next_fy", "amount_2next_fy"],
     "budget.cls_request_line": ["line_id", "cls_id", "object_category", "amount", "justification", "sort_order"],
     "budget.cls_request_position": ["pos_id", "cls_id", "classification", "position_count", "estimated_salary", "justification", "explanation"],
     "budget.enhancement": ["enhancement_id", "plan_service_id", "name", "description", "total_cost", "position_cost", "position_count", "position_classification", "q1_service_delivery", "q2_revenue", "q3_cost_savings", "q4_future_savings", "external_funds", "arpa_funded", "completed"],

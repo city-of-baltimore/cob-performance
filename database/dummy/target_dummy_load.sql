@@ -659,20 +659,20 @@ SELECT setval(
 );
 
 -- CLS_REQUEST -> budget.cls_request
-INSERT INTO budget.cls_request ("cls_id", "plan_service_id", "request_name", "request_type", "request_amount", "one_time", "overall_summary", "justified", "completed", "amount_next_fy", "amount_2next_fy")
+INSERT INTO budget.cls_request ("cls_id", "plan_service_id", "request_name", "request_type", "request_amount", "one_time", "overall_summary", "status", "amount_next_fy", "amount_2next_fy")
 VALUES
-    (1, 1, 'Fleet Parts Cost Increase', 'Extraordinary Inflation', 65000, false, 'Vehicle parts costs increased 8% year over year.', 'Yes', false, 67000, 69000),
-    (2, 2, 'HVAC Contract Annualization', 'Cyclical', 30000, false, 'Mid-year contract signed in FY26.', 'Yes', true, 31000, 32000),
-    (3, 3, 'Outreach Coordinator Fund Transfer', 'Mandated Cost', 180000, false, 'Grant funding for these positions expires at end of FY26.', 'Yes', false, 185000, 190000),
-    (4, 4, 'Victim Services Software Renewal', 'Cyclical', 40000, false, 'Annual case management software renewal.', 'Yes', true, 41000, 42000),
-    (5, 5, 'Mobile Testing Van Lease Increase', 'Extraordinary Inflation', 25000, false, 'Vehicle lease costs increased due to market conditions.', 'Yes', false, 26000, 27000),
-    (6, 6, 'Signal Controller Maintenance Contract', 'Cyclical', 100000, false, 'Multi-year maintenance contract renewal.', 'Yes', true, 103000, 106000),
-    (7, 7, 'Legal Services Rate Increase', 'Extraordinary Inflation', 50000, false, 'Outside counsel rates increased citywide.', 'Yes', false, 52000, 54000),
-    (8, 8, 'Lead Abatement Contractor Increase', 'Mandated Cost', 35000, false, 'State lead abatement requirements expanded scope.', 'Yes', false, 36000, 37000),
-    (9, 9, 'Patrol Equipment Replacement', 'Cyclical', 90000, true, 'Scheduled replacement of body cameras and radios.', 'Yes', true, 0, 0),
-    (10, 10, 'Dispatch Software License Renewal', 'Cyclical', 45000, false, 'Annual CAD system licensing renewal.', 'Yes', true, 46000, 47000)
+    (1, 1, 'Fleet Parts Cost Increase', 'Extraordinary Inflation', 65000, false, 'Vehicle parts costs increased 8% year over year.', 'In Progress', 67000, 69000),
+    (2, 2, 'HVAC Contract Annualization', 'Cyclical Cost', 30000, false, 'Mid-year contract signed in FY26.', 'BBMR Review', 31000, 32000),
+    (3, 3, 'Outreach Coordinator Fund Transfer', 'Mandated Cost', 180000, false, 'Grant funding for these positions expires at end of FY26.', 'In Progress', 185000, 190000),
+    (4, 4, 'Victim Services Software Renewal', 'Cyclical Cost', 40000, false, 'Annual case management software renewal.', 'BBMR Review', 41000, 42000),
+    (5, 5, 'Mobile Testing Van Lease Increase', 'Extraordinary Inflation', 25000, false, 'Vehicle lease costs increased due to market conditions.', 'In Progress', 26000, 27000),
+    (6, 6, 'Signal Controller Maintenance Contract', 'Cyclical Cost', 100000, false, 'Multi-year maintenance contract renewal.', 'BBMR Review', 103000, 106000),
+    (7, 7, 'Legal Services Rate Increase', 'Extraordinary Inflation', 50000, false, 'Outside counsel rates increased citywide.', 'In Progress', 52000, 54000),
+    (8, 8, 'Lead Abatement Contractor Increase', 'Mandated Cost', 35000, false, 'State lead abatement requirements expanded scope.', 'In Progress', 36000, 37000),
+    (9, 9, 'Patrol Equipment Replacement', 'Cyclical Cost', 90000, true, 'Scheduled replacement of body cameras and radios.', 'BBMR Review', 0, 0),
+    (10, 10, 'Dispatch Software License Renewal', 'Cyclical Cost', 45000, false, 'Annual CAD system licensing renewal.', 'BBMR Review', 46000, 47000)
 ON CONFLICT ("cls_id") DO UPDATE SET
-    "plan_service_id" = EXCLUDED."plan_service_id", "request_name" = EXCLUDED."request_name", "request_type" = EXCLUDED."request_type", "request_amount" = EXCLUDED."request_amount", "one_time" = EXCLUDED."one_time", "overall_summary" = EXCLUDED."overall_summary", "justified" = EXCLUDED."justified", "completed" = EXCLUDED."completed", "amount_next_fy" = EXCLUDED."amount_next_fy", "amount_2next_fy" = EXCLUDED."amount_2next_fy";
+    "plan_service_id" = EXCLUDED."plan_service_id", "request_name" = EXCLUDED."request_name", "request_type" = EXCLUDED."request_type", "request_amount" = EXCLUDED."request_amount", "one_time" = EXCLUDED."one_time", "overall_summary" = EXCLUDED."overall_summary", "status" = EXCLUDED."status", "amount_next_fy" = EXCLUDED."amount_next_fy", "amount_2next_fy" = EXCLUDED."amount_2next_fy";
 SELECT setval(
     pg_get_serial_sequence('budget.cls_request', 'cls_id'),
     COALESCE((SELECT MAX("cls_id") FROM budget.cls_request), 1),

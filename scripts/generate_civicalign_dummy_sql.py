@@ -36,7 +36,6 @@ BOOLEAN_COLUMNS = {
     "is_primary",
     "is_quasi",
     "is_service",
-    "justified",
     "performance_plan_access",
     "quasi",
     "replicability",
