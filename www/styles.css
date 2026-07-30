@@ -6286,3 +6286,318 @@ body.desktop-nav-collapsed .app-footer {
   border-radius: 8px;
   word-break: break-all;
 }
+
+
+/* ---- Analyst feedback round 1 ---- */
+
+/* Inline row editor: the row keeps its grid, the cells become inputs. */
+.cls-row-editing {
+  background: var(--lp-surface-subtle);
+  box-shadow: inset 3px 0 0 var(--lp-brand-primary);
+  align-items: center;
+}
+
+.cls-row-editing .shiny-input-container,
+.cls-row-editing .form-group {
+  margin: 0;
+  width: 100%;
+}
+
+.cls-row-editing input[type="text"],
+.cls-row-editing input[type="number"],
+.cls-row-editing select {
+  height: 2.1rem;
+  font-size: 0.82rem;
+}
+
+.civic-button.ghost {
+  background: transparent;
+  border: 1.5px solid var(--lp-border-strong);
+  color: var(--lp-text-secondary);
+}
+
+.civic-button.ghost:hover {
+  border-color: var(--lp-brand-primary);
+  color: var(--lp-brand-primary);
+}
+
+.cls-row-edit {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+/* Prompt beside the Justification label while a new spend category is chosen. */
+.cls-field-note {
+  margin-left: 0.5rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: #b0561b;
+}
+
+/* Read-only banner replaces the send reminder once a request is locked. */
+.cls-reminder-locked {
+  background: var(--lp-surface-subtle);
+  border-left: 4px solid var(--lp-text-secondary);
+  color: var(--lp-text-secondary);
+}
+
+.cls-new-hint {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-size: 0.88rem;
+  color: var(--lp-text-secondary);
+  background: var(--lp-status-info-bg);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+
+/* The named attestation in the send-to-BBMR dialog. */
+.cls-attestation {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.cls-attestation-detail {
+  font-size: 0.88rem;
+  color: var(--lp-text-secondary);
+}
+
+/* Keep "Add CLS Request" on its own line under the subtext at any width. */
+.cls-create-bar {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.cls-create-bar .civic-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+
+/* Review table: Service and Positions columns, Positions left of FY28 so the
+   status chip is never squeezed off the end. Values wrap rather than truncate -
+   nothing on this row should be hidden (analyst feedback round 1). */
+.cls-rv-head,
+.cls-rv-header-row {
+  grid-template-columns:
+    1.1rem minmax(0, 1.7fr) minmax(0, 1.1fr) minmax(0, 1.2fr)
+    minmax(3.5rem, 0.5fr) minmax(6.5rem, 0.8fr) minmax(7rem, 0.8fr);
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cls-rv-service,
+.cls-rv-positions {
+  font-size: 0.8rem;
+  color: var(--lp-text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cls-rv-positions { text-align: right; }
+
+.cls-rv-name,
+.cls-rv-agency {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cls-rv-amount {
+  min-width: 0;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* The chip gets its own room and is never clipped. */
+.cls-rv-status {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cls-rv-status .status-chip { white-space: nowrap; }
+
+/* Type line with its definition behind a tooltip. */
+.cls-rv-meta { margin-bottom: 0.85rem; }
+
+.cls-rv-meta-line {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.cls-rv-type { cursor: help; font-weight: 600; }
+
+.cls-rv-type-hint {
+  margin-left: 0.3rem;
+  color: var(--lp-brand-supporting);
+  font-size: 0.8em;
+}
+
+/* The analyst section sits in a contrasting theme colour so it reads as BBMR's
+   own workspace rather than part of the agency's submission. */
+.cls-analyst-panel {
+  background: #eef3f8;
+  border: 1px solid var(--lp-brand-supporting);
+  border-left: 4px solid var(--lp-brand-primary);
+  border-radius: var(--lp-radius-surface);
+  padding: 0.9rem 1rem 1rem;
+  margin-top: 1rem;
+}
+
+.cls-analyst-panel-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lp-brand-primary);
+  margin-bottom: 0.6rem;
+}
+
+.cls-status-warning {
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #c62828;
+}
+
+.cls-approved-fields {
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--lp-border-strong);
+}
+
+
+/* The submission notice reads as two paragraphs inside the surface header. */
+.cls-subtext-line {
+  display: block;
+}
+
+.cls-subtext-line + .cls-subtext-line {
+  margin-top: 0.5rem;
+}
+
+
+/* Bulk Approve grid: spreadsheet-like, one row per request. */
+.cls-bulk-grid {
+  display: block;
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-surface);
+}
+
+.cls-bulk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--lp-border-soft);
+  font-size: 0.8rem;
+}
+
+.cls-bulk-row:last-child { border-bottom: 0; }
+
+.cls-bulk-head {
+  position: sticky;
+  top: 0;
+  background: var(--lp-surface-subtle);
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--lp-text-secondary);
+}
+
+.cls-bulk-name { font-weight: 600; }
+
+.cls-bulk-row .shiny-input-container,
+.cls-bulk-row .form-group { margin: 0; width: 100%; }
+
+.cls-bulk-row input[type="number"],
+.cls-bulk-row select { height: 2rem; font-size: 0.8rem; }
+
+.cls-bulk-hint {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--lp-text-secondary);
+}
+
+
+/* Inline editor: every field stays readable, and the actions shrink to icons so
+   the justification input keeps its width (analyst feedback round 1). */
+.cls-line-table .cls-line-row.cls-row-editing {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(5.5rem, 0.55fr) minmax(0, 1.5fr) auto;
+}
+
+.cls-position-table .cls-position-row.cls-row-editing {
+  grid-template-columns: minmax(0, 1.1fr) minmax(4.5rem, 0.45fr) minmax(6rem, 0.6fr) minmax(0, 1.5fr) auto;
+}
+
+.cls-row-editing { padding-top: 0.45rem; padding-bottom: 0.45rem; }
+
+.cls-row-editing input[type="text"],
+.cls-row-editing input[type="number"],
+.cls-row-editing select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: clip;
+}
+
+.cls-edit-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: nowrap;
+}
+
+.civic-button.cls-icon-only {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  min-width: 2rem;
+  justify-content: center;
+}
+
+/* Collapsible chart surface. */
+.cls-chart-toggle .fa,
+.cls-chart-toggle svg { transition: transform 120ms ease; }
+
+.cls-chart-toggle.is-collapsed .fa,
+.cls-chart-toggle.is-collapsed svg { transform: rotate(180deg); }
+
+
+/* The request title gets its own line, clear of the eyebrow and the save
+   indicator (analyst feedback round 1). */
+.cls-summary-head-stacked {
+  display: block;
+  width: 100%;
+}
+
+.cls-summary-head-stacked .eyebrow {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.cls-summary-head-stacked .cls-detail-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Lock in place of Delete once a request has gone to BBMR. */
+.cls-delete-locked {
+  color: var(--lp-text-secondary);
+  font-size: 0.85rem;
+  padding: 0 0.35rem;
+  cursor: help;
+}

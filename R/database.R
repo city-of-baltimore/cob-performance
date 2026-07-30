@@ -884,6 +884,10 @@ ensure_review_schema <- function(connection) {
       ")"
     )
   )
+  # Analyst feedback round 1: what BBMR actually approved, which can differ from
+  # what was requested when the decision is Partial.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review ADD COLUMN IF NOT EXISTS approved_amount numeric(18,2)")
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review ADD COLUMN IF NOT EXISTS approved_positions integer")
   # Retired: the evaluation score came off the CLS Review page, so the column had
   # no writer left.
   DBI::dbExecute(connection, "ALTER TABLE budget.cls_review DROP COLUMN IF EXISTS evaluation_score")
@@ -1208,6 +1212,7 @@ load_app_data <- function(connection) {
     budget_cls_review = query(
       paste(
         "SELECT rv.review_id, rv.cls_id, rv.analyst_notes, rv.analyst_approval, rv.bbmr_approval,",
+        "rv.approved_amount, rv.approved_positions,",
         "rv.reviewed_by, reviewer.full_name AS reviewed_by_name,",
         "rv.updated_at AT TIME ZONE 'America/New_York' AS updated_at",
         "FROM budget.cls_review rv",
@@ -1562,7 +1567,8 @@ mark_plan_cls_complete <- function(connection, plan_id, modified_by = NULL) {
 # BBMR review record for a CLS request — kept separate so the submitted request
 # data is retained unchanged while reviewers add their evaluation.
 save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
-                            analyst_approval = NULL, bbmr_approval = NULL, reviewed_by = NULL) {
+                            analyst_approval = NULL, bbmr_approval = NULL, reviewed_by = NULL,
+                            approved_amount = NULL, approved_positions = NULL) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
   bbmr_approval <- as.character(bbmr_approval %||% "")
@@ -1572,13 +1578,18 @@ save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
   DBI::dbExecute(
     connection,
     paste(
-      "INSERT INTO budget.cls_review (cls_id, analyst_notes, analyst_approval, bbmr_approval, reviewed_by, updated_at)",
-      "VALUES ($1::integer, NULLIF($2::text, ''), $3::text, $4::text, $5::integer, now())",
+      "INSERT INTO budget.cls_review (cls_id, analyst_notes, analyst_approval, bbmr_approval, reviewed_by,",
+      "approved_amount, approved_positions, updated_at)",
+      "VALUES ($1::integer, NULLIF($2::text, ''), $3::text, $4::text, $5::integer, $6::numeric, $7::integer, now())",
       "ON CONFLICT (cls_id) DO UPDATE SET",
       "analyst_notes = EXCLUDED.analyst_notes, analyst_approval = EXCLUDED.analyst_approval,",
-      "bbmr_approval = EXCLUDED.bbmr_approval, reviewed_by = EXCLUDED.reviewed_by, updated_at = now()"
+      "bbmr_approval = EXCLUDED.bbmr_approval, reviewed_by = EXCLUDED.reviewed_by,",
+      "approved_amount = EXCLUDED.approved_amount, approved_positions = EXCLUDED.approved_positions,",
+      "updated_at = now()"
     ),
-    params = list(cls_id, as.character(analyst_notes %||% ""), analyst_approval, bbmr_approval, nullable_integer_param(reviewed_by))
+    params = list(cls_id, as.character(analyst_notes %||% ""), analyst_approval, bbmr_approval,
+                  nullable_integer_param(reviewed_by), nullable_numeric_param(approved_amount),
+                  nullable_integer_param(approved_positions))
   )
   # A BBMR decision advances the request's workflow status.
   decided <- switch(
@@ -1597,6 +1608,12 @@ save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
 delete_cls_request <- function(connection, cls_id) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
+  # Server-side guard to match the UI: once a request has gone to BBMR it is a
+  # submitted record and cannot be deleted, however the call arrives.
+  st <- DBI::dbGetQuery(connection, "SELECT status FROM budget.cls_request WHERE cls_id = $1", params = list(cls_id))
+  if (nrow(st) && cls_status_is_complete(st$status[[1]])) {
+    stop("This request has been sent for BBMR review and can no longer be deleted.")
+  }
   # Remove children explicitly rather than relying on ON DELETE CASCADE: the FK
   # cascade is only present on freshly created tables, and databases where the
   # CLS tables predate the cascade would otherwise block the delete.
@@ -1628,6 +1645,54 @@ add_cls_request_line <- function(connection, cls_id, object_category = NULL, amo
     params = list(cls_id, as.character(object_category %||% ""), as.character(spend_category %||% ""),
                   nullable_numeric_param(amount), as.character(justification %||% ""), as.integer(next_sort))
   )$line_id[[1]]
+}
+
+# Analyst feedback round 1: rows are editable in place, not delete-and-retype.
+update_cls_request_line <- function(connection, line_id, object_category = NULL, amount = NULL,
+                                    justification = NULL, spend_category = NULL, modified_by = NULL) {
+  line_id <- as.integer(line_id)
+  if (is.na(line_id)) stop("Choose a valid line item.")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_request_line SET",
+      "object_category = NULLIF($2::text, ''), spend_category = NULLIF($3::text, ''),",
+      "amount = $4::numeric, justification = NULLIF($5::text, ''),",
+      "updated_at = now(), modified_by = COALESCE($6::integer, modified_by)",
+      "WHERE line_id = $1"
+    ),
+    params = list(line_id, as.character(object_category %||% ""), as.character(spend_category %||% ""),
+                  nullable_numeric_param(amount), as.character(justification %||% ""),
+                  nullable_integer_param(modified_by))
+  )
+  invisible(line_id)
+}
+
+update_cls_request_position <- function(connection, pos_id, classification = NULL, position_count = NULL,
+                                        estimated_salary = NULL, justification = NULL,
+                                        explanation = NULL, modified_by = NULL) {
+  pos_id <- as.integer(pos_id)
+  if (is.na(pos_id)) stop("Choose a valid position request.")
+  classification <- trimws(as.character(classification %||% ""))
+  if (!nzchar(classification)) stop("Add a job classification.")
+  # explanation is left alone when NULL so the inline row editor, which does not
+  # expose it, cannot blank it out.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_request_position SET",
+      "classification = $2::text, position_count = $3::integer,",
+      "estimated_salary = $4::numeric, justification = NULLIF($5::text, ''),",
+      "explanation = COALESCE(NULLIF($6::text, ''), explanation),",
+      "updated_at = now(), modified_by = COALESCE($7::integer, modified_by)",
+      "WHERE pos_id = $1"
+    ),
+    params = list(pos_id, classification,
+                  as.integer(nullable_integer_param(position_count) %||% 0L),
+                  nullable_numeric_param(estimated_salary), as.character(justification %||% ""),
+                  as.character(explanation %||% ""), nullable_integer_param(modified_by))
+  )
+  invisible(pos_id)
 }
 
 delete_cls_request_line <- function(connection, line_id) {

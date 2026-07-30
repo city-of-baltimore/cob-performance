@@ -779,6 +779,10 @@ CREATE TABLE IF NOT EXISTS budget.cls_review (
     analyst_notes text,
     analyst_approval varchar(20) CHECK (analyst_approval IN ('Approved', 'Partial', 'Denied')),
     bbmr_approval varchar(20) CHECK (bbmr_approval IN ('Approved', 'Partial', 'Denied')),
+    -- What BBMR actually approved, which differs from the request when the
+    -- decision is Partial. Shown back to the agency.
+    approved_amount numeric(18,2),
+    approved_positions integer,
     reviewed_by integer REFERENCES access."user"(user_id),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
