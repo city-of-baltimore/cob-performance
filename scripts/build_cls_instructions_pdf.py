@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the CLS request user guide PDF, with a section per role.
 
-Roles covered: Agency Writer, Agency Approver, BBMR Reviewer.
+Roles covered: Agency Writer, Agency Submitter, BBMR Reviewer.
 Figures are schematic representations of each screen; replace with live
 screenshots when they can be captured from a signed-in session.
 """
@@ -115,7 +115,7 @@ def main():
     # ---------- Cover / shared ----------
     story.append(Paragraph("CLS Requests — User Guide", st["T"]))
     story.append(Paragraph("Current Level of Service budget requests &bull; Beacon Performance &amp; Budgeting "
-                           "&bull; Agency Writers, Agency Approvers, BBMR Reviewers", st["Sub"]))
+                           "&bull; Agency Writers, Agency Submitters, BBMR Reviewers", st["Sub"]))
     story.append(HRFlowable(width="100%", thickness=2, color=BRAND))
 
     story.append(Paragraph("What a CLS request is", st["H"]))
@@ -129,12 +129,12 @@ def main():
     story.append(Paragraph("Who does what", st["H"]))
     story.append(table([
         ["Role", "Can do", "Where"],
-        ["<b>Agency Writer</b>", "Create and fill in requests; submit a request to the Agency Approver.",
+        ["<b>Agency Writer</b>", "Create and fill in requests; submit a request to the Agency Submitter.",
          "CLS Requests"],
-        ["<b>Agency Approver</b>", "Everything a writer can do, plus send an individual request on to BBMR.",
-         "CLS Requests"],
-        ["<b>BBMR Reviewer</b>", "Review submitted requests, record analyst notes and the BBMR decision; may also "
-                                 "open and edit a request.", "CLS Review"],
+        ["<b>Agency Submitter</b>", "Everything a writer can do, plus send an individual request on to BBMR. Holds "
+                                    "final sign-off for the agency.", "CLS Requests"],
+        ["<b>BBMR Reviewer</b>", "Review submitted requests, record analyst notes and the BBMR decision. Opens "
+                                 "requests read-only.", "CLS Review"],
         ["<b>Agency Viewer</b>", "Read-only access to the agency's requests.", "CLS Requests"],
     ], [1.25 * inch, 4.05 * inch, 1.6 * inch], st))
 
@@ -143,12 +143,12 @@ def main():
         ["Status", "Set when", "Who"],
         ["In&nbsp;Progress", "the request is created", "Writer"],
         ["Agency&nbsp;Review", "<b>Submit</b> is selected on that request", "Writer"],
-        ["BBMR&nbsp;Review", "<b>Send to BBMR</b> is selected on that request", "Approver"],
+        ["BBMR&nbsp;Review", "<b>Send to BBMR</b> is selected on that request", "Submitter"],
         ["Approved / Partially&nbsp;Approved / Denied", "the BBMR approval is recorded", "BBMR Reviewer"],
     ], [1.9 * inch, 3.4 * inch, 1.6 * inch], st))
     story.append(Paragraph(
-        "Each request moves on its own &mdash; submitting one does not submit the rest. Only requests approved by an "
-        "Agency Approver reach BBMR for review.", st["Small"]))
+        "Each request moves on its own &mdash; submitting one does not submit the rest. Only requests sent on by an "
+        "Agency Submitter reach BBMR for review. Each status carries its own colour on the list page.", st["Small"]))
 
     # ---------- Agency Writer ----------
     story.append(PageBreak())
@@ -156,13 +156,15 @@ def main():
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "You do the data entry: create each request, describe it, and break the money out. When a request is complete, "
-        "you submit it to your Agency Approver.", st["B"]))
+        "you submit it to your Agency Submitter.", st["B"]))
 
     story.append(Paragraph("Start a request", st["H"]))
     story.append(steps([
         "In the left navigation under <b>Budget Planning</b>, choose <b>CLS Requests</b>. The page is titled with your "
         "agency name and lists every request your agency has created.",
-        "Select <b>Add CLS Request</b>. This opens a full request page &mdash; there are no pop-ups.",
+        "Select <b>Add CLS Request</b>. This opens a full request page &mdash; there are no pop-ups. The request is "
+        "created straight away, so you can add objects and positions before the summary is finished. It shows on the "
+        "list with a red <b>Not detailed</b> badge until it is complete.",
     ], st))
 
     story.append(Paragraph("Fill in the summary", st["H"]))
@@ -175,13 +177,14 @@ def main():
         "<b>Request duration</b> &mdash; the toggle reads <b>Recurring Request</b> by default. Switch it on for a "
         "<b>One-Time Request</b>; the FY29 and FY30 fields are then hidden and cleared. The &#9432; icon here explains "
         "when a multi-year contract counts as recurring.",
-        "<b>FY28 / FY29 / FY30 Amount</b> &mdash; the FY28 amount is the request total. FY29 and FY30 are the "
-        "projected amounts and should assume any year-over-year increase.",
-        "<b>Summarize the request</b> &mdash; required. Three to four sentences, <b>150-word limit</b>. The counter "
-        "beneath the box turns red and tells you the exact overage if you go long; anything past 150 words is cut off "
-        "for review.",
-        "Select <b>Create request</b>. From then on the page <b>saves automatically</b> as you type &mdash; there is no "
-        "Save button. The indicator beside the back link shows when it last saved; hover it to see who saved.",
+        "<b>FY28 / FY29 / FY30 Amount</b> &mdash; the FY28 amount is the request total. <b>A recurring request must "
+        "give FY29 and FY30 as well</b>, and they should assume any year-over-year increase. Amounts take whole "
+        "dollars only: separators appear as you type, and decimals are not accepted.",
+        "<b>Summarize the request</b> &mdash; required. A short explanation of the request for review, with a "
+        "<b>150-word limit</b>. The counter beneath the box turns red and tells you the exact overage if you go long; "
+        "anything past 150 words is cut off for review.",
+        "There is no Save button. The page <b>saves automatically</b> as you type, from the first keystroke. The "
+        "indicator beside the back link shows when it last saved; hover it to see who saved.",
     ], st))
 
     story.append(Paragraph("Break the money out", st["H"]))
@@ -194,24 +197,29 @@ def main():
         "Under <b>Request details</b>, pick an <b>Object</b>, enter its <b>Amount</b>, and give a one-line "
         "<b>Justification</b>. Select <b>Add Details</b>. Use one line per object.",
         "Repeat until the banner confirms the request is fully described.",
-        "If the request creates positions, tick <b>Add positions to this request</b> (off by default) and complete the "
-        "classification, number of positions, <b>Estimated Cost</b>, and the two justification fields. Unticking the "
-        "box clears what you had started typing.",
+        "If the request creates positions, tick <b>Add positions to this request</b> (off by default) and complete "
+        "the classification, <b>Position Count</b>, <b>Estimated Cost</b>, and the two justification fields. "
+        "Unticking the box clears what you had started typing.",
+        "<b>Add Details</b> and <b>Add position</b> stay greyed out until every field in their form is filled in.",
+        "To change a row you have already added, select the <b>pen</b> at the end of it. The row becomes editable in "
+        "place, with tick and cross buttons to save or cancel.",
     ], st))
 
     story.append(Paragraph("Submit it", st["H"]))
     story.append(steps([
-        "Return to <b>CLS Requests</b> using the back link. If everything is filled in and the money balances, you "
-        "will see a confirmation that the request has been justified.",
+        "Return to <b>CLS Requests</b> using the back link. A complete request leaves without comment. If something "
+        "is missing you are told what, and a blank mandatory field will stop you leaving until it is filled in.",
         "On that request's row, select <b>Submit</b> and confirm. The status becomes <b>Agency Review</b> and your "
-        "Agency Approver takes it from there.",
+        "Agency Submitter takes it from there.",
     ], st))
 
     story.append(Paragraph("If something is missing", st["H"]))
     story.append(Paragraph(
-        "Required fields you have left blank are outlined in <font color='#b64454'><b>red</b></font>. The banner above "
-        "Request details tells you how much of the request is still unexplained. A reminder near the top names your "
-        "Agency Approver and the submission deadline.", st["B"]))
+        "Required fields you have left blank are outlined in <font color='#b64454'><b>red</b></font>, and the "
+        "request carries a red <b>Not detailed</b> badge on the list page &mdash; hover it for the specific list. The "
+        "banner above Request details tells you how much of the request is still unexplained. A reminder near the top "
+        "names your Agency Submitter and the deadline, and the top of the list page names your agency's Submitters "
+        "and its BBMR <b>Budget Analyst</b>.", st["B"]))
 
     story.append(Paragraph("Request type reference", st["H"]))
     story.append(table([
@@ -239,9 +247,9 @@ def main():
         "Supplies &bull; Minor Equipment (&lt;$5k) &bull; Major Equipment (&gt;$5k) &bull; Grants, Subsidies, and "
         "Contributions &bull; Debt Service", st["B"]))
 
-    # ---------- Agency Approver ----------
+    # ---------- Agency Submitter ----------
     story.append(PageBreak())
-    story.append(role_banner("For Agency Approvers", st, W))
+    story.append(role_banner("For Agency Submitters", st, W))
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "You see exactly the same pages and the same editing tools as an Agency Writer. The difference is the action on "
@@ -270,9 +278,11 @@ def main():
     story.append(Paragraph("After sending", st["H"]))
     story.append(Paragraph(
         "The <b>Status</b> column is where you follow what happens next: it becomes <b>Approved</b>, "
-        "<b>Partially Approved</b> or <b>Denied</b> once BBMR records a decision. Use <b>Export request(s)</b> below "
-        "the table for an Excel workbook (request summary, line items, personnel on separate tabs) or a PDF of the "
-        "full detail.", st["B"]))
+        "<b>Partially Approved</b> or <b>Denied</b> once BBMR records a decision. A sent request can no longer be "
+        "edited or deleted &mdash; its row shows a lock in place of Delete. Use <b>Export request(s)</b> below the "
+        "table for an Excel workbook (request summary, line items and personnel on separate tabs) or a PDF of the "
+        "full detail. Both carry your agency name in the file name, and the workbook records who created and last "
+        "changed each request, and when.", st["B"]))
 
     # ---------- BBMR Reviewer ----------
     story.append(PageBreak())
@@ -280,7 +290,9 @@ def main():
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "You work from <b>CLS Review</b>, which spans every agency. Your notes and decision are stored separately "
-        "from what the agency submitted, so the original request is never overwritten.", st["B"]))
+        "from what the agency submitted, so the original request is never overwritten. Opening a request shows it "
+        "read-only for the same reason &mdash; your decision belongs on this page, not in the agency's submission.",
+        st["B"]))
 
     story.append(Paragraph("Reading the page", st["H"]))
     story.append(table([
@@ -293,13 +305,19 @@ def main():
     story.append(Spacer(1, 4))
     story.append(Paragraph(
         "Beneath the cards, <b>Request volume</b> charts requested dollars by agency &mdash; hover a bar for that "
-        "agency's request count. A labelled divider separates this overview from the review work below it.", st["B"]))
+        "agency's request count, or use <b>Hide chart</b> to fold it away. Approved, partially approved, denied and "
+        "undecided dollars stack in different colours; on a partial approval only the amount you actually approved "
+        "shows as partially approved, and the rest appears as <b>Not approved</b>. A labelled divider separates this "
+        "overview from the review work below it.", st["B"]))
 
     story.append(Paragraph("Finding requests", st["H"]))
     story.append(steps([
-        "Use the <b>Status</b> and <b>Agency</b> filters &mdash; both accept several values at once, and Status lists "
-        "every status.",
-        "Select <b>Apply filters</b> to run them, or <b>Reset</b> to go back to everything.",
+        "Use the <b>Status</b>, <b>Agency</b> and <b>Service</b> filters. Each opens a panel of checkboxes with "
+        "<b>Select all</b> and <b>Clear</b>; the closed control summarises what is chosen (&ldquo;All status&rdquo;, "
+        "&ldquo;3 of 6 selected&rdquo;).",
+        "Tick everything you want, then select <b>Apply</b>. The table reloads once, when you apply or close the "
+        "panel &mdash; not on every tick.",
+        "<b>Reset filters</b> goes back to everything.",
     ], st))
 
     story.append(Paragraph("Recording a decision", st["H"]))
@@ -311,9 +329,28 @@ def main():
         "<b>BBMR approval</b> is the decision that counts: Approved, Partial or Denied. Saving it sets the request's "
         "status to <b>Approved</b>, <b>Partially Approved</b> or <b>Denied</b>, which the agency then sees.",
         "Add <b>Analyst notes</b> as needed, then select <b>Save review</b>.",
-        "To see or change the request itself, select <b>Open request</b>. That opens the full request page, where you "
-        "can edit it; the back link returns you to CLS Review.",
+        "<b>Approved FY28</b> and <b>Approved positions</b> appear as soon as you choose Approved or Partial. "
+        "Approved pre-fills from the request; Partial starts blank so you enter what was actually approved. These are "
+        "the figures the agency sees, and the chart uses them.",
+        "To see the request itself, select <b>Open request</b>. It opens read-only, and the back link returns you to "
+        "CLS Review.",
     ], st))
+
+    story.append(Paragraph("Deciding several at once", st["H"]))
+    story.append(steps([
+        "Filter down to the set you want to decide, then select <b>Bulk Approve</b>. The request table is replaced by "
+        "one line per request: Agency, Service, Request, Type, FY28, Duration and Positions as read-only context, "
+        "then <b>BBMR approval</b>, <b>Appr. FY28</b> and <b>Appr. pos.</b> to fill in.",
+        "Leave a row's approval blank to skip it.",
+        "<b>Save and close</b> writes every row that has a decision and returns to the normal table. <b>Cancel</b> "
+        "leaves without saving.",
+    ], st))
+
+    story.append(Paragraph("Exporting", st["H"]))
+    story.append(Paragraph(
+        "<b>Export all agencies</b> above the table produces an Excel workbook covering requests and decisions, line "
+        "items and personnel. When the Agency filter is narrowed to a single agency, the file name says so. Each "
+        "request carries its created and last-modified date and the email address behind each.", st["B"]))
 
     story.append(Paragraph("What agencies see", st["H"]))
     story.append(Paragraph(
@@ -328,9 +365,13 @@ def main():
     story.append(Spacer(1, 6))
 
     story.append(screen("CLS Requests &mdash; [Agency name] Requests", [
-        "<b>Header:</b> agency name, guidance text, <b>+ Add CLS Request</b>",
+        "<b>Header:</b> agency name &bull; guidance text &bull; <i>Submitter:</i> &hellip; &bull; "
+        "<i>Budget Analyst:</i> &hellip;",
+        "<b>Cards + chart:</b> in progress &bull; sent &bull; total requested &bull; positions &bull; volume by service",
+        "<b>Bar:</b> <b>+ Add CLS Request</b>",
         "<b>Table (sortable):</b> Request name | Service | Amount ($K/$M) | Status | actions",
-        "<b>Row actions:</b> <i>Submit</i> (writer) or <i>Send to BBMR</i> (approver) &bull; Delete &bull; Modify &rarr;",
+        "<b>Row actions:</b> <i>Submit</i> (writer) or <i>Send to BBMR</i> (submitter) &bull; Delete (or a lock, "
+        "once sent) &bull; Modify &rarr;",
         "<b>Below the table:</b> Export request(s) &mdash; Excel &bull; PDF",
     ], st, W))
     story.append(Paragraph("Figure 1. The list page. The row action depends on your role and the request's status.",
@@ -338,7 +379,7 @@ def main():
 
     story.append(screen("CLS request page", [
         "<b>Top row:</b> &larr; Back to CLS requests &nbsp;&nbsp; <i>Last Saved 7/29/26 at 2:45 PM</i> (hover for user)",
-        "<b>Reminder:</b> send to [Agency Approver] before the deadline",
+        "<b>Reminder:</b> send to [Agency Submitters] before the deadline",
         "<b>Summary:</b> request name (title updates live) &bull; intro sentence &bull; Service &bull; Request type &#9432; "
         "&bull; Request duration toggle &#9432; &bull; FY28 / FY29 / FY30 &bull; Summarize the request (150 words)",
         "<b>Banner:</b> total request needs to explain / exceeds / fully described",
@@ -352,10 +393,13 @@ def main():
         "<b>Cards:</b> Pending Requests &bull; Requests for Review &bull; Total requested &bull; Total positions",
         "<b>Chart:</b> requested dollars by agency (hover for counts)",
         "<b>&mdash; REVIEW &mdash;</b>",
-        "<b>Filters:</b> Status (multi) &bull; Agency (multi) &bull; <i>Apply filters</i> &bull; <i>Reset</i>",
-        "<b>Table:</b> Request | Agency | FY28 | Status &mdash; select a row to expand",
-        "<b>Expanded:</b> submitted detail &bull; Analyst approval (advisory) &bull; BBMR approval (sets status) "
-        "&bull; Analyst notes &bull; <i>Open request</i> &bull; <i>Save review</i>",
+        "<b>Filters:</b> Status &bull; Agency &bull; Service &mdash; checkbox panels with <i>Apply</i> &bull; "
+        "<i>Reset filters</i>",
+        "<b>Table:</b> Request | Agency | Service | Positions | FY28 | Status &mdash; select a row to expand",
+        "<b>Expanded:</b> submitted detail &bull; Analyst recommendation (advisory) &bull; BBMR approval (sets "
+        "status) &bull; Approved FY28 / positions &bull; Analyst notes &bull; <i>Open request</i> &bull; "
+        "<i>Save review</i>",
+        "<b>Bulk approve:</b> replaces the table with one row per request &bull; <i>Save and close</i>",
     ], st, W))
     story.append(Paragraph("Figure 3. The BBMR review workspace.", st["Cap"]))
 

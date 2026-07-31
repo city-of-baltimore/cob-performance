@@ -126,14 +126,119 @@ it is done. Newest round last. Fuller narrative lives in
 | 86 | Analyst approval must **not** drive status; BBMR approval must | ✅ labelled in the UI |
 | 87 | "Open request" lets BBMR edit and jump into the request page | ✅ |
 
+## Round 8 — first round analyst feedback
+
+Commits `a566cee`, `02c0720`, `b08ac7f`. Budget Planning stayed SystemAdmin-only
+throughout.
+
+| # | Note | Status |
+|---|------|--------|
+| 88 | Pen icon on every object/position row opens an inline editor with Save / Cancel | ✅ |
+| 89 | "Create a spend category" free text becomes a **Create Spend Category** dropdown option | ✅ prompts for a description beside Justification |
+| 90 | Drop the "Create request" button — a request is created by its first autosave | ✅ superseded in round 9 |
+| 91 | Nothing is added to either table until every field is filled | ✅ buttons disabled + server check |
+| 92 | Block leaving the page while a mandatory summary field is empty, naming the fields | ✅ |
+| 93 | Once a request reaches BBMR it is view-only for the agency; BBMR opens it view-only too | ✅ reverses #66 |
+| 94 | Missing-info badge reads **NOT DETAILED** | ✅ |
+| 95 | Agency-wide cards and a bar chart, broken out by service rather than agency | ✅ reuses `cls_review_chart(group_col=)` |
+| 96 | "Add CLS Request" in its own full-width bar under the notice | ✅ |
+| 97 | Rewrite the notice: initiative/project summary, named Submitters, Sept 15 COB deadline | ✅ |
+| 98 | Nobody can send a request on while anything is missing; the dialog lists what | ✅ |
+| 99 | Submitters can send any request to BBMR, submitted by a writer or not | ✅ |
+| 100 | Sending to BBMR needs a named attestation | ✅ "I, {name}, have reviewed this request…" |
+| 101 | Rolled-up review table: Agency, Service, unrounded FY28, Positions, Status | ✅ |
+| 102 | Filters apply live — drop the Apply step that made them look broken | ✅ revisited in round 11 |
+| 103 | The expanded panel stops repeating the collapsed row | ✅ summary, Type + definition, Duration, FY28–FY30 |
+| 104 | Analyst block in a contrasting panel; "Analyst recommendation"; red warning on BBMR approval | ✅ |
+| 105 | Approved FY28 / Approved positions for Approved (prefilled) and Partial (blank) | ✅ new `approved_amount` / `approved_positions` |
+| 106 | Bulk Approve over the filtered set | ✅ reworked in round 10 |
+| 107 | Group **everything** by agency, never by entity; Mayoralty entities show together | ✅ parent from `plan_entity.parent_agency_id` |
+| 108 | A request that reached BBMR can no longer be deleted | ✅ lock icon + server refusal |
+| 109 | Collapsible chart; the request title on its own line | ✅ |
+
+## Round 9 — editable on entry, checkbox filters
+
+Commit `55b36f2`.
+
+| # | Note | Status |
+|---|------|--------|
+| 110 | On a new request, Request details and Position requests stayed empty after name + service | ✅ the draft row is now created when "Add CLS Request" is clicked |
+| 111 | Make every field editable as soon as the request is opened | ✅ |
+| 112 | A sent request stays uneditable | ✅ re-verified |
+| 113 | The autosave indicator was pushed off the page | ✅ top bar wraps, indicator pinned right |
+| 114 | Back from a request opened via CLS Review returns to CLS Review — for SystemAdmins too | ✅ "where Back goes" split from "is it read-only" |
+| 115 | Replace the review multi-selects with check-multiple dropdowns | ✅ Select all / Clear + summary |
+| 116 | Only allow a line or position to be added when every field is filled | ✅ |
+
+## Round 10 — bulk approve as an inline mode
+
+Commit `cf87ed9`.
+
+| # | Note | Status |
+|---|------|--------|
+| 117 | Bulk Approve should only be on CLS Review | ✅ it always was — the section heading said "Review requests", which now reads "Bulk approve" |
+| 118 | Bulk mode hides the collapsible request table | ✅ replaced, not overlaid |
+| 119 | Show Agency, Service, Request, FY28, FY29, FY30, Duration, Positions | ✅ revised in round 11 |
+| 120 | Keep it inside the screen, one row per request | ✅ measured at 1280px and 845px, no wrap, no sideways scroll |
+| 121 | A Save button that exits bulk approval | ✅ "Save and close" / "Cancel" |
+
+## Round 11 — notes for 7/31
+
+Second round of analyst feedback.
+
+| # | Note | Status |
+|---|------|--------|
+| 122 | No popup on leaving a request that is already justified | ✅ silent; the alert only fires when something is missing |
+| 123 | A recurring request must have FY29 **and** FY30 amounts before it can be left or sent | ✅ enforced in the browser and in `cls_request_gaps()` |
+| 124 | Thinner bars and much smaller text on the bar chart | ✅ 24px → 13px bars, 11px → 8.5px labels |
+| 125 | On a partial approval, only the **approved** amount is yellow | ✅ the shortfall shows as a separate "Not approved" segment |
+| 126 | Bulk approval: drop FY29 and FY30, add Request type | ✅ 11 columns → 10 |
+| 127 | Let me tick every status filter before the table reloads | ✅ ticks are held locally and pushed once, on Apply or on close |
+| 128 | Narrower Status and Agency filter fields | ✅ and all four controls now sit on one row — only three columns were declared before, so Service and Reset wrapped |
+| 129 | Add Created date, Created by email, Modified date, Modified by email to both Excel exports | ✅ new `created_by` column on `budget.cls_request` |
+| 130 | Give every status its own colour | ✅ six distinct chips; amber was doing duty for two states |
+| 131 | Narrower Request name column; long names wrap to two lines | ✅ clamped at two lines, full name on hover |
+| 132 | Number inputs: no decimals, thousands separators | ✅ custom Shiny input binding — a native number input cannot show a comma |
+| 133 | Summarize-the-request subtext → "Provide a short explanation of the request for review." | ✅ |
+| 134 | Justification subtext → "Explain the proposed amount." | ✅ both the field and the section copy |
+| 135 | Position count must not default to 1; label it "Position Count" | ✅ starts empty |
+| 136 | Put the agency in the export file name | ✅ `cls-requests-<agency>-<date>`; the review workbook names the agency when the filter is down to one |
+| 137 | Pages sometimes turn grey when clicking between them | ⚠ **could not reproduce** — a leftover modal backdrop is the likeliest cause and is now cleared on every navigation. See the build log. |
+| 138 | Commas in the Total requested card | ✅ `$2,837,000` rather than `$2.8M` |
+| 139 | Name the Submitter and the Budget Analyst under the Agency Requests subtext | ✅ and the submitter lookup now resolves through entity access — 103 of 104 submitter roles carry no `agency_id`, so the old lookup named almost nobody |
+| 140 | The request-page notice should name every Agency Submitter in the agency | ✅ same lookup |
+| 141 | Load `agency_budget_analyst_seed.csv` | ✅ 55 of 57 agencies now have an analyst — and fixed the seed guard that had made this impossible (see below) |
+
+**The analyst seed could never have run.** `apply_agency_budget_analyst_seed_once()`
+recorded the seed as applied *whether or not it did anything*. The CSV was not in the
+Docker image on the day it first ran, so `apply_agency_budget_analyst_seed()` returned
+early on `!file.exists(path)`, wrote nothing, and was marked done anyway — permanently.
+Shipping the CSV later could not help, because the marker already said "applied". The
+wrapper now marks the seed only when it actually ran, and treats an entirely empty
+`budget_analyst` column as proof that a recorded run never happened, so it self-heals.
+Verified: the seed applied 55 rows, and a second run correctly short-circuits.
+
 ## Outstanding
 
 - **#79 — the "Estimated Cost" link has no destination yet.** It is a live-looking
   hyperlink wired to a placeholder handler; point it at the salary/benefit cost
   reference when that exists.
+- **The spend-category list is invented.** The ten `SC6xxx` values in
+  `cls_spend_category_choices` are placeholders. They need replacing with the real
+  chart of accounts before agencies see the pages — the main reason Budget Planning
+  is still SystemAdmin-only.
+- **#137 — the grey page.** Not reproduced, so the fix is a mitigation rather than a
+  confirmed cure. If it recurs, note whether the page is *dimmed but usable*
+  (Shiny recalculating) or *dimmed and unclickable* (a modal backdrop), and whether
+  the browser console shows a disconnect.
+- **Two agencies have no budget analyst.** The seed CSV covers 55 of 57 active agencies;
+  **AGC7000 Transportation** and **AGC9900 CAFR Adjustments** are absent from it and read
+  "Unassigned". Transportation looks like a real omission worth filling in.
 - The **submitter email** (#24) is deliberately switched off.
 - The **deadline** in the reminder text is generic; wire it to the plan cycle when a
   real date is available.
 - The instructions PDF uses **diagrams rather than screenshots** (screens are behind a
   login).
-- Nobody has yet **click-tested the live, logged-in app** — see the build log.
+- Nobody has yet **click-tested the live, logged-in app** — see the build log. All
+  verification to date is server-side rendering plus browser measurement of those
+  renders.

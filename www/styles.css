@@ -2113,6 +2113,49 @@ body.builder-autosave-active #page {
   color: #b64454;
 }
 
+/* The six CLS workflow statuses each get their own colour. The generic tones
+   only offer five and had to reuse amber for both "Agency Review" and
+   "Partially Approved" (analyst feedback round 2). */
+.cls-status-chip {
+  border: 1px solid transparent;
+}
+
+.cls-status-in-progress {
+  background: #eef1f4;
+  color: #4a5560;
+  border-color: #d5dce3;
+}
+
+.cls-status-agency-review {
+  background: #fdf1d8;
+  color: #8a620f;
+  border-color: #f0d79b;
+}
+
+.cls-status-bbmr-review {
+  background: #e0edf7;
+  color: #1f5b7a;
+  border-color: #b4d4e8;
+}
+
+.cls-status-approved {
+  background: #dff0e6;
+  color: #226d4f;
+  border-color: #a9d5bd;
+}
+
+.cls-status-partially-approved {
+  background: #ece3f7;
+  color: #5c3d99;
+  border-color: #cdbae8;
+}
+
+.cls-status-denied {
+  background: #fbe1e5;
+  color: #a5303f;
+  border-color: #eeb6bf;
+}
+
 .deadline-list,
 .progress-list,
 .timeline,
@@ -2231,8 +2274,10 @@ body.builder-autosave-active #page {
 }
 
 /* ---- CLS requests ---- */
+/* Request name is narrower than it was and wraps to two lines instead of
+   stretching the column (analyst feedback round 2). */
 .cls-request-table .cls-request-row {
-  grid-template-columns: minmax(10rem, 1.6fr) minmax(7rem, 1fr) minmax(5.5rem, 6.5rem) minmax(8rem, 9.5rem) minmax(19rem, 21rem);
+  grid-template-columns: minmax(8rem, 1.05fr) minmax(7rem, 1.1fr) minmax(5.5rem, 6.5rem) minmax(8rem, 9.5rem) minmax(19rem, 21rem);
 }
 
 .cls-sort-btn {
@@ -2315,6 +2360,17 @@ body.builder-autosave-active #page {
   align-items: flex-start;
   gap: 0.25rem;
   min-width: 0;
+}
+
+/* A long request name gets two lines, then ellipsises; the full name is on the
+   row's title attribute (analyst feedback round 2). */
+.cls-request-name > span:first-child {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 /* A request that still needs work is called out loudly: the whole row is tinted
@@ -2713,6 +2769,7 @@ textarea.cls-over-limit,
 .cls-review-filters select,
 .cls-rv-body input[type="text"],
 .cls-rv-body input[type="number"],
+.cls-rv-body input.cls-money-input,
 .cls-rv-body select {
   height: 2.5rem;
   min-height: 2.5rem;
@@ -2807,10 +2864,13 @@ textarea.cls-over-limit,
 }
 
 /* Approval-decision segments. */
-.cls-chart-bar.seg-approved { fill: #2f7d61; }
-.cls-chart-bar.seg-partial  { fill: #e8a72c; }
-.cls-chart-bar.seg-denied   { fill: #b64454; }
-.cls-chart-bar.seg-pending  { fill: #b9c6d0; }
+.cls-chart-bar.seg-approved   { fill: #2f7d61; }
+.cls-chart-bar.seg-partial    { fill: #e8a72c; }
+/* The unapproved remainder of a partial decision: related to denied, but muted
+   so the yellow reads as "this much was approved" (analyst feedback round 2). */
+.cls-chart-bar.seg-unapproved { fill: #ddb3bb; }
+.cls-chart-bar.seg-denied     { fill: #b64454; }
+.cls-chart-bar.seg-pending    { fill: #b9c6d0; }
 
 .cls-chart-legend {
   display: flex;
@@ -2834,18 +2894,20 @@ textarea.cls-over-limit,
   display: inline-block;
 }
 
-.cls-chart-swatch.seg-approved { background: #2f7d61; }
-.cls-chart-swatch.seg-partial  { background: #e8a72c; }
-.cls-chart-swatch.seg-denied   { background: #b64454; }
-.cls-chart-swatch.seg-pending  { background: #b9c6d0; }
+.cls-chart-swatch.seg-approved   { background: #2f7d61; }
+.cls-chart-swatch.seg-partial    { background: #e8a72c; }
+.cls-chart-swatch.seg-unapproved { background: #ddb3bb; }
+.cls-chart-swatch.seg-denied     { background: #b64454; }
+.cls-chart-swatch.seg-pending    { background: #b9c6d0; }
 
+/* Small type to match the narrower bars (analyst feedback round 2). */
 .cls-chart-label {
-  font-size: 11px;
+  font-size: 8.5px;
   fill: var(--lp-text-secondary);
 }
 
 .cls-chart-value {
-  font-size: 11px;
+  font-size: 8.5px;
   font-weight: 700;
   fill: var(--lp-text-primary);
 }
@@ -2856,9 +2918,13 @@ textarea.cls-over-limit,
   margin: 0.5rem 0 0;
 }
 
+/* Four columns, one per control plus the reset. Status and Agency are narrow -
+   their summaries are short - so Service keeps the room its long names need.
+   Previously only three columns were declared, which wrapped Service and the
+   reset button onto a second row (analyst feedback round 2). */
 .cls-review-filters {
   display: grid;
-  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
+  grid-template-columns: minmax(7.5rem, 0.6fr) minmax(8rem, 0.65fr) minmax(11rem, 1.2fr) auto;
   gap: 0.85rem 1rem;
   align-items: end;
   background: var(--lp-surface-subtle);
@@ -6501,11 +6567,14 @@ body.desktop-nav-collapsed .app-footer {
   overflow: hidden;
 }
 
+/* Agency | Service | Request | Type | FY28 | Duration | Pos. | BBMR approval |
+   Appr. FY28 | Appr. pos. - FY29/FY30 dropped, Type added, and the space they
+   freed went to Agency and Type (analyst feedback round 2). */
 .cls-bulk-row {
   display: grid;
   grid-template-columns:
-    minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, 1.5fr)
-    minmax(4.6rem, 0.62fr) minmax(4.6rem, 0.62fr) minmax(4.6rem, 0.62fr)
+    minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 1fr)
+    minmax(5rem, 0.7fr)
     minmax(4.4rem, 0.55fr) minmax(2.6rem, 0.3fr)
     minmax(6rem, 0.8fr) minmax(5.2rem, 0.62fr) minmax(4.4rem, 0.5fr);
   gap: 0.3rem;
@@ -6544,6 +6613,7 @@ body.desktop-nav-collapsed .app-footer {
 .cls-bulk-row .form-group { margin: 0; width: 100%; min-width: 0; }
 
 .cls-bulk-row input[type="number"],
+.cls-bulk-row input[type="text"],
 .cls-bulk-row select {
   height: 1.85rem;
   font-size: 0.72rem;
@@ -6716,9 +6786,44 @@ body.desktop-nav-collapsed .app-footer {
   text-decoration: underline;
 }
 
+/* Apply sits at the right of the mini-actions row and turns solid once there are
+   held ticks waiting to go (analyst feedback round 2). */
+.cls-cd-apply {
+  margin-left: auto;
+  text-decoration: none;
+  border: 1px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-control);
+  padding: 0.1rem 0.5rem;
+}
+
+.cls-cd-apply.is-dirty {
+  background: var(--lp-brand-primary);
+  border-color: var(--lp-brand-primary);
+  color: #fff;
+}
+
 .cls-cd-panel .shiny-input-checkboxgroup { margin: 0; }
 .cls-cd-panel .checkbox { margin: 0.1rem 0; }
 .cls-cd-panel .checkbox label { font-weight: 500; font-size: 0.85rem; }
+
+/* Submitter / Budget Analyst, under the submission notice. */
+.cls-subtext-people {
+  display: flex;
+  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cls-people-line {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.cls-people-label {
+  font-weight: 800;
+  color: var(--lp-text-secondary);
+  text-transform: none;
+}
 
 /* A disabled Add button reads as unavailable rather than broken. */
 .civic-button.is-disabled,

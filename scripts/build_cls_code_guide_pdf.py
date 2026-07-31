@@ -116,19 +116,27 @@ def main():
     story.append(Paragraph(
         "Four tables in the Postgres <font face='Courier'>budget</font> schema. The first three are the BBMR target "
         "schema's CLS_REQUEST / CLS_REQUEST_LINE / CLS_REQUEST_POSITION translated to Postgres types; "
-        "<font face='Courier'>cls_review</font> is additive and holds BBMR's evaluation so the agency's submission is "
-        "never overwritten.", st["B"]))
+        "<font face='Courier'>cls_review</font> is additive and holds BBMR's decision so the agency's submission is "
+        "never overwritten. The canonical DDL is <font face='Courier'>database/schema/target_schema.sql</font>; "
+        "<font face='Courier'>ensure_review_schema()</font> migrates existing databases to match. <b>Both must be "
+        "changed together</b> &mdash; <font face='Courier'>CREATE TABLE IF NOT EXISTS</font> never alters an existing "
+        "table, and CI builds from the canonical schema alone. Three CI failures on this feature were exactly this "
+        "mistake.", st["B"]))
     story.append(table([
         ["Table", "Key columns", "Notes"],
         ["budget.cls_request", "cls_id PK, plan_service_id FK, request_name, request_type, request_amount, one_time, "
-                               "overall_summary, completed, <b>status</b>, amount_next_fy, amount_2next_fy, modified_by",
-         "One row per request. <b>status</b> and <b>modified_by</b> are additions beyond the target schema."],
-        ["budget.cls_request_line", "line_id PK, cls_id FK, object_category, amount, justification, sort_order",
+                               "overall_summary, <b>status</b>, amount_next_fy, amount_2next_fy, <b>created_by</b>, "
+                               "modified_by",
+         "One row per request. <b>status</b> replaced the target schema's completed BIT (six states, not two); "
+         "<b>justified</b> was dropped. created_by / modified_by are user_id FKs."],
+        ["budget.cls_request_line", "line_id PK, cls_id FK, object_category, <b>spend_category</b>, amount, "
+                                    "justification, sort_order",
          "One row per expenditure object."],
         ["budget.cls_request_position", "pos_id PK, cls_id FK, classification, position_count, estimated_salary, "
                                         "justification, explanation", "One row per position request."],
-        ["budget.cls_review", "review_id PK, cls_id FK UNIQUE, evaluation_score, analyst_notes, analyst_approval, "
-                              "bbmr_approval, reviewed_by", "One review per request; additive by design."],
+        ["budget.cls_review", "review_id PK, cls_id FK UNIQUE, analyst_notes, analyst_approval, bbmr_approval, "
+                              "<b>approved_amount</b>, <b>approved_positions</b>, reviewed_by",
+         "One review per request; additive by design. evaluation_score was dropped."],
     ], [1.5 * inch, 3.1 * inch, 2.3 * inch], st))
 
     story.append(Paragraph("Migration strategy", st["H3"]))
@@ -302,9 +310,37 @@ def main():
         ["clsApplyPositionsToggle()", "Shows or hides the positions body; clears the entry fields when switched off."],
         ["clsSyncTitle()", "Mirrors the request name into the page heading and the intro sentence as it is typed."],
         ["clsScheduleAutosave()", "Debounces the autosave event and shows &lsquo;Saving…&rsquo;."],
-        ["clsRequestIsComplete()", "Gate for the &lsquo;request has been justified&rsquo; confirmation."],
+        ["clsRequestIsComplete()", "Whether the request balances; gates the warning shown on the way out. A "
+                                   "complete request leaves silently."],
+        ["clsSummaryGaps()", "Which mandatory summary fields are empty, by label. Blocks navigation. Skips hidden "
+                             "fields, so a one-time request is not asked for FY29/FY30."],
+        ["clsNumberValue() / clsGroupDigits()", "Read and format separated numbers. Anything reading an amount field "
+                                                "must use these &mdash; parseFloat(&ldquo;1,000&rdquo;) is 1."],
+        ["clsApplyCheckDropdown()", "Pushes a filter dropdown's held ticks to Shiny as one change event."],
+        ["clearStaleOverlays()", "Removes an orphaned modal backdrop on navigation."],
     ], [1.85 * inch, 5.05 * inch], st))
     story.append(Spacer(1, 4))
+
+    story.append(Paragraph("The money input binding", st["H3"]))
+    story.append(Paragraph(
+        "Amount and count fields are <b>not</b> <font face='Courier'>numericInput()</font>. A native "
+        "<font face='Courier'>&lt;input type=&quot;number&quot;&gt;</font> cannot display a thousands separator "
+        "&mdash; the value is invalid the moment a comma appears. "
+        "<font face='Courier'>cls_money_input()</font> emits the markup Shiny's own numericInput would, with a text "
+        "input classed <font face='Courier'>cls-money-input</font>, and app.js registers a custom input binding "
+        "(<font face='Courier'>beacon.clsMoneyInput</font>) that strips separators and truncates decimals on the way "
+        "to the server, re-groups them on the way back, blocks &lsquo;.&rsquo; on keydown, and debounces at 350ms. "
+        "Round-trip: &ldquo;1,234,567&rdquo; &rarr; 1234567; &ldquo;1234.99&rdquo; &rarr; 1234; &ldquo;&rdquo; and "
+        "&ldquo;abc&rdquo; &rarr; null.", st["B"]))
+
+    story.append(Paragraph("Batched filter dropdowns", st["H3"]))
+    story.append(Paragraph(
+        "Every tick in a CLS Review filter used to reach Shiny on its own, re-rendering the table and closing the "
+        "panel mid-selection. A <b>capture-phase</b> change listener on document now stops the event before it "
+        "reaches the container Shiny's checkbox-group binding listens on, marks the panel dirty and updates the "
+        "summary locally. Applying dispatches one synthetic change &mdash; the binding reads the whole container, not "
+        "the box that fired &mdash; guarded by a flag so the capture listener lets that one through.", st["B"]))
+
     story.append(Paragraph(
         "Re-initialisation matters: Shiny replaces the page's DOM on every render, so "
         "<font face='Courier'>clsInitPage()</font> is re-run on the <font face='Courier'>shiny:value</font> event to "

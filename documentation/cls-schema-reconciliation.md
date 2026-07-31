@@ -7,6 +7,19 @@ are from `information_schema`, value counts from the seeded data.
 Legend: ✅ matches · ⚠ matches with a caveat · ❌ mismatch or missing · ➕ exists in the app
 but not in your tables.
 
+> **Status: answered and applied (2026-07-31).** This is the point-in-time snapshot that
+> raised questions Q1–Q14 for review. All fourteen were answered and the changes are in
+> `main`. The tables below have been marked up with what was actually done, so the
+> document still reads as a reconciliation rather than a to-do list. Two items remain
+> open and are tracked in [`cls-change-log-notes.md`](cls-change-log-notes.md): the real
+> `SC6xxx` spend-category list (Q3) and the "Estimated Cost" link destination (Q9).
+>
+> Column-level outcomes: `justified`, `completed` and `evaluation_score` **dropped**;
+> `status` **added** as the single source of truth; `spend_category` **added**;
+> `modified_by` **retyped** from text to a `user_id` FK; `approved_amount` /
+> `approved_positions` **added** to `cls_review`; `created_by` **added** to `cls_request`;
+> `AgencyApprover` **retired** in favour of `AgencySubmitter`.
+
 ---
 
 ## 1. CLS_REQUEST
@@ -20,16 +33,18 @@ but not in your tables.
 | `request_amount` | DECIMAL(18,2) Y | `request_amount` | numeric(18,2) NULL | **FY28 Amount** | ⚠ see Q5 |
 | `one_time` | BIT N | `one_time` | boolean NOT NULL | **Request duration** toggle | ✅ |
 | `overall_summary` | NVARCHAR(MAX) Y | `overall_summary` | text NULL | **Summarize the request** | ✅ |
-| `justified` | NVARCHAR(10) Y — Yes\|No | `justified` | varchar(10) NULL | **nothing** | ❌ see Q1 |
-| `completed` | BIT N | `completed` | boolean NOT NULL | derived, not entered | ⚠ see Q4 |
-| `amount_next_fy` | DECIMAL(18,2) Y — FY+2 | `amount_next_fy` | numeric(18,2) NULL | **FY29 Amount** | ⚠ see Q5 |
-| `amount_2next_fy` | DECIMAL(18,2) Y — FY+3 | `amount_2next_fy` | numeric(18,2) NULL | **FY30 Amount** | ⚠ see Q5 |
-| — | | `status` | varchar(30) NOT NULL, default 'In Progress' | status chip | ➕ see Q4 |
-| — | | `created_at` / `updated_at` | timestamptz NOT NULL | "Last Saved" indicator | ➕ |
-| — | | `modified_by` | **text** NULL | hover on "Last Saved" | ➕ see Q10 |
+| `justified` | NVARCHAR(10) Y — Yes\|No | *dropped* | — | **nothing** | ❌ Q1 → removed |
+| `completed` | BIT N | *dropped* | — | derived from `status` | ⚠ Q4 → replaced by `status` |
+| `amount_next_fy` | DECIMAL(18,2) Y — FY+2 | `amount_next_fy` | numeric(18,2) NULL | **FY29 Amount** | ⚠ see Q5 — now required when recurring |
+| `amount_2next_fy` | DECIMAL(18,2) Y — FY+3 | `amount_2next_fy` | numeric(18,2) NULL | **FY30 Amount** | ⚠ see Q5 — now required when recurring |
+| — | | `status` | varchar(30) NOT NULL, default 'In Progress' | status chip | ➕ Q4 → added |
+| — | | `created_at` / `updated_at` | timestamptz NOT NULL | "Last Saved" indicator, export columns | ➕ |
+| — | | `created_by` | integer NULL → `access.user` | **Created by email** in the exports | ➕ added 2026-07-31 |
+| — | | `modified_by` | integer NULL → `access.user` | hover on "Last Saved", **Modified by email** | ➕ Q10 → retyped from text |
 
-Nine of your eleven fields land exactly. `justified` is the one real hole; `completed` is
-computed rather than entered.
+Nine of your eleven fields land exactly. `justified` was dropped as an unused early
+validation flag, and `completed` was replaced by `status`, which can express all six
+workflow states rather than two.
 
 ## 2. CLS_REQUEST_LINE
 
