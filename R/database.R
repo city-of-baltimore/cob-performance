@@ -3258,6 +3258,23 @@ draft_field <- function(payload, field_id, fallback = "") {
   as.character(value)
 }
 
+# Raw-connection equivalent of service_is_shared() in app.R (which checks
+# the in-memory reactive db) -- used when promoting a submitted plan's
+# draft payload to real records, where only a DBI connection is available.
+service_is_shared_db <- function(connection, service_id) {
+  count <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT COUNT(DISTINCT pes.entity_id) AS n",
+      "FROM reference.plan_entity_service pes",
+      "JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
+      "WHERE pes.service_id = $1 AND pe.active AND pe.has_own_plan"
+    ),
+    params = list(service_id)
+  )$n[[1]]
+  isTRUE(count > 1)
+}
+
 apply_plan_drafts_to_records <- function(connection, plan_id) {
   plan_id <- as.integer(plan_id)
   payloads <- plan_draft_payloads(connection, plan_id)
@@ -3371,22 +3388,88 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
   services <- payloads$services
   if (!is.null(services)) {
     plan_services <- DBI::dbGetQuery(connection, "SELECT service_id FROM performance.plan_service WHERE plan_id = $1", params = list(plan_id))
+    plan_row <- DBI::dbGetQuery(connection, "SELECT agency_id, entity_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+    plan_entity_id <- if (nrow(plan_row) && !is.na(plan_row$entity_id[[1]])) as.integer(plan_row$entity_id[[1]]) else NA_integer_
+    plan_entity <- if (!is.na(plan_entity_id)) {
+      DBI::dbGetQuery(connection, "SELECT parent_agency_id, entity_type, public_name FROM reference.plan_entity WHERE entity_id = $1", params = list(plan_entity_id))
+    } else {
+      data.frame()
+    }
+    accounting_agency_id <- if (nrow(plan_row) && !is.na(plan_row$agency_id[[1]])) {
+      plan_row$agency_id[[1]]
+    } else if (nrow(plan_entity)) {
+      plan_entity$parent_agency_id[[1]]
+    } else {
+      NA_character_
+    }
+    link_entity_type <- if (nrow(plan_entity)) {
+      switch(
+        as.character(plan_entity$entity_type[[1]]),
+        MayoraltyOffice = "mayoral service",
+        `mayoral service` = "mayoral service",
+        QuasiAgency = "quasi agency",
+        `quasi agency` = "quasi agency",
+        Other = "quasi agency",
+        "quasi agency"
+      )
+    } else {
+      NA_character_
+    }
+
     for (service_id in plan_services$service_id) {
       service_key <- as.character(service_id)
+      # A service shared by multiple entities (e.g. a grant program with
+      # several peer grantee agencies) has one shared description and
+      # per-entity metric selections -- see service_is_shared() in app.R
+      # for the same check against the in-memory db. Reported 2026-07-31.
+      shared <- service_is_shared_db(connection, service_key)
+
       description <- draft_field(services, paste0("service_description_", service_key), NA_character_)
-      if (!is.na(description)) {
+      if (!is.na(description) && !shared) {
         DBI::dbExecute(connection, "UPDATE reference.service SET service_description = $2 WHERE service_id = $1", params = list(service_key, description))
       }
+
       if (!is.null(services$serviceMetrics[[service_key]])) {
-        DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE service_id = $1", params = list(service_key))
         metric_ids <- suppressWarnings(as.integer(unlist(services$serviceMetrics[[service_key]])))
         metric_ids <- metric_ids[!is.na(metric_ids)]
+
+        if (!shared) {
+          DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE service_id = $1", params = list(service_key))
+        }
         for (measure_id in metric_ids) {
           DBI::dbExecute(
             connection,
             "INSERT INTO performance.pm_service_link (measure_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             params = list(measure_id, service_key)
           )
+        }
+
+        if (shared && !is.na(plan_entity_id)) {
+          DBI::dbExecute(
+            connection,
+            "DELETE FROM performance.measure_entity_link WHERE service_id = $1 AND entity_id = $2",
+            params = list(service_key, plan_entity_id)
+          )
+          for (measure_id in metric_ids) {
+            DBI::dbExecute(
+              connection,
+              paste(
+                "INSERT INTO performance.measure_entity_link",
+                "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                "ON CONFLICT (measure_id, agency_id, service_id, entity_type, entity_id)",
+                "DO UPDATE SET public_name = EXCLUDED.public_name, updated_at = now()"
+              ),
+              params = list(
+                measure_id,
+                accounting_agency_id,
+                service_key,
+                link_entity_type,
+                plan_entity_id,
+                plan_entity$public_name[[1]]
+              )
+            )
+          }
         }
       }
     }
