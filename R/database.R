@@ -1974,7 +1974,25 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
       measure_id <- row$measure_id[[1]]
     } else {
       measure_id <- as.integer(values$measure_id)
-      DBI::dbExecute(
+      # The WHERE clause used to always require agency_id=$1 (values$agency_id,
+      # which for an EXISTING measure is current_agency_id() -- whatever
+      # agency the CURRENT VIEWER happens to be acting as, not the measure's
+      # own agency). A SystemAdmin editing a measure from a different agency's
+      # context than the measure's own -- e.g. via the Action Plan Measures
+      # admin page, which deliberately lets an admin open any Citywide
+      # measure regardless of current context -- matched zero rows and
+      # silently saved nothing, with no error shown. Worse, the caller still
+      # went on to call ensure_measure_current_entity_link() as if the save
+      # had succeeded, which is how a measure ended up linked to the
+      # viewer's agency's entity while its own agency_id never actually
+      # changed (reported 2026-07-31, "Average Age of Fleet"). Admins may
+      # edit any measure_id; only non-admins are restricted to their own
+      # agency's measures. $34 (is_admin) short-circuits the agency_id check
+      # rather than dropping $1 from the query text entirely -- omitting a
+      # parameter placeholder that's still present in `params` makes
+      # Postgres unable to infer its type ("could not determine data type
+      # of parameter $1").
+      changed <- DBI::dbExecute(
         connection,
         paste(
           "UPDATE performance.performance_measure SET initial_cycle=$2, title=$3, measure_type=$4, description=$5, data_source=$6, data_owner=$7,",
@@ -1983,10 +2001,13 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
           "collection_method=$20, how_data_used=$21, why_meaningful=$22, proxy_measure=$23, improvement_notes=$24, change_mapping=$25,",
           "pillar_id=$26, pillar_goal_id=$27, is_city=$28, is_agency=$29, is_service=$30, approval_status=$31::varchar(30),",
           "submitted_for_approval_at=$32::timestamptz, validated=CASE WHEN $31::text='Validated' THEN true ELSE false END, last_updated=now()",
-          "WHERE measure_id=$33 AND agency_id=$1"
+          "WHERE measure_id=$33 AND ($34::boolean OR agency_id=$1)"
         ),
-        params = c(params, list(measure_id))
+        params = c(params, list(measure_id, isTRUE(is_admin)))
       )
+      # A non-admin whose agency doesn't match gets a clear error instead of
+      # a save that looks successful but silently changed nothing.
+      if (changed != 1) stop("Measure not found, or you do not have permission to edit it.")
     }
     for (year_value in yearly_values) {
       DBI::dbExecute(
