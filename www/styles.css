@@ -6601,3 +6601,102 @@ body.desktop-nav-collapsed .app-footer {
   padding: 0 0.35rem;
   cursor: help;
 }
+
+
+/* The autosave indicator must never be pushed off the row (analyst feedback). */
+.cls-detail-topbar {
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
+}
+
+.cls-detail-topbar .cls-back-link { flex: 0 0 auto; }
+
+.cls-detail-topbar .cls-save-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Checkbox dropdown filters, in place of the selectize tag inputs. */
+.cls-check-dropdown { position: relative; }
+
+.cls-cd-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.65rem;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-control);
+  cursor: pointer;
+}
+
+.cls-cd-toggle:hover { border-color: var(--lp-brand-primary); }
+
+.cls-cd-toggle[aria-expanded="true"] {
+  border-color: var(--lp-brand-primary);
+  box-shadow: 0 0 0 2px rgba(31, 58, 95, 0.12);
+}
+
+.cls-cd-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cls-cd-caret { flex: 0 0 auto; font-size: 0.7rem; color: var(--lp-text-secondary); }
+
+.cls-cd-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  min-width: 13rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--lp-border-strong);
+  border-radius: var(--lp-radius-control);
+  box-shadow: 0 8px 20px rgba(16, 32, 51, 0.14);
+  padding: 0.4rem 0.6rem 0.5rem;
+}
+
+.cls-cd-actions {
+  display: flex;
+  gap: 0.4rem;
+  padding-bottom: 0.35rem;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px solid var(--lp-border-soft);
+}
+
+.cls-cd-mini {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--lp-brand-primary);
+  background: none;
+  border: 0;
+  padding: 0.1rem 0.2rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.cls-cd-panel .shiny-input-checkboxgroup { margin: 0; }
+.cls-cd-panel .checkbox { margin: 0.1rem 0; }
+.cls-cd-panel .checkbox label { font-weight: 500; font-size: 0.85rem; }
+
+/* A disabled Add button reads as unavailable rather than broken. */
+.civic-button.is-disabled,
+.civic-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

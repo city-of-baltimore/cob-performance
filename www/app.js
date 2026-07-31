@@ -100,6 +100,26 @@
   // The justification doubles as the description when a new spend category is
   // being created, so the prompt only appears for that option.
   var CLS_NEW_SPEND_CATEGORY = "Create Spend Category";
+  function clsCloseAllCheckDropdowns() {
+    document.querySelectorAll(".cls-cd-panel").forEach(function (p) { p.style.display = "none"; });
+    document.querySelectorAll("[data-cls-cd-toggle]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+  }
+  // Keep the closed-state summary ("3 of 6 selected") in step with the boxes.
+  function clsUpdateCheckDropdownSummary(group) {
+    if (!group) return;
+    var wrap = group.closest(".cls-check-dropdown");
+    if (!wrap) return;
+    var boxes = group.querySelectorAll('input[type="checkbox"]');
+    var sel = group.querySelectorAll('input[type="checkbox"]:checked');
+    var label = wrap.querySelector(".control-label");
+    var name = label ? label.textContent.trim().toLowerCase() : "items";
+    var out = wrap.querySelector(".cls-cd-summary");
+    if (!out) return;
+    if (!boxes.length) out.textContent = "None available";
+    else if (!sel.length) out.textContent = "No " + name + " selected";
+    else if (sel.length === boxes.length) out.textContent = "All " + name;
+    else out.textContent = sel.length + " of " + boxes.length + " selected";
+  }
   function clsUpdateNewCategoryNote(scope) {
     var root = scope || clsPageRoot() || document;
     var sel = root.querySelector("#cls_line_spend_category");
@@ -252,6 +272,31 @@
     var intro = document.querySelector(".cls-intro-name");
     if (intro) intro.textContent = v || "request";
   }
+  // Analyst feedback: the Add buttons stay disabled until every field in their
+  // form is filled, so an incomplete row cannot even be attempted. The server
+  // still re-checks - this is the affordance, not the guard.
+  var CLS_ADD_FORMS = [
+    { btn: "cls_submit_line", fields: ["cls_line_category", "cls_line_spend_category", "cls_line_amount", "cls_line_justification"] },
+    { btn: "cls_submit_position", fields: ["cls_position_classification", "cls_position_count", "cls_position_salary",
+                                           "cls_position_justification", "cls_position_explanation"] }
+  ];
+  function clsUpdateAddButtons() {
+    CLS_ADD_FORMS.forEach(function (form) {
+      var btn = document.getElementById(form.btn);
+      if (!btn) return;
+      var ready = form.fields.every(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return false;
+        var v = (el.value || "").trim();
+        if (!v) return false;
+        if (el.type === "number") { var n = parseFloat(v); return !isNaN(n) && n > 0; }
+        return true;
+      });
+      btn.disabled = !ready;
+      btn.classList.toggle("is-disabled", !ready);
+      btn.setAttribute("title", ready ? "" : "Fill in every field above to add this row");
+    });
+  }
   function clsInitPage() {
     if (!clsPageRoot()) return;
     clsApplyOneTime();
@@ -259,6 +304,7 @@
     clsApplyPositionsToggle();
     clsSyncTitle();
     clsUpdateNewCategoryNote();
+    clsUpdateAddButtons();
     clsValidate();
   }
   var clsAutosaveTimer = null;
@@ -273,7 +319,7 @@
   }
   document.addEventListener("input", function (event) {
     if (event.target && event.target.id === "cls_form_name") clsSyncTitle();
-    if (event.target && event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
+    if (event.target && event.target.closest && event.target.closest(".cls-detail-shell")) { clsValidate(); clsUpdateAddButtons(); }
     if (event.target && event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
   });
   // CLS Review: the approved-amount pair appears for Approved and Partial only.
@@ -305,7 +351,10 @@
     if (event.target.id === "cls_form_one_time") { clsApplyOneTime(); clsApplyOneTimeLabel(); clsValidate(); }
     if (event.target.id === "cls_add_positions_toggle") { clsApplyPositionsToggle(); }
     if (event.target.id === "cls_line_spend_category") { clsUpdateNewCategoryNote(); }
-    if (event.target.closest && event.target.closest(".cls-detail-shell")) clsValidate();
+    if (event.target.type === "checkbox" && event.target.closest(".cls-cd-panel")) {
+      clsUpdateCheckDropdownSummary(event.target.closest(".shiny-input-checkboxgroup"));
+    }
+    if (event.target.closest && event.target.closest(".cls-detail-shell")) { clsValidate(); clsUpdateAddButtons(); }
     if (event.target.closest && event.target.closest(".cls-summary-surface")) clsScheduleAutosave();
   });
   document.addEventListener("shiny:value", function () { window.setTimeout(clsInitPage, 0); });
@@ -1026,6 +1075,35 @@
       return;
     }
     // Analyst feedback: pencil opens the row's inline editor; Cancel closes it.
+    // Checkbox dropdown filters: toggle the panel, select all / clear.
+    var cdToggle = event.target.closest("[data-cls-cd-toggle]");
+    if (cdToggle) {
+      var key = cdToggle.getAttribute("data-cls-cd-toggle");
+      var panel = document.querySelector('[data-cls-cd-panel="' + key + '"]');
+      if (panel) {
+        var open = window.getComputedStyle(panel).display !== "none";
+        clsCloseAllCheckDropdowns();
+        if (!open) { panel.style.display = "block"; cdToggle.setAttribute("aria-expanded", "true"); }
+      }
+      return;
+    }
+    var cdAll = event.target.closest("[data-cls-cd-all]");
+    var cdNone = event.target.closest("[data-cls-cd-none]");
+    if (cdAll || cdNone) {
+      var id = (cdAll || cdNone).getAttribute(cdAll ? "data-cls-cd-all" : "data-cls-cd-none");
+      var group = document.getElementById(id);
+      if (group) {
+        group.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+          if (cb.checked !== !!cdAll) { cb.checked = !!cdAll; }
+        });
+        // One change event so Shiny picks up the whole new selection.
+        var first = group.querySelector('input[type="checkbox"]');
+        if (first) first.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return;
+    }
+    // A click anywhere else closes any open filter panel.
+    if (!event.target.closest(".cls-cd-panel")) clsCloseAllCheckDropdowns();
     // Fold the chart away; the label and caret follow the state.
     var clsChartToggle = event.target.closest("[data-cls-chart-toggle]");
     if (clsChartToggle) {

@@ -6456,7 +6456,8 @@ cls_request_gaps <- function(db, request_row) {
   if (is.null(request_row) || !nrow(request_row)) return(character(0))
   r <- request_row[1, , drop = FALSE]
   gaps <- character(0)
-  if (!nzchar(trimws(as.character(r$request_name %||% "")))) gaps <- c(gaps, "request name")
+  rname <- trimws(as.character(r$request_name %||% ""))
+  if (!nzchar(rname) || identical(rname, CLS_DRAFT_NAME)) gaps <- c(gaps, "request name")
   if (!nzchar(trimws(as.character(r$request_type %||% "")))) gaps <- c(gaps, "request type")
   if (!nzchar(trimws(as.character(r$overall_summary %||% "")))) gaps <- c(gaps, "summary")
   amount <- suppressWarnings(as.numeric(r$request_amount))
@@ -6495,6 +6496,39 @@ cls_status_tone <- function(status) {
 # Sentinel option in the spend-category dropdown: the agency needs a category
 # that isn't on the list yet, and describes it in the justification.
 CLS_NEW_SPEND_CATEGORY <- "Create Spend Category"
+
+# Placeholder name a request is created under before the user names it. Treated
+# as "unnamed" by the form and by the completeness check.
+CLS_DRAFT_NAME <- "Untitled CLS request"
+
+# A dropdown whose panel holds checkboxes, rather than a selectize tag-input.
+# The input id and value shape match selectInput(multiple = TRUE), so the
+# server-side observers are unchanged (analyst feedback round 1).
+cls_check_dropdown <- function(input_id, label, choices, selected = NULL) {
+  n_sel <- length(selected)
+  n_all <- length(choices)
+  summary_text <- if (!n_all) "None available"
+    else if (n_sel == 0) paste("No", tolower(label), "selected")
+    else if (n_sel == n_all) paste("All", tolower(label))
+    else paste(n_sel, "of", n_all, "selected")
+  div(
+    class = "cls-check-dropdown",
+    tags$label(class = "control-label", `for` = paste0(input_id, "_toggle"), label),
+    tags$button(
+      id = paste0(input_id, "_toggle"), type = "button", class = "cls-cd-toggle",
+      `data-cls-cd-toggle` = input_id, `aria-expanded` = "false",
+      tags$span(class = "cls-cd-summary", summary_text),
+      tags$span(class = "cls-cd-caret", icon("chevron-down"))
+    ),
+    div(
+      class = "cls-cd-panel", `data-cls-cd-panel` = input_id, style = "display:none;",
+      div(class = "cls-cd-actions",
+        tags$button(type = "button", class = "cls-cd-mini", `data-cls-cd-all` = input_id, "Select all"),
+        tags$button(type = "button", class = "cls-cd-mini", `data-cls-cd-none` = input_id, "Clear")),
+      checkboxGroupInput(input_id, label = NULL, choices = choices, selected = selected)
+    )
+  )
+}
 
 # A chart surface the user can fold away - the cards above it are often all
 # someone needs, and the chart is tall (analyst feedback round 1).
@@ -7145,9 +7179,9 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
       # broken. They now filter the table as soon as a selection changes.
       div(
         class = "cls-review-filters",
-        div(class = "measure-field", selectInput("cls_review_status_filter", "Status", choices = status_choices, selected = sel_status, multiple = TRUE, selectize = TRUE)),
-        div(class = "measure-field", selectInput("cls_review_agency_filter", "Agency", choices = agency_choices, selected = sel_agency, multiple = TRUE, selectize = TRUE)),
-        div(class = "measure-field", selectInput("cls_review_service_filter", "Service", choices = service_choices_rv, selected = sel_service, multiple = TRUE, selectize = TRUE)),
+        div(class = "measure-field", cls_check_dropdown("cls_review_status_filter", "Status", status_choices, sel_status)),
+        div(class = "measure-field", cls_check_dropdown("cls_review_agency_filter", "Agency", agency_choices, sel_agency)),
+        div(class = "measure-field", cls_check_dropdown("cls_review_service_filter", "Service", service_choices_rv, sel_service)),
         div(
           class = "cls-review-filter-actions",
           actionButton("cls_review_reset_filters", "Reset filters", class = "civic-button secondary small")
@@ -7214,10 +7248,13 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   # broader test would make every request read-only for the one role that can
   # reach the page at all.
   is_bbmr_reviewer <- has_any_role(app_roles, "BBMRReviewer")
-  reviewer_view <- is_bbmr_reviewer &&
-    (came_from_review || !can_view_cls_requests(app_roles) ||
-       !has_any_role(app_roles, c("AgencyWriter", "AgencySubmitter")))
-  back_link <- if (reviewer_view) {
+  # Two separate questions. Where does Back go? Whoever opened this from CLS
+  # Review returns there - BBMR reviewers and SystemAdmins alike.
+  back_to_review <- came_from_review ||
+    (can_review_cls(app_roles) && !can_view_cls_requests(app_roles))
+  # And is it read-only? Only for BBMR reviewers, so SystemAdmin can still edit.
+  reviewer_view <- is_bbmr_reviewer
+  back_link <- if (back_to_review) {
     tags$button(type = "button", class = "cls-back-link", `data-page` = "cls_review", icon("arrow-left"), "Back to CLS Review")
   } else {
     tags$button(type = "button", class = "cls-back-link", `data-page` = "cls_requests", icon("arrow-left"), "Back to CLS requests")
@@ -7262,7 +7299,11 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     service_choices <- c(stats::setNames(cur_ps, cls_service_label(db, request$service_id)), service_choices)
   }
   submitter <- cls_submitter_name(db, plan)
-  page_title <- if (is_new) "New CLS request" else as.character(request$request_name %||% "CLS request")
+  page_title <- if (is_new) "New CLS request" else {
+    nm <- as.character(request$request_name %||% "CLS request")
+    # A freshly created draft has not been named yet.
+    if (identical(nm, CLS_DRAFT_NAME) || !nzchar(trimws(nm))) "New CLS request" else nm
+  }
 
   # Field label with an info icon to its right; the panel opens below the input.
   cls_labelled_info <- function(label, panel, id) {
@@ -7316,7 +7357,12 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   } else if (is_new && !length(service_choices)) {
     summary_body <- div(class = "cls-empty-state", p(class = "empty-state-copy", "This plan has no services available to attach a request to."))
   } else {
-    v_name <- if (is_new) "" else as.character(request$request_name %||% "")
+    v_name <- if (is_new) "" else {
+      nm <- as.character(request$request_name %||% "")
+      # Drafts are created under a placeholder name; show it blank so the user
+      # types their own rather than editing around ours.
+      if (identical(nm, CLS_DRAFT_NAME)) "" else nm
+    }
     v_type <- if (is_new) "" else { t <- as.character(request$request_type %||% ""); if (is.na(t)) "" else t }
     v_amount <- if (is_new) NA else num_value(request$request_amount)
     v_next <- if (is_new) NA else num_value(request$amount_next_fy)
@@ -8980,7 +9026,33 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   observeEvent(input$cls_create_open, {
     if (!cls_guard_edit()) return()
-    current_cls_id(NA_integer_)
+    # Analyst feedback: every field must be editable the moment the user enters
+    # the request, including objects and positions. Those need a cls_id to hang
+    # off, so the draft row is created here rather than on first autosave. It
+    # shows on the list as a not-detailed request until it is filled in.
+    data <- ensure_app_data()
+    agency <- cls_agency_id_for_submitter(data, current_submitter_value())
+    choices <- cls_agency_service_choices(data, agency)
+    if (!length(choices)) {
+      showNotification("This agency has no services on its current plan, so a CLS request cannot be created yet.",
+                       type = "error", duration = 8)
+      return()
+    }
+    created <- tryCatch(
+      create_cls_request(
+        database,
+        plan_service_id = as.integer(choices[[1]]),
+        request_name = CLS_DRAFT_NAME,
+        modified_by = cls_user_id()
+      ),
+      error = function(error) error
+    )
+    if (inherits(created, "error")) {
+      showNotification(conditionMessage(created), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    current_cls_id(as.integer(created))
     cls_detail_origin("cls_requests")
     cls_last_save(NULL)
     current_page("cls_request_detail")
@@ -9105,9 +9177,9 @@ server <- function(input, output, session) {
     rows <- cls_review_rows(data)
     agencies <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
     services <- if (nrow(rows)) sort(unique(rows$service)) else character(0)
-    updateSelectInput(session, "cls_review_status_filter", choices = cls_status_choices, selected = cls_status_choices)
-    updateSelectInput(session, "cls_review_agency_filter", choices = agencies, selected = agencies)
-    updateSelectInput(session, "cls_review_service_filter", choices = services, selected = services)
+    updateCheckboxGroupInput(session, "cls_review_status_filter", choices = cls_status_choices, selected = cls_status_choices)
+    updateCheckboxGroupInput(session, "cls_review_agency_filter", choices = agencies, selected = agencies)
+    updateCheckboxGroupInput(session, "cls_review_service_filter", choices = services, selected = services)
   }, ignoreInit = TRUE)
 
   # --- Bulk Approve: a spreadsheet-style grid over every request in view ---
