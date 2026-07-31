@@ -3410,6 +3410,22 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
   if (!is.null(services)) {
     plan_services <- DBI::dbGetQuery(connection, "SELECT service_id FROM performance.plan_service WHERE plan_id = $1", params = list(plan_id))
     plan_row <- DBI::dbGetQuery(connection, "SELECT agency_id, entity_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+    # A shared service's description is locked to SystemAdmin/BBMRReviewer
+    # in the UI (see can_edit_shared_service_description() in app.R), but
+    # that's only a client-side disable -- promoting the draft must not
+    # trust it blindly, and must not blindly SKIP it either, or a
+    # legitimate admin edit would sit in the draft forever, never applied.
+    # Check who actually saved the services draft last.
+    services_draft_editor <- DBI::dbGetQuery(
+      connection,
+      "SELECT updated_by FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'services'",
+      params = list(plan_id)
+    )$updated_by[[1]]
+    services_draft_editor_is_admin <- !is.null(services_draft_editor) && !is.na(services_draft_editor) && nrow(DBI::dbGetQuery(
+      connection,
+      "SELECT 1 FROM access.user_role WHERE user_id = $1 AND app_role IN ('SystemAdmin', 'BBMRReviewer')",
+      params = list(as.integer(services_draft_editor))
+    )) > 0
     plan_entity_id <- if (nrow(plan_row) && !is.na(plan_row$entity_id[[1]])) as.integer(plan_row$entity_id[[1]]) else NA_integer_
     plan_entity <- if (!is.na(plan_entity_id)) {
       DBI::dbGetQuery(connection, "SELECT parent_agency_id, entity_type, public_name FROM reference.plan_entity WHERE entity_id = $1", params = list(plan_entity_id))
@@ -3446,7 +3462,7 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
       shared <- service_is_shared_db(connection, service_key)
 
       description <- draft_field(services, paste0("service_description_", service_key), NA_character_)
-      if (!is.na(description) && !shared) {
+      if (!is.na(description) && (!shared || services_draft_editor_is_admin)) {
         DBI::dbExecute(connection, "UPDATE reference.service SET service_description = $2 WHERE service_id = $1", params = list(service_key, description))
       }
 
