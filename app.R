@@ -248,6 +248,13 @@ uses_review_administration_mode <- function(app_roles) {
   has_any_role(app_roles, c("CAOffice", "DeputyMayor"))
 }
 
+# A shared service's description (see service_is_shared()) is locked to
+# admins/BBMR analysts, not agency users -- everyone else can view but not
+# edit it, regardless of their own agency's edit permissions.
+can_edit_shared_service_description <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "BBMRReviewer"))
+}
+
 risk_type_label <- function(value) {
   labels <- names(risk_type_choices)
   match_index <- match(value, unname(risk_type_choices))
@@ -739,17 +746,18 @@ service_body_output_id <- function(service_id) {
   paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
 }
 
-service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE) {
+service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE, can_edit_shared_description = FALSE) {
   if (is.null(service_row) || !nrow(service_row)) return(NULL)
   service_id <- service_row$service_id[[1]]
   service_is_admin <- is_administration_service(service_row)
   # A service shared by multiple entities (e.g. a grant program with
   # several peer grantee agencies) has one description but many editors --
-  # lock it to system admins regardless of plan-editability so no single
-  # grantee can overwrite the others' shared text. Each entity still
-  # manages its OWN metric selection below via measure_entity_link.
+  # lock it to system admins/BBMR analysts (can_edit_shared_description)
+  # regardless of plan-editability so no single grantee can overwrite the
+  # others' shared text. Each entity still manages its OWN metric
+  # selection below via measure_entity_link.
   service_shared <- service_is_shared(db, service_id)
-  description_locked <- isTRUE(locked) || service_shared
+  description_locked <- isTRUE(locked) || (service_shared && !isTRUE(can_edit_shared_description))
   if (is.null(measures)) {
     measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
   }
@@ -853,7 +861,7 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       if (description_locked) div(
         class = "measure-validated-lock-note",
         icon("lock"),
-        if (service_shared) "This service is shared by multiple entities, so its description is locked to system admins." else "This plan is no longer editable."
+        if (service_shared) "This service is shared by multiple entities, so its description is locked to system admins and BBMR analysts." else "This plan is no longer editable."
       ),
       disable_input_tag(textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description), description_locked)
     ),
@@ -5984,7 +5992,7 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   )
 }
 
-page_services <- function(db, agency_id, can_edit_plan = TRUE) {
+page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_service_description = FALSE) {
   plan <- current_plan(db, agency_id)
   service_rows <- plan_service_rows(db, plan)
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
@@ -6062,7 +6070,8 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
                 service_rows[i, , drop = FALSE],
                 measures = measures,
                 metric_choices = metric_choices,
-                locked = !plan_is_editable(plan) || !can_edit_plan
+                locked = !plan_is_editable(plan) || !can_edit_plan,
+                can_edit_shared_description = can_edit_shared_service_description
               )
             )
           )
@@ -7957,7 +7966,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     metrics = page_metrics(db, agency_id, measure_status_filter),
     overview = page_overview(db, agency_id, can_edit_plan),
     goals = page_goals(db, agency_id, can_edit_plan),
-    services = page_services(db, agency_id, can_edit_plan),
+    services = page_services(db, agency_id, can_edit_plan, can_edit_shared_service_description(app_roles)),
     risks = page_risks(db, agency_id, can_edit_plan),
     cls_requests = if (can_access_budget_planning(app_roles)) page_cls_requests(db, agency_id, app_roles) else page_landing(db, agency_id, app_roles, agency_roles),
     cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin, editing_line_id, editing_position_id) else page_landing(db, agency_id, app_roles, agency_roles),
@@ -8250,7 +8259,8 @@ server <- function(input, output, session) {
             service_row[1, , drop = FALSE],
             measures = measures,
             metric_choices = metric_choices,
-            locked = !plan_is_editable(plan) || !current_user_can_edit_plan()
+            locked = !plan_is_editable(plan) || !current_user_can_edit_plan(),
+            can_edit_shared_description = can_edit_shared_service_description(current_user_app_roles())
           )
         })
       })
