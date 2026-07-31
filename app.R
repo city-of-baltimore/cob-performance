@@ -743,6 +743,13 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   if (is.null(service_row) || !nrow(service_row)) return(NULL)
   service_id <- service_row$service_id[[1]]
   service_is_admin <- is_administration_service(service_row)
+  # A service shared by multiple entities (e.g. a grant program with
+  # several peer grantee agencies) has one description but many editors --
+  # lock it to system admins regardless of plan-editability so no single
+  # grantee can overwrite the others' shared text. Each entity still
+  # manages its OWN metric selection below via measure_entity_link.
+  service_shared <- service_is_shared(db, service_id)
+  description_locked <- isTRUE(locked) || service_shared
   if (is.null(measures)) {
     measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
   }
@@ -843,7 +850,12 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       p(class = "goal-field-instruction", "Describe the service in a consistent outcome-oriented structure: start with what the service provides, explain the goal or value it creates for the agency or residents, then name the core activities performed by the service."),
       p(class = "goal-field-instruction", "A strong description should avoid a simple task list. It should connect administrative, operational, or resident-facing work to the agency's strategic priorities, such as operational success, accountability, effective use of data, service excellence, or attracting and retaining talented people."),
       p(class = "goal-field-instruction", "Example structure: This service provides executive direction, communications and public relations, fiscal management, human capital management, and performance management for the department. The goal of this service is to drive innovation, promote the agency's strategic plan, and strengthen service excellence. Activities performed by this service include administrative direction, fiscal management, human resource support, performance management, communications, and change management."),
-      textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description)
+      if (description_locked) div(
+        class = "measure-validated-lock-note",
+        icon("lock"),
+        if (service_shared) "This service is shared by multiple entities, so its description is locked to system admins." else "This plan is no longer editable."
+      ),
+      disable_input_tag(textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description), description_locked)
     ),
     if (service_is_admin) div(
       class = "goal-form-field full-width",
@@ -915,7 +927,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   rows[order(rows$title), , drop = FALSE]
 }
 
-legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE) {
+legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE, entity_scoped_only = FALSE) {
   link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
   if (is.null(link_table) || !nrow(link_table) || !length(service_ids)) return(integer(0))
   link_rows <- link_table[as.character(link_table$service_id) %in% as.character(service_ids), , drop = FALSE]
@@ -928,7 +940,23 @@ legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible
   if (!nrow(measure_rows)) return(integer(0))
 
   accounting_agency_id <- plan_accounting_agency_id(db, plan)
+  # A shared service's measures (a grant program with several peer
+  # quasi-agency grantees, etc.) remain valid CANDIDATES for every
+  # grantee via the bare agency_id match -- they all draw from the same
+  # program's measure catalog. But when computing what's CURRENTLY
+  # selected/attached for one specific entity (entity_scoped_only, used by
+  # service_metric_ids()), that same bare match must not apply --
+  # grantees typically share their parent agency's agency_id, so it would
+  # show every OTHER entity's picks as already selected too. Only an
+  # explicit entity-specific link (below) counts as "selected" for a
+  # shared service.
   keep_ids <- measure_rows$measure_id[measure_rows$agency_id == accounting_agency_id]
+  if (entity_scoped_only) {
+    service_ids_unique <- unique(as.character(service_ids))
+    shared_service_ids <- service_ids_unique[vapply(service_ids_unique, function(sid) service_is_shared(db, sid), logical(1))]
+    measures_on_shared_service <- if (length(shared_service_ids)) unique(link_rows$measure_id[as.character(link_rows$service_id) %in% shared_service_ids]) else integer(0)
+    keep_ids <- keep_ids[!keep_ids %in% measures_on_shared_service]
+  }
 
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link) && !is.na(plan$entity_id[[1]])) {
     scoped_links <- db$performance_measure_entity_link[
@@ -947,7 +975,13 @@ legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible
 measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.null(plan) || !nrow(plan)) return(db$performance_performance_measure[0, , drop = FALSE])
   agency_id <- plan_accounting_agency_id(db, plan)
-  if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
+  # Must not require the entity_link table to already have rows SOMEWHERE
+  # (nrow() > 0 is a global check, not scoped to this plan) -- a shared
+  # service with no entity links created yet for ANY entity would
+  # otherwise skip the entity-aware branch below and fall through to the
+  # unscoped blanket agency dump further down, showing every grantee the
+  # exact same unfiltered agency-wide catalog.
+  if ("performance_measure_entity_link" %in% names(db)) {
     if (include_ineligible && is.na(plan$entity_id[[1]])) {
       library_links <- db$performance_measure_entity_link[
         db$performance_measure_entity_link$agency_id == plan$agency_id[[1]] &
@@ -997,7 +1031,7 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
 }
 
 service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
-  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible)
+  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible, entity_scoped_only = TRUE)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
     if (!is.null(plan) && nrow(plan)) {
@@ -2818,6 +2852,29 @@ plan_team_service_ids <- function(db, plan) {
   if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(character(0))
   links <- db$reference_plan_entity_service[db$reference_plan_entity_service$entity_id == plan$entity_id[[1]], , drop = FALSE]
   unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
+}
+
+# A "shared" service is used by more than one active entity that submits
+# its own plan (reference.plan_entity_service) -- e.g. a single grant
+# program (Art and Culture Grants) funding several peer quasi-agency
+# grantees (BMA, Symphony, Zoo, Walters), none of which individually owns
+# it. Reported 2026-07-31: grantees under a shared service typically share
+# their parent agency's agency_id, so every entity could see (and
+# overwrite) every OTHER entity's service description and metric
+# selections. Distinct from plan_team_unique_service_ids(), which is
+# scoped to one plan's own team and returns the OPPOSITE (non-shared)
+# subset.
+service_is_shared <- function(db, service_id) {
+  if (is.null(service_id) || length(service_id) != 1 || is.na(service_id) || !nzchar(trimws(as.character(service_id)))) return(FALSE)
+  links <- db$reference_plan_entity_service[as.character(db$reference_plan_entity_service$service_id) == as.character(service_id), , drop = FALSE]
+  if (!nrow(links)) return(FALSE)
+  entities <- db$reference_plan_entity[
+    !is.na(db$reference_plan_entity$active) & db$reference_plan_entity$active &
+      !is.na(db$reference_plan_entity$has_own_plan) & db$reference_plan_entity$has_own_plan,
+    ,
+    drop = FALSE
+  ]
+  length(unique(links$entity_id[links$entity_id %in% entities$entity_id])) > 1
 }
 
 plan_team_unique_service_ids <- function(db, plan) {
