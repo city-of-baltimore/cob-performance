@@ -316,3 +316,121 @@ fire on the right requests, both dropdown types toggle closed, and all eight rev
 measure to a single line at 900px and above with nothing clipped.
 
 **Status:** ✅ built and verified live; not yet committed.
+
+---
+
+## Rounds 8–10 — analyst feedback, agency grouping, bulk approve
+
+Three merged PRs (#68, #69, #70) covered the first round of analyst feedback and two
+follow-ups. Item-by-item status is in
+[`cls-change-log-notes.md`](cls-change-log-notes.md) rounds 8–10; the commit messages
+(`a566cee`, `02c0720`, `b08ac7f`, `55b36f2`, `cf87ed9`) carry the detail. The three
+structural changes worth remembering:
+
+1. **CLS is organised by agency, not entity.** Users are routed into plans as entity ids,
+   but a request belongs to the parent agency and every entity under it is shown together.
+   Entity plans carry no `agency_id`, so the parent comes from
+   `reference.plan_entity.parent_agency_id`.
+2. **The draft row is created when "Add CLS Request" is clicked**, not on first autosave.
+   Objects and positions need a `cls_id` to attach to, so the row has to exist before those
+   sections can be live — that was the "details don't populate" bug.
+3. **"Where does Back go" and "is this read-only" are separate questions.** The first
+   follows the origin page, the second is BBMR-only. Collapsing them onto one variable
+   locked SystemAdmin — the only role that can currently reach the pages — out of editing.
+
+Three CI failures across these rounds all had the same shape: a column or constraint added
+as a migration but not to `database/schema/target_schema.sql`. `CREATE TABLE IF NOT EXISTS`
+never alters an existing table, so a local database that has already been migrated will
+pass while CI, which builds from the canonical schema, fails.
+
+---
+
+## Round 11 — notes for 7/31
+
+Seventeen items of second-round analyst feedback. Full list in
+[`cls-change-log-notes.md`](cls-change-log-notes.md) round 11 (#122–#140). What is worth
+recording beyond the list:
+
+**Numbers with separators meant leaving `numericInput()` behind.** A native
+`<input type="number">` cannot hold a comma. Amount and count fields became text inputs
+with a custom Shiny input binding that strips separators on the way to the server and
+re-groups them on the way back — see build notes §9.1. The knock-on was every JS read of
+those fields: `parseFloat("1,000")` is `1`, silently, so five call sites moved to
+`clsNumberValue()`.
+
+**The filters needed to stop pushing on every tick.** Fixed with a capture-phase `change`
+listener that stops the event before Shiny's binding sees it, plus one synthetic dispatch
+on Apply — build notes §9.2. Measured: three ticks produced **0** events reaching Shiny and
+the panel stayed open; Apply produced exactly **1**.
+
+While there, the filter bar turned out to declare three grid columns for four children, so
+Service and Reset had been wrapping to a second row. Now four columns, with Status and
+Agency narrowed as asked.
+
+**Partial approvals split in the chart.** Previously a Partially Approved request painted
+its whole requested amount yellow. Now only `approved_amount` is yellow and the shortfall
+is a separate "Not approved" segment. A partial with no approved amount recorded shows
+entirely as Not approved — honest, and it surfaces the missing figure.
+
+**The submitter lookup was naming almost nobody.** Adding the "Submitter:" line exposed it:
+`cls_submitter_names_for_agency()` matched `access.user_role.agency_id`, but **103 of 104**
+AgencySubmitter rows have no `agency_id` — the grant is made against an entity and the
+agency mapping lives in `access.user_entity_access`. The lookup now checks the role table
+and falls back to entity access, rolling entities up to the parent agency the same way the
+rest of CLS does. Comptroller went from "Your Agency Submitter" to three named people.
+
+Two pieces of duplication were removed in the same pass: `agency_budget_analyst()` is now
+the shared primitive behind both `plan_budget_analyst()` and the new CLS line, and
+`cls_status_tone()` was deleted once the six per-status chip classes left it with no
+callers.
+
+**Not fixed: the grey page.** Could not reproduce. A leftover modal backdrop is the best
+fit for the described trigger and is now cleared on every navigation, but this is a
+mitigation, not a diagnosis — build notes §9.3 records what to look for if it recurs.
+
+### Verification
+
+Against the running Docker stack, with the pages rendered server-side and measured in a
+browser (the CLS pages are behind a SystemAdmin login that uses Microsoft AD, so there is
+no password to sign in with locally):
+
+- R and `app.js` both parse; `app.js` checked with `new Function()` over the **served**
+  script, the check whose absence let a syntax error through in an earlier round.
+- The money binding round-trips: `1,234,567`→`1234567`, `1234.99`→`1234`, `""`→`null`,
+  `abc`→`null`, `-4200`→`-4,200`.
+- Back from a complete request: **no alert**. From a recurring request with FY29 blank:
+  blocked, naming "FY29 Amount". Switched to one-time: out-years hidden and not demanded.
+- Filter batching: 0 events on three ticks, 1 on Apply, 1 more on close after Select all.
+- Bulk grid: 10 columns, 1175px inside a 1175px container at 1280px viewport and 795px
+  inside 795px at 900px — no sideways scroll, no wrapped cells at either size.
+- Long request name clamps to two lines (34px at a 17px line-height) inside its column.
+- Six status chips, six distinct background/foreground pairs.
+- Both export workbooks carry the four audit columns with real addresses; the `created_by`
+  backfill from `modified_by` populated existing rows.
+- 174/174 tests pass, and a database built from `target_schema.sql` **alone** loads all 40
+  tables with `created_by` / `created_by_email` / `modified_by_email` present — the CI
+  reproduction that the last three failures needed.
+
+**Status:** ✅ built and verified; not yet committed.
+
+### Addendum — the analyst seed had silently disabled itself
+
+Loading `agency_budget_analyst_seed.csv` turned up why the Budget Analyst line read
+"Unassigned" for all 57 agencies: `apply_agency_budget_analyst_seed_once()` recorded the
+seed as applied **whether or not it applied anything**.
+
+The CSV was not in the Docker image on 2026-07-29 when the seed first ran, so
+`apply_agency_budget_analyst_seed()` returned early on `!file.exists(path)`, wrote nothing,
+and the wrapper marked it done regardless. The 2026-07-30 rename then carried that marker
+forward under the new name. Adding the CSV to the Dockerfile afterwards could not help —
+the marker already said "applied", so the seed would never run again on that database.
+
+Two changes: the wrapper marks the seed only when it really ran, and an entirely empty
+`budget_analyst` column is treated as proof that a recorded run never happened, so a
+database in this state repairs itself on the next start. The retry is safe to leave
+unbounded because it stops as soon as *any* agency has an analyst — it can never overwrite
+an admin's edit.
+
+Applied to the dev database: **55 of 57** agencies now carry an analyst, a second run
+short-circuits, and 174/174 tests still pass. **AGC7000 Transportation** and **AGC9900
+CAFR Adjustments** are absent from the CSV; Transportation looks like a genuine omission.

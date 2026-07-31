@@ -69,10 +69,83 @@
     return total;
   }
   function clsAccountedTotal() { return clsLineTotal() + clsPositionTotal(); }
+  // ---- Money / count fields --------------------------------------------
+  // A native number input cannot display a thousands separator, so the CLS
+  // amount and count fields are text inputs bound to Shiny by the custom
+  // binding below. Decimals are dropped outright: budget figures here are whole
+  // dollars and whole positions (analyst feedback round 2).
+  function clsDigitsOnly(value) {
+    var s = String(value == null ? "" : value);
+    var negative = s.trim().charAt(0) === "-";
+    // Everything after a decimal point goes, along with any other punctuation.
+    s = s.split(".")[0].replace(/[^0-9]/g, "");
+    if (!s.length) return "";
+    return (negative ? "-" : "") + s;
+  }
+  function clsGroupDigits(value) {
+    var raw = clsDigitsOnly(value);
+    if (!raw.length || raw === "-") return raw;
+    var negative = raw.charAt(0) === "-";
+    var digits = negative ? raw.slice(1) : raw;
+    digits = digits.replace(/^0+(?=\d)/, "");
+    return (negative ? "-" : "") + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  // The numeric value of a money field (or any input), commas and all.
+  function clsNumberValue(el) {
+    if (!el) return NaN;
+    var raw = clsDigitsOnly(el.value);
+    if (!raw.length || raw === "-") return NaN;
+    var n = parseInt(raw, 10);
+    return isNaN(n) ? NaN : n;
+  }
+  function clsFormatMoneyInput(el) {
+    if (!el) return;
+    var formatted = clsGroupDigits(el.value);
+    if (el.value === formatted) return;
+    // Keep the caret where the user left it, counting from the right so the
+    // separators appearing to the left do not shunt it.
+    var fromEnd = (el.value || "").length - (el.selectionStart == null ? 0 : el.selectionStart);
+    el.value = formatted;
+    if (el.setSelectionRange) {
+      var pos = Math.max(0, formatted.length - fromEnd);
+      try { el.setSelectionRange(pos, pos); } catch (e) { /* detached input */ }
+    }
+  }
+  function clsRegisterMoneyBinding() {
+    if (!window.Shiny || !window.Shiny.InputBinding || !window.jQuery) return false;
+    if (window.__clsMoneyBindingRegistered) return true;
+    var $ = window.jQuery;
+    var binding = new window.Shiny.InputBinding();
+    $.extend(binding, {
+      find: function (scope) { return $(scope).find("input.cls-money-input"); },
+      getId: function (el) { return el.id; },
+      getValue: function (el) {
+        var n = clsNumberValue(el);
+        return isNaN(n) ? null : n;
+      },
+      setValue: function (el, value) { el.value = clsGroupDigits(value); },
+      subscribe: function (el, callback) {
+        $(el).on("input.clsMoney", function () { clsFormatMoneyInput(el); callback(true); });
+        $(el).on("change.clsMoney blur.clsMoney", function () { clsFormatMoneyInput(el); callback(false); });
+        // A pasted or typed decimal point never lands in the field at all.
+        $(el).on("keydown.clsMoney", function (event) {
+          if (event.key === "." || event.key === "e" || event.key === "E") event.preventDefault();
+        });
+      },
+      unsubscribe: function (el) { $(el).off(".clsMoney"); },
+      getRatePolicy: function () { return { policy: "debounce", delay: 350 }; }
+    });
+    window.Shiny.inputBindings.register(binding, "beacon.clsMoneyInput");
+    window.__clsMoneyBindingRegistered = true;
+    return true;
+  }
+  if (!clsRegisterMoneyBinding()) {
+    document.addEventListener("DOMContentLoaded", clsRegisterMoneyBinding);
+  }
   function clsRequestAmount() {
     var el = document.getElementById("cls_form_amount");
     if (!el) return 0;
-    var v = parseFloat(el.value);
+    var v = clsNumberValue(el);
     return isNaN(v) ? 0 : v;
   }
   function clsMoney(n) {
@@ -100,9 +173,45 @@
   // The justification doubles as the description when a new spend category is
   // being created, so the prompt only appears for that option.
   var CLS_NEW_SPEND_CATEGORY = "Create Spend Category";
+  // Filter dropdowns batch their ticks. Every checkbox click used to reach Shiny
+  // on its own, so the table re-rendered - and closed the panel - before the user
+  // had finished choosing. Ticks are now held locally and pushed once, when the
+  // panel is applied or closed (analyst feedback round 2).
+  var clsCdApplying = false;
+  function clsApplyCheckDropdown(panel) {
+    if (!panel || !panel.classList.contains("cls-cd-dirty")) return;
+    panel.classList.remove("cls-cd-dirty");
+    var box = panel.querySelector('input[type="checkbox"]');
+    if (!box) return;
+    // One change event is enough: Shiny's checkbox-group binding reads the whole
+    // container, not the box that fired.
+    clsCdApplying = true;
+    try { box.dispatchEvent(new Event("change", { bubbles: true })); }
+    finally { clsCdApplying = false; }
+  }
+  function clsApplyAllCheckDropdowns() {
+    document.querySelectorAll(".cls-cd-panel.cls-cd-dirty").forEach(clsApplyCheckDropdown);
+  }
   function clsCloseAllCheckDropdowns() {
+    clsApplyAllCheckDropdowns();
     document.querySelectorAll(".cls-cd-panel").forEach(function (p) { p.style.display = "none"; });
     document.querySelectorAll("[data-cls-cd-toggle]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+  }
+  // Capture phase, so the tick never reaches the container Shiny listens on.
+  document.addEventListener("change", function (event) {
+    if (clsCdApplying) return;
+    var target = event.target;
+    if (!target || target.type !== "checkbox" || !target.closest) return;
+    var panel = target.closest(".cls-cd-panel");
+    if (!panel) return;
+    event.stopPropagation();
+    panel.classList.add("cls-cd-dirty");
+    clsUpdateCheckDropdownSummary(target.closest(".shiny-input-checkboxgroup"));
+    clsMarkCheckDropdownDirty(panel);
+  }, true);
+  function clsMarkCheckDropdownDirty(panel) {
+    var apply = panel.querySelector("[data-cls-cd-apply]");
+    if (apply) apply.classList.add("is-dirty");
   }
   // Keep the closed-state summary ("3 of 6 selected") in step with the boxes.
   function clsUpdateCheckDropdownSummary(group) {
@@ -135,7 +244,7 @@
     var text = note.querySelector(".cls-remaining-text");
     if (!text) return;
     var amtEl = root.querySelector("#cls_form_amount");
-    var amt = amtEl ? (parseFloat(amtEl.value) || 0) : 0;
+    var amt = amtEl ? (clsNumberValue(amtEl) || 0) : 0;
     var accounted = 0;
     root.querySelectorAll("[data-cls-line-amount], [data-cls-position-amount]").forEach(function (row) {
       var v = parseFloat(row.getAttribute("data-cls-line-amount") || row.getAttribute("data-cls-position-amount"));
@@ -159,10 +268,15 @@
       text.textContent = "The total request exceeds " + clsMoney(Math.abs(remaining)) + ". Reduce the request amount by object or positions.";
     }
   }
+  // A required field that is currently hidden does not count - the out-year
+  // amounts are mandatory for a recurring request and absent for a one-time one.
+  function clsFieldIsVisible(container) {
+    return !!(container && container.offsetParent !== null);
+  }
   function clsUpdateRequired() {
     document.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
       var el = clsFieldInput(c);
-      var empty = !el || !(el.value || "").trim();
+      var empty = clsFieldIsVisible(c) && (!el || !(el.value || "").trim());
       c.classList.toggle("cls-field-missing", empty);
     });
   }
@@ -183,8 +297,15 @@
     var gaps = [];
     if (!root) return gaps;
     root.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+      if (!clsFieldIsVisible(c)) return;
       var el = clsFieldInput(c);
-      if (el && (el.value || "").trim()) return;
+      if (el && el.classList && el.classList.contains("cls-money-input")) {
+        // An amount of zero is not an amount.
+        var n = clsNumberValue(el);
+        if (!isNaN(n) && n > 0) return;
+      } else if (el && (el.value || "").trim()) {
+        return;
+      }
       var lab = c.querySelector(".control-label, label");
       gaps.push(lab ? lab.textContent.trim().replace(/\s+/g, " ") : "a required field");
     });
@@ -199,13 +320,19 @@
     if (!root) return false;
     var ok = true;
     root.querySelectorAll(".cls-summary-surface [data-cls-required]").forEach(function (c) {
+      if (!clsFieldIsVisible(c)) return;
       var el = clsFieldInput(c);
-      if (!el || !(el.value || "").trim()) ok = false;
+      if (el && el.classList && el.classList.contains("cls-money-input")) {
+        var n = clsNumberValue(el);
+        if (isNaN(n) || n <= 0) ok = false;
+      } else if (!el || !(el.value || "").trim()) {
+        ok = false;
+      }
     });
     var ta = root.querySelector("#cls_form_summary, [id$='cls_form_summary']");
     if (ta && clsWordCount(ta.value) > CLS_SUMMARY_WORD_LIMIT) ok = false;
     var amtEl = root.querySelector("#cls_form_amount");
-    var amt = amtEl ? (parseFloat(amtEl.value) || 0) : 0;
+    var amt = amtEl ? (clsNumberValue(amtEl) || 0) : 0;
     var total = 0;
     root.querySelectorAll("[data-cls-line-amount], [data-cls-position-amount]").forEach(function (row) {
       var v = parseFloat(row.getAttribute("data-cls-line-amount") || row.getAttribute("data-cls-position-amount"));
@@ -237,8 +364,9 @@
       var el = document.getElementById(id);
       if (el && el.value !== "") { el.value = ""; el.dispatchEvent(new Event("change", { bubbles: true })); }
     });
+    // Position Count starts empty rather than at 1, so it has to be entered.
     var count = document.getElementById("cls_position_count");
-    if (count) { count.value = "1"; count.dispatchEvent(new Event("change", { bubbles: true })); }
+    if (count && count.value !== "") { count.value = ""; count.dispatchEvent(new Event("change", { bubbles: true })); }
   }
   function clsApplyPositionsToggle() {
     var cb = document.getElementById("cls_add_positions_toggle");
@@ -289,7 +417,10 @@
         if (!el) return false;
         var v = (el.value || "").trim();
         if (!v) return false;
-        if (el.type === "number") { var n = parseFloat(v); return !isNaN(n) && n > 0; }
+        if (el.type === "number" || el.classList.contains("cls-money-input")) {
+          var n = clsNumberValue(el);
+          return !isNaN(n) && n > 0;
+        }
         return true;
       });
       btn.disabled = !ready;
@@ -339,10 +470,12 @@
     var srcAmt = row.querySelector(".cls-rv-amount");
     var srcPos = row.querySelector(".cls-rv-positions");
     if (amt && !(amt.value || "").trim() && srcAmt) {
-      amt.value = (srcAmt.textContent || "").replace(/[^0-9.]/g, "");
+      amt.value = clsGroupDigits((srcAmt.textContent || "").split(".")[0]);
+      amt.dispatchEvent(new Event("change", { bubbles: true }));
     }
     if (pos && !(pos.value || "").trim() && srcPos) {
-      pos.value = (srcPos.textContent || "").replace(/[^0-9]/g, "");
+      pos.value = clsGroupDigits(srcPos.textContent || "");
+      pos.dispatchEvent(new Event("change", { bubbles: true }));
     }
   }
   document.addEventListener("change", function (event) {
@@ -365,11 +498,30 @@
     if (toggle) toggle.setAttribute("aria-expanded", "false");
   }
 
+  // A modal dismissed by navigating away (rather than by its own Close button)
+  // can leave its backdrop behind, and Bootstrap's backdrop is a full-page grey
+  // veil that swallows every click on the page underneath. Clearing it on each
+  // navigation is the fix for "the page sometimes turns grey".
+  function clearStaleOverlays() {
+    document.querySelectorAll(".modal-backdrop").forEach(function (b) {
+      if (b.parentNode) b.parentNode.removeChild(b);
+    });
+    // Bootstrap parks these on <body> while a modal is up; left behind they lock
+    // scrolling and keep the page padded.
+    document.body.classList.remove("modal-open");
+    if (document.body.style.paddingRight) document.body.style.paddingRight = "";
+    // A modal shell that never got torn down hides itself but keeps the veil.
+    document.querySelectorAll(".modal.in, .modal.show").forEach(function (m) {
+      if (!document.querySelector(".modal-backdrop")) m.classList.remove("in", "show");
+    });
+  }
+
   function navigateToPage(page) {
     if (page !== "services") openServiceIds.clear();
     if (page !== "goals") openGoalIds.clear();
     setActivePage(page);
     closeMobileNav();
+    clearStaleOverlays();
     window.scrollTo(0, 0);
     if (window.Shiny) {
       window.Shiny.setInputValue("current_page", page, { priority: "event" });
@@ -1096,13 +1248,23 @@
         group.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
           if (cb.checked !== !!cdAll) { cb.checked = !!cdAll; }
         });
-        // One change event so Shiny picks up the whole new selection.
-        var first = group.querySelector('input[type="checkbox"]');
-        if (first) first.dispatchEvent(new Event("change", { bubbles: true }));
+        // Held like a manual tick: applied when the panel is applied or closed.
+        var groupPanel = group.closest(".cls-cd-panel");
+        if (groupPanel) {
+          groupPanel.classList.add("cls-cd-dirty");
+          clsMarkCheckDropdownDirty(groupPanel);
+        }
+        clsUpdateCheckDropdownSummary(group);
       }
       return;
     }
-    // A click anywhere else closes any open filter panel.
+    // Apply pushes the held ticks and closes the panel.
+    var cdApply = event.target.closest("[data-cls-cd-apply]");
+    if (cdApply) {
+      clsCloseAllCheckDropdowns();
+      return;
+    }
+    // A click anywhere else closes any open filter panel, applying it on the way.
     if (!event.target.closest(".cls-cd-panel")) clsCloseAllCheckDropdowns();
     // Fold the chart away; the label and caret follow the state.
     var clsChartToggle = event.target.closest("[data-cls-chart-toggle]");
@@ -1224,9 +1386,11 @@
             summaryGaps.join("\n\u2022 "));
           return;
         }
-        window.alert(clsRequestIsComplete(backShell)
-          ? "This request has been justified."
-          : "You have missing fields. This request is not fully described by object and positions.");
+        // A request that is fully justified leaves quietly - there is nothing to
+        // tell the user (analyst feedback round 2).
+        if (!clsRequestIsComplete(backShell)) {
+          window.alert("You have missing fields. This request is not fully described by object and positions.");
+        }
       }
       // fall through to the [data-page] navigation below
     }

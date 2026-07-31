@@ -141,20 +141,38 @@ apply_agency_budget_analyst_seed <- function(connection, path = file.path("datab
 
 apply_agency_budget_analyst_seed_once <- function(connection, path = file.path("database", "seed", "agency_budget_analyst_seed.csv")) {
   seed_name <- "agency_budget_analyst_seed"
-  if (seed_already_applied(connection, seed_name)) return(invisible(FALSE))
   # Renamed 2026-07-30 from "agency_fiscal_analyst_seed" (the column was
-  # reference.agency.fiscal_analyst, now .budget_analyst). If the old seed
-  # already ran, carry that forward as already-applied under the new name
-  # rather than re-running it -- re-running would blindly overwrite the
-  # column with the CSV's values again, silently reverting any manual edit
-  # an admin has made through the app since the original seed ran.
-  if (seed_already_applied(connection, "agency_fiscal_analyst_seed")) {
+  # reference.agency.fiscal_analyst, now .budget_analyst). Either marker counts
+  # as "this has run before"; re-running blindly would overwrite the column with
+  # the CSV's values again, silently reverting any manual edit an admin has made
+  # through the app since.
+  marked <- seed_already_applied(connection, seed_name) ||
+    seed_already_applied(connection, "agency_fiscal_analyst_seed")
+  # ...but a marker only means something if the column actually got populated.
+  # The CSV was not in the Docker image when this first ran, so the seed
+  # returned early having written nothing and was recorded as done anyway -
+  # which turned a missing file into a permanent "applied" and left every agency
+  # without an analyst. An empty column means the recorded run never happened.
+  if (marked && agency_budget_analyst_populated(connection)) {
     mark_seed_applied(connection, seed_name)
     return(invisible(FALSE))
   }
-  apply_agency_budget_analyst_seed(connection, path)
+  # Only record the seed as applied if it really applied, so a missing CSV does
+  # not burn the one chance this seed gets to run.
+  if (!isTRUE(apply_agency_budget_analyst_seed(connection, path))) {
+    warning("Agency budget analyst seed did not run (missing ", path,
+            "); leaving it unmarked so it can run once the file is available.")
+    return(invisible(FALSE))
+  }
   mark_seed_applied(connection, seed_name)
   invisible(TRUE)
+}
+
+agency_budget_analyst_populated <- function(connection) {
+  isTRUE(DBI::dbGetQuery(
+    connection,
+    "SELECT EXISTS (SELECT 1 FROM reference.agency WHERE COALESCE(budget_analyst, '') <> '')"
+  )[[1]])
 }
 
 # application.seed_applied tracks one-time data operations so they run
@@ -838,6 +856,12 @@ ensure_review_schema <- function(connection) {
   # modified_by holds the user id; the display name is resolved from
   # access.user.full_name at render time rather than copied in here.
   retype_modified_by_to_user_id(connection, "budget", "cls_request", "modified_by")
+  # created_by pairs with created_at so the exports can name who opened a request
+  # as well as who touched it last. Rows that predate the column inherit
+  # modified_by, which for an untouched request is the creator anyway.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_request ADD COLUMN IF NOT EXISTS created_by integer REFERENCES access.user(user_id)")
+  DBI::dbExecute(connection, "UPDATE budget.cls_request SET created_by = modified_by WHERE created_by IS NULL AND modified_by IS NOT NULL")
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_created_by ON budget.cls_request(created_by)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_cls_request_plan_service ON budget.cls_request(plan_service_id)")
   DBI::dbExecute(
     connection,
@@ -1188,12 +1212,14 @@ load_app_data <- function(connection) {
         "cr.one_time, cr.overall_summary, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
         "cr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
         "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at,",
-        "cr.modified_by, modifier.full_name AS modified_by_name,",
+        "cr.modified_by, modifier.full_name AS modified_by_name, modifier.email AS modified_by_email,",
+        "cr.created_by, creator.full_name AS created_by_name, creator.email AS created_by_email,",
         "ps.plan_id, ps.service_id, agp.agency_id",
         "FROM budget.cls_request cr",
         "JOIN performance.plan_service ps ON ps.plan_service_id = cr.plan_service_id",
         "LEFT JOIN planning.agency_plan agp ON agp.plan_id = ps.plan_id",
         "LEFT JOIN access.\"user\" modifier ON modifier.user_id = cr.modified_by",
+        "LEFT JOIN access.\"user\" creator ON creator.user_id = cr.created_by",
         "ORDER BY cr.created_at DESC, cr.cls_id DESC"
       )
     ),
@@ -1450,8 +1476,8 @@ create_cls_request <- function(connection, plan_service_id, request_name, reques
     connection,
     paste(
       "INSERT INTO budget.cls_request",
-      "(plan_service_id, request_name, request_type, request_amount, one_time, overall_summary, amount_next_fy, amount_2next_fy, modified_by)",
-      "VALUES ($1::integer, $2::text, $3::text, $4::numeric, $5::boolean, NULLIF($6::text, ''), $7::numeric, $8::numeric, $9::integer)",
+      "(plan_service_id, request_name, request_type, request_amount, one_time, overall_summary, amount_next_fy, amount_2next_fy, modified_by, created_by)",
+      "VALUES ($1::integer, $2::text, $3::text, $4::numeric, $5::boolean, NULLIF($6::text, ''), $7::numeric, $8::numeric, $9::integer, $9::integer)",
       "RETURNING cls_id"
     ),
     params = list(

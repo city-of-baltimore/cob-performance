@@ -230,11 +230,81 @@ an identical action still fires. Destructive actions confirm first.
 | `clsApplyPositionsToggle()` | show/hide positions; clear fields when switched off |
 | `clsSyncTitle()` | mirror the name into the heading and intro sentence live |
 | `clsScheduleAutosave()` | debounce the autosave event, show "Saving…" |
-| `clsRequestIsComplete()` | gate for the "request has been justified" confirmation |
+| `clsRequestIsComplete()` | gate for the warning shown when leaving an unbalanced request |
+| `clsSummaryGaps()` | which mandatory summary fields are empty, by label — blocks navigation |
+| `clsUpdateAddButtons()` | disable Add Details / Add position until their form is full |
+| `clsNumberValue()` / `clsGroupDigits()` | read and format separated numbers (see §9.1) |
+| `clsApplyCheckDropdown()` | push a filter dropdown's held ticks to Shiny (see §9.2) |
+| `clearStaleOverlays()` | drop a leftover modal backdrop on navigation (see §9.3) |
 
 **Re-initialisation is essential.** Shiny replaces the page's DOM on every render, so
 `clsInitPage()` re-runs on the `shiny:value` event to reapply toggles and validation to the
 new nodes. Anything that sets initial UI state must be idempotent and hooked there.
+
+### 9.1 The money input binding
+
+Amounts and counts had to show thousands separators and refuse decimals. A native
+`<input type="number">` **cannot display a comma** — the value is invalid the moment one
+appears — so these fields are text inputs with their own Shiny input binding.
+
+`cls_money_input()` in `app.R` emits the markup Shiny's own `numericInput()` would
+(`form-group shiny-input-container`, so every existing CSS rule still applies) with
+`<input type="text" class="form-control cls-money-input" inputmode="numeric">`. `app.js`
+registers `beacon.clsMoneyInput`, which:
+
+- `getValue` — strips separators, truncates at the decimal point, returns an integer or
+  `null`. `"1,234,567"` → `1234567`; `"1234.99"` → `1234`; `""` and `"abc"` → `null`.
+- `setValue` — re-groups with commas.
+- `subscribe` — reformats on `input` and on `change`/`blur`, keeping the caret at the same
+  offset **from the right** so separators appearing to its left do not shunt it. Blocks
+  `.`, `e` and `E` on keydown.
+- `getRatePolicy` — debounced 350ms, so autosave does not fire per keystroke.
+
+Registration happens at script top level, guarded, with a `DOMContentLoaded` fallback;
+`app.js` is `defer`red and Shiny's own scripts are not, so `window.Shiny` is already there.
+
+**The trap:** anything reading these fields in JS must use `clsNumberValue(el)`.
+`parseFloat("1,000")` is `1`, silently. `clsUpdateRemaining()`, `clsRequestIsComplete()`,
+`clsSummaryGaps()`, `clsRequestAmount()` and `clsUpdateAddButtons()` were all updated;
+`el.type === "number"` checks needed a `classList.contains("cls-money-input")` arm.
+
+### 9.2 Batched filter dropdowns
+
+Every tick in a filter dropdown used to reach Shiny on its own, so the table re-rendered —
+and the panel closed — before the user had finished choosing. Ticks are now held locally
+and pushed once.
+
+The mechanism is a **capture-phase** `change` listener on `document`. Capture runs
+document → target, so it fires before the bubble-phase handler Shiny's checkbox-group
+binding attaches to the container, and `stopPropagation()` there keeps the event from ever
+reaching it. The panel is marked `.cls-cd-dirty` and the summary is updated locally.
+
+`clsApplyCheckDropdown()` then dispatches **one** synthetic `change` — Shiny's binding
+reads the whole container, not the box that fired — guarded by a `clsCdApplying` flag so
+the capture listener lets that one through. Apply, closing the panel, opening a different
+one, and clicking outside all apply.
+
+Select all / Clear set the boxes and mark the panel dirty rather than dispatching, so they
+batch the same way.
+
+### 9.3 The grey page
+
+Reported as "sometimes it turns the page gray" when clicking between pages. **Not
+reproduced.** Three things can grey this app out:
+
+1. a leftover Bootstrap `.modal-backdrop` — a full-page veil that also swallows clicks;
+2. Shiny's `.recalculating` opacity while an output re-renders — dimmed but transient;
+3. Shiny's `#shiny-disconnected-overlay` after a websocket drop — dimmed and dead.
+
+Only the first is fixable without evidence, and it is the best fit for "clicking from page
+to page": navigating away from an open modal never runs `removeModal()`.
+`clearStaleOverlays()` removes any orphaned backdrop, drops `body.modal-open` and its
+scrollbar padding, and is called from `navigateToPage()`. It is deliberately **not** called
+from the `set-page` custom-message handler, which fires on server-driven navigation that
+can legitimately coexist with a modal.
+
+If it recurs, the distinguishing question is whether the page is merely dim or dim **and
+unclickable**, and whether the console shows a disconnect.
 
 ## 10. Exports
 
@@ -247,6 +317,14 @@ new nodes. Anything that sets initial UI state must be idempotent and hooked the
   renders it with reportlab through the existing `PLAN_EXPORT_PYTHON` virtualenv, reusing
   the plan-export pattern. The R side treats a missing or zero-byte output as an error
   rather than serving a broken download.
+- **Audit columns** — both workbooks carry Created date / Created by email / Modified date
+  / Modified by email. `cls_export_stamp()` and `cls_export_email()` are vectorised and
+  return `""` for missing values, because a column of `NA` writes the literal text "NA"
+  into Excel. Both return a length-1 `""` when handed `NULL`, which `data.frame()` recycles
+  — so a data load that predates a column yields blank cells rather than an error.
+- **File names carry the agency**: `cls-requests-<agency-slug>-<date>`. The review workbook
+  names the agency when the agency filter is down to exactly one, and `all-agencies`
+  otherwise.
 
 ## 11. Conventions to preserve
 
@@ -258,17 +336,38 @@ new nodes. Anything that sets initial UI state must be idempotent and hooked the
 - Write migrations defensively: they run against databases that already exist.
 - Prefer existing helpers (`surface()`, `status_chip()`, `metric_tile()`, `app-table`) over
   new markup, so CLS pages inherit the app's look automatically.
+- **Look for the dependency before adding one.** Twice in this feature a new helper
+  duplicated something already present: `cls_agency_budget_analyst()` re-implemented
+  `plan_budget_analyst()` (now both call a shared `agency_budget_analyst()`), and the
+  submitter lookup read only `access.user_role` when the agency mapping actually lives in
+  `access.user_entity_access` — 103 of 104 submitter roles carry no `agency_id`, so it
+  named almost nobody. Also check the other direction: switching the CLS status chips to
+  their own classes left `cls_status_tone()` with zero callers, and it was removed.
+- **Verify against a database built from `target_schema.sql` alone**, not your own
+  already-migrated one. Three CI failures on this feature were migrations that never made
+  it into the canonical schema.
+- **A one-time seed must only be marked done once it has actually done something.**
+  `apply_agency_budget_analyst_seed_once()` recorded success even when the CSV was absent
+  from the image, which permanently burned the seed's single chance to run and left every
+  agency without an analyst. It now marks only on a real run, and treats an empty target
+  column as evidence that a recorded run never happened. Any future `_once` seed should
+  follow the same shape — check `apply_user_entity_access_seed_once()` for the deliberate
+  exception, where marking-and-skipping on a populated table is the intent.
 
 ## 12. Known gaps
 
+- **The spend-category list is invented** — ten placeholder `SC6xxx` values awaiting the
+  real chart of accounts. The main reason Budget Planning is still SystemAdmin-only.
 - **"Estimated Cost" is a link with no destination** — wired to a placeholder handler,
   awaiting the salary/benefit cost reference.
+- **The grey page (§9.3) is mitigated, not diagnosed.** Not reproduced.
+- **AGC7000 Transportation and AGC9900 CAFR Adjustments have no budget analyst** — they
+  are not in `agency_budget_analyst_seed.csv`, which covers the other 55.
 - The **submitter email** hook exists but is switched off
   (`notify_agency_submitter_of_cls <- FALSE`).
-- The **deadline** in the reminder is generic text, not a real cycle date.
-- `evaluation_score` remains in `cls_review` but is no longer collected; saves preserve any
-  stored value rather than nulling it.
+- The **deadline** in the reminder is hard-coded text, not a real cycle date.
 - The instructions PDF uses **schematic figures**, not screenshots (the screens are behind
   a login).
 - **The authenticated UI has not been click-tested by a human.** Verification covered the
   data layer live, server-side page rendering, and client behaviour in a browser harness.
+  The bulk-approve **save path** in particular has never been exercised end to end.
