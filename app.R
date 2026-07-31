@@ -8835,6 +8835,17 @@ server <- function(input, output, session) {
     if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
     entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
     if (!nrow(entity)) return(invisible(FALSE))
+    # A measure must never link to an entity outside its own owning agency
+    # -- e.g. saving an EXISTING DGS measure while the current viewer
+    # happens to be acting as OPI's plan (a common admin/testing scenario)
+    # must not silently relabel it as an OPI-owned measure. Reported
+    # 2026-07-31: "Average Age of Fleet" (agency_id AGC2600/DGS) picked up
+    # a stray link to OPI's entity this way, and the Action Plan Measures
+    # list -- which shows the linked entity's name over the bare agency
+    # name -- started displaying it as owned by OPI instead of DGS.
+    measure_row <- data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(measure_id), , drop = FALSE]
+    if (!nrow(measure_row)) return(invisible(FALSE))
+    if (!identical(as.character(measure_row$agency_id[[1]]), as.character(plan_accounting_agency_id(data, plan)))) return(invisible(FALSE))
     services <- plan_service_rows(data, plan)
     services <- services[!is_administration_service(services), , drop = FALSE]
     if (!nrow(services)) services <- plan_service_rows(data, plan)
