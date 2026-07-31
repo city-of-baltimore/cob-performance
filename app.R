@@ -6981,8 +6981,51 @@ cls_review_export_sheets <- function(db) {
   list(`Requests and decisions` = requests_df, `Line items` = lines_df, `Personnel` = pos_df)
 }
 
+# Bulk approve grid: one row per request in the current filter, replacing the
+# collapsible table rather than sitting on top of it. Kept to a single line per
+# request and inside the page width (analyst feedback round 1).
+cls_bulk_grid <- function(rows, approval_choices) {
+  if (is.null(rows) || !nrow(rows)) {
+    return(div(class = "cls-empty-state", p(class = "empty-state-copy", "No requests match the current filters.")))
+  }
+  head_row <- div(
+    class = "cls-bulk-row cls-bulk-head",
+    span("Agency"), span("Service"), span("Request"),
+    span(class = "num", "FY28"), span(class = "num", "FY29"), span(class = "num", "FY30"),
+    span("Duration"), span(class = "num", "Pos."),
+    span("BBMR approval"), span(class = "num", "Appr. FY28"), span(class = "num", "Appr. pos.")
+  )
+  body <- lapply(seq_len(nrow(rows)), function(i) {
+    r <- rows[i, , drop = FALSE]
+    id <- r$cls_id
+    cell <- function(v) span(title = v, v)
+    div(
+      class = "cls-bulk-row",
+      cell(r$agency),
+      cell(r$service),
+      cell(r$request_name),
+      span(class = "num", cls_format_dollars(r$request_amount)),
+      span(class = "num", cls_format_dollars(r$amount_next_fy)),
+      span(class = "num", cls_format_dollars(r$amount_2next_fy)),
+      cell(if (isTRUE(r$one_time)) "One-time" else "Recurring"),
+      span(class = "num", r$position_count),
+      selectInput(paste0("cls_bulk_bbmr_", id), NULL, choices = approval_choices,
+                  selected = r$bbmr_approval, selectize = FALSE, width = "100%"),
+      numericInput(paste0("cls_bulk_amount_", id), NULL,
+                   value = if (!is.na(r$approved_amount)) r$approved_amount else NA, min = 0, step = 1000),
+      numericInput(paste0("cls_bulk_positions_", id), NULL,
+                   value = if (!is.na(r$approved_positions)) r$approved_positions else NA, min = 0, step = 1)
+    )
+  })
+  tagList(
+    div(class = "cls-bulk-scroll", div(class = "cls-bulk-grid", head_row, body)),
+    p(class = "cls-bulk-hint",
+      "Leave a row's approval blank to skip it. Approved FY28 and Approved pos. are what the agency will see.")
+  )
+}
+
 page_cls_review <- function(db, app_roles = character(0), status_filter = character(0), agency_filter = character(0),
-                            service_filter = character(0)) {
+                            service_filter = character(0), bulk_mode = FALSE) {
   rows <- cls_review_rows(db)
   total_pending <- if (nrow(rows)) nrow(rows) else 0L
   complete_rows <- if (nrow(rows)) rows[rows$completed, , drop = FALSE] else rows
@@ -7171,10 +7214,22 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
       span(class = "cls-review-divider-label", "Review")
     ),
     surface(
-      "Review requests",
-      "Filter by status, agency or service, then expand a request to record its approval.",
-      actions = tags$button(type = "button", class = "civic-button primary small",
-        `data-cls-bulk-approve` = "open", icon("table-list"), "Bulk Approve"),
+      if (isTRUE(bulk_mode)) "Bulk approve" else "Review requests",
+      if (isTRUE(bulk_mode)) {
+        "Set a decision on every request in the current filter, then Save and close."
+      } else {
+        "Filter by status, agency or service, then expand a request to record its approval."
+      },
+      actions = if (isTRUE(bulk_mode)) {
+        tagList(
+          actionButton("cls_bulk_save", label = tagList(icon("check"), "Save and close"), class = "civic-button primary small"),
+          tags$button(type = "button", class = "civic-button secondary small",
+            `data-cls-bulk-approve` = "close", icon("xmark"), "Cancel")
+        )
+      } else {
+        tags$button(type = "button", class = "civic-button primary small",
+          `data-cls-bulk-approve` = "open", icon("table-list"), "Bulk Approve")
+      },
       # Analyst feedback: the filters had an Apply step that made them look
       # broken. They now filter the table as soon as a selection changes.
       div(
@@ -7194,7 +7249,9 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
           span(class = "cls-export-label", "Export all agencies:"),
           downloadButton("cls_review_export_xlsx", label = tagList(icon("file-excel"), "Excel"), class = "civic-button secondary small"))
       ),
-      if (!length(review_rows_ui)) {
+      if (isTRUE(bulk_mode)) {
+        cls_bulk_grid(view_rows, approval_choices)
+      } else if (!length(review_rows_ui)) {
         div(class = "cls-empty-state", p(class = "empty-state-copy", "No requests match the current filters."))
       } else {
         div(
@@ -7677,7 +7734,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     risks = page_risks(db, agency_id, can_edit_plan),
     cls_requests = if (can_access_budget_planning(app_roles)) page_cls_requests(db, agency_id, app_roles) else page_landing(db, agency_id, app_roles, agency_roles),
     cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin, editing_line_id, editing_position_id) else page_landing(db, agency_id, app_roles, agency_roles),
-    cls_review = if (can_access_budget_planning(app_roles)) page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0), cls_review_filters$service %||% character(0)) else page_landing(db, agency_id, app_roles, agency_roles),
+    cls_review = if (can_access_budget_planning(app_roles)) page_cls_review(db, app_roles, cls_review_filters$status %||% character(0), cls_review_filters$agency %||% character(0), cls_review_filters$service %||% character(0), isTRUE(cls_review_filters$bulk)) else page_landing(db, agency_id, app_roles, agency_roles),
     page_landing(db, agency_id, app_roles, agency_roles)
   )
 }
@@ -9182,55 +9239,19 @@ server <- function(input, output, session) {
     updateCheckboxGroupInput(session, "cls_review_service_filter", choices = services, selected = services)
   }, ignoreInit = TRUE)
 
-  # --- Bulk Approve: a spreadsheet-style grid over every request in view ---
-  cls_bulk_rows <- reactiveVal(NULL)
-  observeEvent(input$cls_bulk_approve_open, {
+  # --- Bulk approve: an inline mode on CLS Review, not a modal ---
+  cls_bulk_mode <- reactiveVal(FALSE)
+  observeEvent(input$cls_bulk_approve, {
+    if (!can_review_cls(current_user_app_roles())) return()
+    cls_bulk_mode(identical(as.character(input$cls_bulk_approve$what %||% ""), "open"))
+  }, ignoreInit = TRUE)
+  observeEvent(input$cls_bulk_save, {
     if (!can_review_cls(current_user_app_roles())) return()
     data <- ensure_app_data()
     rows <- cls_review_rows(data)
     if (length(cls_applied_status())) rows <- rows[rows$status %in% cls_applied_status(), , drop = FALSE]
     if (length(cls_applied_agency())) rows <- rows[rows$agency %in% cls_applied_agency(), , drop = FALSE]
     if (length(cls_applied_service())) rows <- rows[rows$service %in% cls_applied_service(), , drop = FALSE]
-    if (!nrow(rows)) {
-      showNotification("No requests in the current view to approve.", type = "warning", duration = 6)
-      return()
-    }
-    cls_bulk_rows(rows)
-    approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
-    showModal(modalDialog(
-      title = paste("Bulk Approve -", nrow(rows), if (nrow(rows) == 1) "request" else "requests"),
-      size = "l",
-      div(
-        class = "cls-bulk-grid",
-        div(class = "cls-bulk-row cls-bulk-head",
-          span("Request"), span("Agency"), span("FY28"), span("BBMR approval"),
-          span("Approved FY28"), span("Approved positions")),
-        lapply(seq_len(nrow(rows)), function(i) {
-          r <- rows[i, , drop = FALSE]
-          id <- r$cls_id
-          div(class = "cls-bulk-row",
-            span(class = "cls-bulk-name", r$request_name),
-            span(r$agency),
-            span(class = "cls-request-amount", cls_format_dollars(r$request_amount)),
-            selectInput(paste0("cls_bulk_bbmr_", id), NULL, choices = approval_choices,
-              selected = r$bbmr_approval, selectize = FALSE, width = "100%"),
-            numericInput(paste0("cls_bulk_amount_", id), NULL,
-              value = if (!is.na(r$approved_amount)) r$approved_amount else NA, min = 0, step = 1000),
-            numericInput(paste0("cls_bulk_positions_", id), NULL,
-              value = if (!is.na(r$approved_positions)) r$approved_positions else NA, min = 0, step = 1))
-        })
-      ),
-      p(class = "cls-bulk-hint",
-        "Leave a row's approval blank to skip it. Approved FY28 and Approved positions are what the agency will see."),
-      footer = tagList(modalButton("Cancel"),
-        actionButton("cls_bulk_approve_save", "Save all", class = "civic-button primary")),
-      easyClose = FALSE
-    ))
-  }, ignoreInit = TRUE)
-  observeEvent(input$cls_bulk_approve_save, {
-    if (!can_review_cls(current_user_app_roles())) return()
-    rows <- cls_bulk_rows()
-    if (is.null(rows) || !nrow(rows)) { removeModal(); return() }
     saved <- 0L
     failed <- character(0)
     for (i in seq_len(nrow(rows))) {
@@ -9251,8 +9272,7 @@ server <- function(input, output, session) {
       )
       if (inherits(result, "error")) failed <- c(failed, rows$request_name[[i]]) else saved <- saved + 1L
     }
-    removeModal()
-    cls_bulk_rows(NULL)
+    cls_bulk_mode(FALSE)
     refresh_app_data()
     if (length(failed)) {
       showNotification(paste0("Saved ", saved, ". Could not save: ", paste(failed, collapse = ", "), "."),
@@ -10823,7 +10843,8 @@ server <- function(input, output, session) {
       cls_review_filters = list(
         status = cls_applied_status() %||% character(0),
         agency = cls_applied_agency() %||% character(0),
-        service = cls_applied_service() %||% character(0)
+        service = cls_applied_service() %||% character(0),
+        bulk = cls_bulk_mode()
       )
     )
   })

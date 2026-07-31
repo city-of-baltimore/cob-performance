@@ -1120,7 +1120,9 @@
     }
     var clsBulk = event.target.closest("[data-cls-bulk-approve]");
     if (clsBulk && window.Shiny) {
-      window.Shiny.setInputValue("cls_bulk_approve_open", Date.now(), { priority: "event" });
+      window.Shiny.setInputValue("cls_bulk_approve", {
+        what: clsBulk.getAttribute("data-cls-bulk-approve"), nonce: Date.now()
+      }, { priority: "event" });
       return;
     }
     var clsEditLine = event.target.closest("[data-cls-edit-line]");

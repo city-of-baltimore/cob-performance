@@ -6486,49 +6486,75 @@ body.desktop-nav-collapsed .app-footer {
 }
 
 
-/* Bulk Approve grid: spreadsheet-like, one row per request. */
+/* Bulk approve grid: replaces the collapsible table, one line per request,
+   sized to the page rather than overflowing it (analyst feedback round 1). */
+.cls-bulk-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .cls-bulk-grid {
-  display: block;
-  max-height: 60vh;
-  overflow-y: auto;
+  min-width: 0;
   border: 1px solid var(--lp-border-strong);
   border-radius: var(--lp-radius-surface);
+  overflow: hidden;
 }
 
 .cls-bulk-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
-  gap: 0.5rem;
+  grid-template-columns:
+    minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, 1.5fr)
+    minmax(4.6rem, 0.62fr) minmax(4.6rem, 0.62fr) minmax(4.6rem, 0.62fr)
+    minmax(4.4rem, 0.55fr) minmax(2.6rem, 0.3fr)
+    minmax(6rem, 0.8fr) minmax(5.2rem, 0.62fr) minmax(4.4rem, 0.5fr);
+  gap: 0.3rem;
   align-items: center;
-  padding: 0.4rem 0.6rem;
+  padding: 0.3rem 0.45rem;
   border-bottom: 1px solid var(--lp-border-soft);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .cls-bulk-row:last-child { border-bottom: 0; }
 
+/* One line per cell; the full value is on the title attribute. */
+.cls-bulk-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cls-bulk-row > span.num { text-align: right; }
+
 .cls-bulk-head {
   position: sticky;
   top: 0;
+  z-index: 2;
   background: var(--lp-surface-subtle);
-  font-weight: 700;
-  font-size: 0.72rem;
+  font-weight: 800;
+  font-size: 0.64rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   color: var(--lp-text-secondary);
 }
 
-.cls-bulk-name { font-weight: 600; }
-
 .cls-bulk-row .shiny-input-container,
-.cls-bulk-row .form-group { margin: 0; width: 100%; }
+.cls-bulk-row .form-group { margin: 0; width: 100%; min-width: 0; }
 
 .cls-bulk-row input[type="number"],
-.cls-bulk-row select { height: 2rem; font-size: 0.8rem; }
+.cls-bulk-row select {
+  height: 1.85rem;
+  font-size: 0.72rem;
+  padding: 0 0.3rem;
+  width: 100%;
+  min-width: 0;
+}
 
 .cls-bulk-hint {
-  margin-top: 0.6rem;
-  font-size: 0.82rem;
+  margin-top: 0.55rem;
+  font-size: 0.8rem;
   color: var(--lp-text-secondary);
 }
 
