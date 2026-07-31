@@ -2885,6 +2885,25 @@ service_is_shared <- function(db, service_id) {
   length(unique(links$entity_id[links$entity_id %in% entities$entity_id])) > 1
 }
 
+# A shared service's own measures aren't just shared for description/
+# metric-selection purposes -- performance.measure_actuals has no
+# per-entity column, so two grantees editing the SAME measure_id's
+# definition or fiscal-year data would clobber each other. Reported
+# 2026-07-31: an AgencyWriter previewing as one grantee (Walters) could
+# still open and edit another grantee's measure under the same shared
+# service, since the measure modal's edit permission was a pure role
+# check with no ownership check at all. Locked to SystemAdmin/BBMR
+# (can_edit_shared_service_description()) the same as the description,
+# until each measure is attributed to its own specific entity via
+# measure_entity_link and this can be scoped more narrowly.
+measure_belongs_to_shared_service <- function(db, measure_id) {
+  measure_id <- suppressWarnings(as.integer(measure_id))
+  if (is.na(measure_id)) return(FALSE)
+  linked_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$measure_id == measure_id])
+  if (!length(linked_service_ids)) return(FALSE)
+  any(vapply(linked_service_ids, function(service_id) service_is_shared(db, service_id), logical(1)))
+}
+
 plan_team_unique_service_ids <- function(db, plan) {
   service_ids <- plan_team_service_ids(db, plan)
   if (!length(service_ids)) return(character(0))
@@ -8665,6 +8684,18 @@ server <- function(input, output, session) {
   current_user_can_manage_measure_admin_fields <- function() {
     can_review_measures(current_user_app_roles())
   }
+  # A shared service's measures are only editable by SystemAdmin/BBMR, OR
+  # by the specific entity that measure_entity_link attributes it to --
+  # not by every grantee under the shared parent agency. Non-shared
+  # measures are unaffected (existing role check governs those alone).
+  current_user_can_edit_measure <- function(data, measure_id, plan) {
+    if (current_user_can_manage_measure_admin_fields()) return(TRUE)
+    if (!measure_belongs_to_shared_service(data, measure_id)) return(TRUE)
+    if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(FALSE)
+    links <- data$performance_measure_entity_link
+    measure_id <- as.integer(measure_id)
+    any(!is.na(links$entity_id) & links$entity_id == plan$entity_id[[1]] & links$measure_id == measure_id)
+  }
   current_user_can_edit_locked_measure_data <- function() {
     can_edit_locked_measure_data(current_user_app_roles())
   }
@@ -9140,6 +9171,14 @@ server <- function(input, output, session) {
       return()
     }
     existing_measure_id <- current_measure_id()
+    if (!identical(existing_measure_id, "new")) {
+      data <- app_data()
+      plan <- current_plan(data, current_submitter_value())
+      if (!current_user_can_edit_measure(data, existing_measure_id, plan)) {
+        showNotification("This measure belongs to a shared service and can only be edited by its own entity or a System Admin.", type = "error", duration = 8)
+        return()
+      }
+    }
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
     locked_changes_missing_note <- Filter(
@@ -11185,7 +11224,8 @@ server <- function(input, output, session) {
       if (identical(measure_id, "new")) NULL else as.integer(measure_id),
       current_user_can_manage_measure_admin_fields(),
       target_fy,
-      current_user_can_submit_measure() || current_user_can_review_measures(),
+      (current_user_can_submit_measure() || current_user_can_review_measures()) &&
+        (identical(measure_id, "new") || current_user_can_edit_measure(data, measure_id, plan)),
       can_delete_measures(current_user_app_roles()),
       current_user_can_edit_locked_measure_data(),
       identical(measure_id, "new") && isTRUE(pending_new_measure_default_city()),
