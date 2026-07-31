@@ -5225,7 +5225,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   # server-side in collect_measure_form()/collect_measure_years() and
   # save_measure_record() regardless of what this UI renders.
   is_measure_validated <- identical(status, "Validated")
-  definition_locked <- measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data
+  # can_edit_form being FALSE (e.g. a shared-service measure not owned by
+  # the current viewer -- see current_user_can_edit_measure()) used to only
+  # set a data-can-edit="false" attribute for client-side JS to disable,
+  # but that JS (initializeReadOnlyModals()) is wired to a MutationObserver
+  # on #page, and this modal renders in a separate uiOutput("measure_modal")
+  # outside #page -- so it never actually ran, and the form looked
+  # editable even though persist_measure() correctly rejected the save
+  # server-side. Folding it into definition_locked disables every field
+  # directly in the server-rendered HTML instead, the same reliable
+  # mechanism already used for the Validated-measure lock.
+  form_locked <- !isTRUE(can_edit_form)
+  definition_locked <- (measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data) || form_locked
   effective_can_edit_scope <- can_edit_scope && !definition_locked
   status_meta <- if (is_new) list(label = "Draft", tone = "warning") else measure_library_status(measure)
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
@@ -5268,7 +5279,14 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-form-stack",
         div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
-        if (definition_locked) {
+        if (form_locked) {
+          div(
+            class = "measure-validated-lock-note measure-shared-lock-note",
+            icon("lock"),
+            "This measure belongs to a shared service and can only be edited by its own entity or a System Admin. You can view it, but Save and Submit are disabled."
+          )
+        },
+        if (definition_locked && !form_locked) {
           div(
             class = "measure-validated-lock-note",
             icon("lock"),
@@ -5399,8 +5417,8 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
-              actual_locked <- measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data
-              target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              actual_locked <- (measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
+              target_locked <- (measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
               actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
               target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
               is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
@@ -5438,17 +5456,21 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-modal-actions",
         div(
-          if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", icon("trash-can"), "Delete measure"),
-          if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", icon("ban"), "Make inactive"),
-          if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small"),
-          if (!is_new && is_measure_validated && isTRUE(can_edit_locked_data)) tags$button(id = "request_measure_revert_to_draft", type = "button", class = "civic-button secondary small", icon("rotate-left"), "Revert to Draft")
+          if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", disabled = if (form_locked) "disabled", icon("trash-can"), "Delete measure"),
+          if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", disabled = if (form_locked) "disabled", icon("ban"), "Make inactive"),
+          if (!is_new && !isTRUE(value("active", TRUE))) {
+            reactivate_button <- actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small")
+            if (form_locked) reactivate_button$attribs$disabled <- "disabled"
+            reactivate_button
+          },
+          if (!is_new && is_measure_validated && isTRUE(can_edit_locked_data)) tags$button(id = "request_measure_revert_to_draft", type = "button", class = "civic-button secondary small", disabled = if (form_locked) "disabled", icon("rotate-left"), "Revert to Draft")
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
+          p(class = "approval-workflow-note", if (form_locked) "This measure is locked -- Save and Submit are disabled." else "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
           div(
-            tags$button(id = "save_measure", type = "button", class = "civic-button secondary", "Save"),
-            tags$button(id = "submit_measure", type = "button", class = "civic-button primary", "Submit for approval")
+            tags$button(id = "save_measure", type = "button", class = "civic-button secondary", disabled = if (form_locked) "disabled", "Save"),
+            tags$button(id = "submit_measure", type = "button", class = "civic-button primary", disabled = if (form_locked) "disabled", "Submit for approval")
           )
         )
       ),
