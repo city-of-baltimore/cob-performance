@@ -5530,8 +5530,9 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
 # whole Performance Reviewing group; the modal's own can_edit_scope check
 # still restricts who can actually mark a measure Citywide or change its
 # pillar to SystemAdmin/OPIReviewer.
-page_action_plan_measures <- function(db) {
+page_action_plan_measures <- function(db, can_edit_owner = FALSE) {
   measures <- db$city_measures
+  owner_choices <- if (can_edit_owner) agency_selector_choices(db) else character(0)
   snapshot_years <- fiscal_measure_snapshot_years()
   missing_pillar_count <- if (nrow(measures)) sum(is.na(measures$pillar_id)) else 0L
   awaiting_data_count <- if (nrow(measures)) sum(is.na(measures$current_value) & is.na(measures$target_value)) else 0L
@@ -5572,13 +5573,27 @@ page_action_plan_measures <- function(db) {
             target <- format_measure_value(measures$target_value[i], measures$format_type[i], measures$display_unit[i], "Not set")
             pillar_label <- if (is.na(measures$pillar_name[i])) "Not linked" else measures$pillar_name[i]
             agency_label <- if (!is.na(measures$agency_public_name[i]) && nzchar(measures$agency_public_name[i])) measures$agency_public_name[i] else measures$agency_name[i]
-            tags$button(
-              type = "button",
+            current_owner_value <- if (!is.na(measures$owning_entity_id[i])) paste0("entity:", measures$owning_entity_id[i]) else paste0("agency:", measures$agency_id[i])
+            owner_cell <- if (can_edit_owner) {
+              tags$select(
+                class = "form-control action-plan-measure-owner-select",
+                `data-measure-id` = measures$measure_id[i],
+                lapply(seq_along(owner_choices), function(choice_index) {
+                  value <- unname(owner_choices[[choice_index]])
+                  tags$option(value = value, selected = if (identical(value, current_owner_value)) "selected", names(owner_choices)[[choice_index]])
+                })
+              )
+            } else {
+              span(agency_label)
+            }
+            div(
               class = "table-row action-plan-measures-row measure-library-row",
+              role = "button",
+              tabindex = "0",
               `data-measure-id` = measures$measure_id[i],
               span(measures$title[i]),
               span(class = if (is.na(measures$pillar_name[i])) "action-plan-measure-unlinked", pillar_label),
-              span(agency_label),
+              owner_cell,
               span(paste(actual, "/", target)),
               status_chip(status_meta$label, status_meta$tone)
             )
@@ -7949,7 +7964,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
     publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
-    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db) else page_landing(db, agency_id, app_roles, agency_roles),
+    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db, can_review_measures(app_roles)) else page_landing(db, agency_id, app_roles, agency_roles),
     bug_fix = if (can_view_application_admin(app_roles)) {
       page_bug_fix(
         db,
@@ -8951,6 +8966,26 @@ server <- function(input, output, session) {
     )
     invisible(TRUE)
   }
+  # Reassigning a measure's owner from the Action Plan Measures list
+  # (action_plan_measure_owner_select) moves the measure to the new
+  # owner's accounting agency and replaces its entity link -- consistent
+  # with how a brand-new Citywide measure's owning-entity picker already
+  # works (resolve_owning_agency_id()/ensure_measure_current_entity_link()).
+  # A measure only ever has one owning agency, so this is a full
+  # reassignment, not just a display relabel.
+  reassign_measure_owner <- function(measure_id, submitter_value) {
+    measure_id <- as.integer(measure_id)
+    new_agency_id <- resolve_owning_agency_id(app_data(), submitter_value)
+    if (is.na(new_agency_id) || !nzchar(new_agency_id)) return(invisible(FALSE))
+    DBI::dbExecute(database, "UPDATE performance.performance_measure SET agency_id = $2 WHERE measure_id = $1", params = list(measure_id, new_agency_id))
+    DBI::dbExecute(database, "DELETE FROM performance.measure_entity_link WHERE measure_id = $1", params = list(measure_id))
+    refresh_app_data(after = function() {
+      fresh_data <- app_data()
+      ensure_measure_current_entity_link(measure_id, fresh_data, current_plan(fresh_data, submitter_value))
+      showNotification("Measure owner updated.", type = "message")
+    })
+    invisible(TRUE)
+  }
   is_blank_value <- function(value) {
     is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
   }
@@ -9206,6 +9241,20 @@ server <- function(input, output, session) {
       current_measure_id(NULL)
       showNotification("Measure deleted.", type = "message", duration = 6)
     })
+  }, ignoreInit = TRUE)
+  observeEvent(input$action_plan_measure_owner_request, {
+    if (!current_user_can_manage_measure_admin_fields()) {
+      showNotification("Only System Admins and OPI reviewers can reassign a measure's owner.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$action_plan_measure_owner_request
+    measure_id <- suppressWarnings(as.integer(request$measureId))
+    submitter_value <- request$value
+    if (is.na(measure_id) || is.null(submitter_value) || !nzchar(submitter_value)) return()
+    result <- tryCatch(reassign_measure_owner(measure_id, submitter_value), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(paste("Couldn't reassign the measure's owner:", conditionMessage(result)), type = "error", duration = 8)
+    }
   }, ignoreInit = TRUE)
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
