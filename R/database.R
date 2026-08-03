@@ -519,6 +519,22 @@ ensure_review_schema <- function(connection) {
   }
   DBI::dbExecute(connection, "ALTER TABLE reference.agency ADD COLUMN IF NOT EXISTS budget_analyst varchar(200)")
   DBI::dbExecute(connection, "ALTER TABLE access.user_agency_access ADD COLUMN IF NOT EXISTS agency_roles text")
+  # Added 2026-08-04: a measure's historic fiscal-year data now stays locked
+  # once it has EVER been validated, even if it's later forced back to Draft
+  # (e.g. a required field going missing) -- see measure_actual_is_locked()/
+  # measure_target_is_locked() below, which key off this instead of the live
+  # approval_status. Backfilled for measures already validated before this
+  # column existed so their historic data doesn't unlock the moment this
+  # ships; idempotent since it only touches rows where it's still unset.
+  DBI::dbExecute(connection, "ALTER TABLE performance.performance_measure ADD COLUMN IF NOT EXISTS ever_validated_at timestamptz")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE performance.performance_measure",
+      "SET ever_validated_at = COALESCE(submitted_for_approval_at, now())",
+      "WHERE ever_validated_at IS NULL AND (validated OR approval_status = 'Validated')"
+    )
+  )
   DBI::dbExecute(
     connection,
     "UPDATE reference.agency SET submit_plan = true WHERE agency_id = 'AGC4317'"
@@ -1095,7 +1111,7 @@ load_app_data <- function(connection) {
         "update_frequency, formula, desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required,",
         "replicability, disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
         "change_mapping, pillar_id, pillar_goal_id, is_city, is_agency, is_service, active, validated, approval_status, submitted_for_approval_at,",
-        "created_date, last_updated, pc.fiscal_year",
+        "ever_validated_at, created_date, last_updated, pc.fiscal_year",
         "FROM performance.performance_measure",
         "JOIN planning.plan_cycle pc ON pc.cycle_id = performance_measure.initial_cycle",
         "ORDER BY agency_id, title"
@@ -1944,35 +1960,93 @@ apply_percent_value_scale_backfill_once <- function(connection) {
   invisible(TRUE)
 }
 
-# Once a measure is validated, its historic data and definition lock to
-# everyone except a SystemAdmin (see can_edit_locked_measure_data() in
-# app.R), except the current fiscal year's actual (still being actively
-# reported) and the following fiscal year's target (still being actively
-# planned). All three return FALSE for a not-yet-validated measure, so
-# nothing is locked until validation happens. Enforced in two places:
-# app.R's collect_measure_form()/collect_measure_years() (so a tampered
-# client request can't slip a change past a disabled UI control) and
-# again here in save_measure_record() itself, since that's the only
-# function that actually writes these rows -- a second, independent
-# guard rather than trusting a single call site to always get it right.
-measure_actual_is_locked <- function(year, is_validated) {
+# Once a measure is validated, its definition locks to everyone except a
+# SystemAdmin (see can_edit_locked_measure_data() in app.R) -- but ONLY
+# while it's currently Validated: if it's later forced back to Draft (e.g.
+# a required field going missing, see measure_missing_required_fields()),
+# the definition unlocks again so the submitter can actually fix it.
+# Historic fiscal-year data is different: measure_actual_is_locked()/
+# measure_target_is_locked() key off ever_validated (has this measure EVER
+# been validated, from performance_measure.ever_validated_at) rather than
+# the live status, so a year that already went through review stays locked
+# even after a later Draft downgrade -- "make it a draft, but lock historic
+# data" is exactly this split. The current fiscal year's actual (still
+# being actively reported) and the following fiscal year's target (still
+# being actively planned) stay open regardless. All three return FALSE
+# before a measure has ever been validated, so nothing is locked until then.
+# Enforced in two places: app.R's collect_measure_form()/
+# collect_measure_years() (so a tampered client request can't slip a change
+# past a disabled UI control) and again here in save_measure_record()
+# itself, since that's the only function that actually writes these rows --
+# a second, independent guard rather than trusting a single call site to
+# always get it right.
+measure_actual_is_locked <- function(year, ever_validated) {
   # The most recently completed fiscal year's actual stays open too (not
   # just the current year's) -- publishing requires it be reported, so a
   # non-admin must still be able to fill it in after validation.
-  isTRUE(is_validated) && as.integer(year) < current_fiscal_year() - 1L
+  isTRUE(ever_validated) && as.integer(year) < current_fiscal_year() - 1L
 }
 
-measure_target_is_locked <- function(year, is_validated) {
-  isTRUE(is_validated) && as.integer(year) <= current_fiscal_year()
+measure_target_is_locked <- function(year, ever_validated) {
+  isTRUE(ever_validated) && as.integer(year) <= current_fiscal_year()
 }
 
 measure_definition_is_locked <- function(is_validated) {
   isTRUE(is_validated)
 }
 
-save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE, is_admin = FALSE) {
+# The measure_actual_is_locked()/save_measure_record() case above needs
+# "has this measure ever been validated," not "is it currently validated."
+measure_ever_validated <- function(ever_validated_at) {
+  length(ever_validated_at) > 0 && !is.na(ever_validated_at)
+}
+
+# Shared by measure_modal_ui()'s "missing fields" banner, persist_measure()'s
+# submit-blocking check, and save_measure_record()'s forced-Draft rule, so
+# all three always agree on what "complete" means. The next fiscal year's
+# target and the most recently completed year's actual are required to
+# publish the *plan* (see plan_measures_missing_required_fiscal_data()), not
+# to save or submit an individual measure -- a measure can be fully defined
+# and submitted for approval before that data exists.
+measure_required_field_labels <- c(
+  title = "Measure name",
+  description = "Definition",
+  measure_type = "Measure type",
+  desired_direction = "Desired direction",
+  format_type = "Format",
+  data_source = "Data source",
+  data_owner = "Data owner",
+  data_owner_role = "Data owner role",
+  update_frequency = "Update frequency",
+  formula = "Formula or calculation",
+  data_location = "Data location",
+  collection_method = "Collection method",
+  how_data_used = "How the data is used",
+  why_meaningful = "Why this measure is meaningful"
+)
+
+measure_missing_required_fields <- function(values) {
+  is_blank <- function(value) is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
+  unname(measure_required_field_labels[vapply(names(measure_required_field_labels), function(name) is_blank(values[[name]]), logical(1))])
+}
+
+save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE, is_admin = FALSE, required_fields_complete = TRUE) {
   DBI::dbWithTransaction(connection, {
     is_validated <- !is.null(values$measure_id) && identical(values$approval_status, "Validated")
+    # A superset of is_validated, not a replacement -- a CURRENTLY Validated
+    # measure always locks its historic data (even if, say, some other path
+    # set approval_status without going through review_measure_record() and
+    # so never stamped ever_validated_at), and additionally stays locked
+    # after a later Draft downgrade because ever_validated_at persists.
+    ever_validated <- is_validated
+    if (!is_validated && !is.null(values$measure_id)) {
+      existing_validation <- DBI::dbGetQuery(
+        connection,
+        "SELECT ever_validated_at FROM performance.performance_measure WHERE measure_id = $1",
+        params = list(as.integer(values$measure_id))
+      )
+      ever_validated <- nrow(existing_validation) > 0 && measure_ever_validated(existing_validation$ever_validated_at[[1]])
+    }
     # A non-admin can only ever touch the current fiscal year's actual and
     # the following fiscal year's target on a validated measure -- every
     # other field gets forced back to its existing value below, before
@@ -2000,6 +2074,13 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
       if (nrow(existing_measure)) {
         for (field in names(existing_measure)) values[[field]] <- existing_measure[[field]][[1]]
       }
+    }
+    # Historic actual/target data locks once a measure has EVER been
+    # validated, independent of the definition lock above -- so if this
+    # measure is later forced back to Draft (e.g. missing required fields),
+    # non-admins can still fix its definition but not quietly rewrite
+    # numbers that already went through review.
+    if (ever_validated && !is_admin && !is.null(values$measure_id)) {
       existing_actuals <- DBI::dbGetQuery(
         connection,
         "SELECT fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals WHERE measure_id = $1",
@@ -2008,25 +2089,34 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
       yearly_values <- lapply(yearly_values, function(year_value) {
         existing_row <- existing_actuals[existing_actuals$fiscal_year == year_value$fiscal_year, , drop = FALSE]
         if (!nrow(existing_row)) return(year_value)
-        if (measure_actual_is_locked(year_value$fiscal_year, is_validated)) {
+        if (measure_actual_is_locked(year_value$fiscal_year, ever_validated)) {
           year_value$annual_actual <- existing_row$annual_actual[[1]]
           year_value$annual_actual_notes <- existing_row$annual_actual_notes[[1]]
         }
-        if (measure_target_is_locked(year_value$fiscal_year, is_validated)) {
+        if (measure_target_is_locked(year_value$fiscal_year, ever_validated)) {
           year_value$target_value <- existing_row$target_value[[1]]
           year_value$target_value_notes <- existing_row$target_value_notes[[1]]
         }
         year_value
       })
     }
-    status <- if (submit) {
+    # A measure missing any required field can never carry
+    # PendingApproval/Validated/Returned status -- forced back to Draft
+    # regardless of what the caller requested, same as revalidation_required
+    # below. Historic data stays locked via ever_validated above; this only
+    # affects which status gets written.
+    status <- if (!required_fields_complete) {
+      "Draft"
+    } else if (submit) {
       "PendingApproval"
     } else if (revalidation_required) {
       "Draft"
     } else {
       values$approval_status
     }
-    submitted_at <- if (submit) {
+    submitted_at <- if (!required_fields_complete) {
+      as.POSIXct(NA)
+    } else if (submit) {
       Sys.time()
     } else if (revalidation_required) {
       as.POSIXct(NA)
@@ -2138,11 +2228,17 @@ review_measure_record <- function(connection, measure_id, decision, feedback = "
     stop("Reviewer feedback is required when returning a measure.")
   }
   DBI::dbWithTransaction(connection, {
+    # ever_validated_at is stamped once on first approval and never
+    # overwritten afterward (COALESCE) -- it's a permanent "has this measure
+    # ever gone through review" marker, not a live mirror of approval_status,
+    # so historic fiscal-year data stays locked even through a later Draft
+    # downgrade (see measure_actual_is_locked()/measure_target_is_locked()).
     changed <- DBI::dbExecute(
       connection,
       paste(
         "UPDATE performance.performance_measure",
-        "SET approval_status=$2::varchar(30), validated=$3, submitted_for_approval_at=NULL, last_updated=now()",
+        "SET approval_status=$2::varchar(30), validated=$3, submitted_for_approval_at=NULL, last_updated=now(),",
+        "ever_validated_at=CASE WHEN $3 THEN COALESCE(ever_validated_at, now()) ELSE ever_validated_at END",
         "WHERE measure_id=$1"
       ),
       params = list(measure_id, approval_status, identical(decision, "approve"))
@@ -2162,18 +2258,23 @@ review_measure_record <- function(connection, measure_id, decision, feedback = "
 
 # SystemAdmin escape hatch for a measure Validated by mistake or that needs
 # further edits: unlocks its definition fields again (see
-# measure_definition_is_locked()) by moving it back to Draft. Scoped to
-# WHERE approval_status = 'Validated' so it's a deliberate no-op (and
-# raises, rather than silently "succeeding") if the measure's status
-# already changed under the admin -- e.g. a second admin reverted it, or a
-# reviewer action landed, between the modal opening and this being clicked.
+# measure_definition_is_locked()) by moving it back to Draft. Also clears
+# ever_validated_at, unlike an ordinary Draft downgrade (revalidation_required
+# in save_measure_record(), or a required field going missing) -- this is a
+# deliberate "undo, it was never really validated" action, not just a status
+# change, so it fully unlocks historic data too rather than leaving it locked
+# the way those other paths intentionally do. Scoped to WHERE approval_status
+# = 'Validated' so it's a deliberate no-op (and raises, rather than silently
+# "succeeding") if the measure's status already changed under the admin --
+# e.g. a second admin reverted it, or a reviewer action landed, between the
+# modal opening and this being clicked.
 revert_measure_to_draft <- function(connection, measure_id) {
   measure_id <- as.integer(measure_id)
   changed <- DBI::dbExecute(
     connection,
     paste(
       "UPDATE performance.performance_measure",
-      "SET approval_status = 'Draft', validated = false, submitted_for_approval_at = NULL, last_updated = now()",
+      "SET approval_status = 'Draft', validated = false, submitted_for_approval_at = NULL, ever_validated_at = NULL, last_updated = now()",
       "WHERE measure_id = $1 AND approval_status = 'Validated'"
     ),
     params = list(measure_id)

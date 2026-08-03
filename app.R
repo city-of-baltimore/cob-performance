@@ -3451,7 +3451,7 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
 # FY26 actual while FY27 is executing) or the upcoming budget year's
 # target (e.g. FY28). Both are required to publish the *plan* -- neither
 # is required to save or submit an individual measure for approval (see
-# validate_measure_submit_requirements()). Measures marked "New" this
+# measure_missing_required_fields()). Measures marked "New" this
 # cycle are exempt -- they weren't tracked yet, so there's nothing to report.
 plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services) {
   empty <- db$performance_performance_measure[0, , drop = FALSE]
@@ -5281,15 +5281,21 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   pillar_choices <- c("Not linked" = "", setNames(db$reference_pillar$pillar_id, db$reference_pillar$pillar_name))
   pillar_goal_choices <- c("Not linked" = "", setNames(db$reference_pillar_goal$pillar_goal_id, paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)))
   status <- value("approval_status", "Draft")
-  # Once a measure is Validated, everything about it locks to SystemAdmin
-  # only, except the current fiscal year's actual (still being actively
-  # reported) and the following fiscal year's target (still being
-  # actively planned) -- see measure_actual_is_locked()/
-  # measure_target_is_locked()/measure_definition_is_locked() in
-  # R/database.R for the shared, date-driven rule, enforced again
-  # server-side in collect_measure_form()/collect_measure_years() and
+  # Once a measure is Validated, its definition locks to SystemAdmin only --
+  # but unlocks again if it's later forced back to Draft (e.g. a required
+  # field going missing), so the submitter can fix it. Historic fiscal-year
+  # data is different: it locks once the measure has EVER been validated
+  # and stays locked even through a later Draft downgrade, plus the current
+  # fiscal year's actual (still being actively reported) and the following
+  # fiscal year's target (still being actively planned) always stay open.
+  # See measure_actual_is_locked()/measure_target_is_locked()/
+  # measure_definition_is_locked() in R/database.R for the shared,
+  # date-driven rule, enforced again server-side in
+  # collect_measure_form()/collect_measure_years() and
   # save_measure_record() regardless of what this UI renders.
   is_measure_validated <- identical(status, "Validated")
+  measure_ever_validated_flag <- is_measure_validated || measure_ever_validated(value("ever_validated_at", NA))
+  missing_required_fields <- if (is_new) character(0) else measure_missing_required_fields(as.list(measure))
   # can_edit_form being FALSE (e.g. a shared-service measure not owned by
   # the current viewer -- see current_user_can_edit_measure()) used to only
   # set a data-can-edit="false" attribute for client-side JS to disable,
@@ -5358,6 +5364,16 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             paste0(
               "This measure is validated and locked to system admins, except the ",
               fy_label(current_fiscal_year()), " actual and the ", fy_label(current_fiscal_year() + 1L), " target."
+            )
+          )
+        },
+        if (!is_new && identical(status, "Draft") && length(missing_required_fields)) {
+          div(
+            class = "measure-validated-lock-note measure-draft-incomplete-note",
+            icon("triangle-exclamation"),
+            paste0(
+              "Draft: missing required fields -- ", paste(missing_required_fields, collapse = ", "), ". ",
+              if (measure_ever_validated_flag) "Historic fiscal-year data from before this measure's last validation stays locked in the meantime." else "Complete these fields before submitting for approval."
             )
           )
         },
@@ -5470,11 +5486,12 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           class = "modal-section-block measure-form-section",
           h3("Fiscal Year Actuals & Targets"),
           p("Enter annual actuals and targets. Notes should explain revisions, data quality issues, or target rationale."),
-          if (is_measure_validated && !can_edit_locked_data) {
+          if (measure_ever_validated_flag && !can_edit_locked_data) {
             p(
               class = "field-inline-help",
               paste0(
-                "This measure is validated: only the ", fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
+                if (is_measure_validated) "This measure is validated: only the " else "This measure was previously validated, and its historic data stays locked even while it's back in Draft: only the ",
+                fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
                 " actuals and the ", fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
               )
             )
@@ -5482,10 +5499,10 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
-              actual_locked <- (measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
-              target_locked <- (measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
-              actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
-              target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
+              actual_locked <- (measure_actual_is_locked(year, measure_ever_validated_flag) && !can_edit_locked_data) || form_locked
+              target_locked <- (measure_target_is_locked(year, measure_ever_validated_flag) && !can_edit_locked_data) || form_locked
+              actual_admin_override <- measure_actual_is_locked(year, measure_ever_validated_flag) && can_edit_locked_data
+              target_admin_override <- measure_target_is_locked(year, measure_ever_validated_flag) && can_edit_locked_data
               is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
               is_next_target_year <- year == target_fy
               div(
@@ -9130,33 +9147,6 @@ server <- function(input, output, session) {
     })
     invisible(TRUE)
   }
-  is_blank_value <- function(value) {
-    is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
-  }
-  # The next fiscal year's target and the most recently completed year's
-  # actual are required to publish the *plan* (see
-  # plan_measures_missing_required_fiscal_data()), not to save or submit an
-  # individual measure -- a measure can be fully defined and submitted for
-  # approval before that data exists.
-  validate_measure_submit_requirements <- function(values) {
-    required_fields <- c(
-      title = "Measure name",
-      description = "Definition",
-      measure_type = "Measure type",
-      desired_direction = "Desired direction",
-      format_type = "Format",
-      data_source = "Data source",
-      data_owner = "Data owner",
-      data_owner_role = "Data owner role",
-      update_frequency = "Update frequency",
-      formula = "Formula or calculation",
-      data_location = "Data location",
-      collection_method = "Collection method",
-      how_data_used = "How the data is used",
-      why_meaningful = "Why this measure is meaningful"
-    )
-    unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
-  }
   collect_measure_form <- function() {
     data <- app_data()
     agency_id <- current_agency_id()
@@ -9232,7 +9222,10 @@ server <- function(input, output, session) {
     } else {
       data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
     }
-    is_validated <- nrow(existing_measure) > 0 && identical(existing_measure$approval_status[[1]], "Validated")
+    ever_validated <- nrow(existing_measure) > 0 && (
+      identical(existing_measure$approval_status[[1]], "Validated") ||
+        measure_ever_validated(existing_measure$ever_validated_at[[1]])
+    )
     existing_actuals <- if (is.null(existing_id) || identical(existing_id, "new")) {
       data.frame()
     } else {
@@ -9251,8 +9244,8 @@ server <- function(input, output, session) {
       submitted_target <- nullable_number(input[[paste0("measure_target_", year)]])
       submitted_target_notes <- limit_note(input[[paste0("measure_target_notes_", year)]])
 
-      actual_locked <- measure_actual_is_locked(year, is_validated)
-      target_locked <- measure_target_is_locked(year, is_validated)
+      actual_locked <- measure_actual_is_locked(year, ever_validated)
+      target_locked <- measure_target_is_locked(year, ever_validated)
 
       # Disabling the input already stops a non-admin from changing a locked
       # field in the UI, but a locked field's stored value is what's kept
@@ -9293,6 +9286,12 @@ server <- function(input, output, session) {
       }
     }
     values <- collect_measure_form()
+    # Computed against what the user actually entered, before the
+    # placeholder-text fallback below papers over blank required fields for
+    # storage purposes -- otherwise a brand new measure would never show as
+    # "missing fields" since every required field would already read
+    # "Draft ... pending." by the time this ran.
+    missing_fields <- measure_missing_required_fields(values)
     yearly_values <- collect_measure_years()
     locked_changes_missing_note <- Filter(
       function(row) isTRUE(row$actual_locked_change_needs_note) || isTRUE(row$target_locked_change_needs_note),
@@ -9318,7 +9317,6 @@ server <- function(input, output, session) {
         showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
         return()
       }
-      missing_fields <- validate_measure_submit_requirements(values)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
         return()
@@ -9347,7 +9345,14 @@ server <- function(input, output, session) {
       return()
     }
     reported_by <- if (nrow(user_rows)) user_rows$user_id[[1]] else data$access_user_agency_access$user_id[[1]]
-    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit, is_admin = current_user_can_edit_locked_measure_data()), error = function(error) error)
+    result <- tryCatch(
+      save_measure_record(
+        database, values, yearly_values, reported_by, submit,
+        is_admin = current_user_can_edit_locked_measure_data(),
+        required_fields_complete = !length(missing_fields)
+      ),
+      error = function(error) error
+    )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
