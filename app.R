@@ -5549,8 +5549,15 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", if (form_locked) "This measure is locked -- Save and Submit are disabled." else "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
+          if (form_locked) p(class = "approval-workflow-note", "This measure is locked -- Save and Submit are disabled."),
           div(
+            if (!form_locked) tags$span(
+              class = "field-help-icon",
+              tabindex = "0",
+              title = "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated.",
+              `aria-label` = "Save and submit guidance",
+              "?"
+            ),
             tags$button(id = "save_measure", type = "button", class = "civic-button secondary", disabled = if (form_locked) "disabled", "Save"),
             tags$button(id = "submit_measure", type = "button", class = "civic-button primary", disabled = if (form_locked) "disabled", "Submit for approval")
           )

@@ -4820,6 +4820,7 @@ textarea.cls-over-limit,
 .measure-submit-group > div {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 0.65rem;
 }
 
