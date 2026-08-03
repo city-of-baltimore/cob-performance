@@ -2878,6 +2878,39 @@ plan_review_allowed_service_ids <- function(db, plan, all_service_ids) {
   all_service_ids[all_service_ids %in% entity_service_ids]
 }
 
+# Reported 2026-08-04: a plan's row in the review queue/publishing/approval
+# list pages showed overall_score exactly as of the last full
+# refresh_app_data() -- scoring a plan and navigating back to a list still
+# showed the pre-save score. review_snapshot_cache holds a fresher
+# per-plan snapshot written on every autosave (see the comment on
+# plan_review_save_request in server()), but list pages read
+# review_plan_review directly with no single plan_id to key off of, so
+# every outstanding snapshot needs merging in, not just the one plan
+# actively open in the detail view. Takes `cache` as a plain argument
+# (rather than closing over review_snapshot_cache) so this is testable
+# outside of a live Shiny session.
+merge_cached_review_snapshots <- function(data, cache) {
+  keys <- ls(cache)
+  if (!length(keys) || !"review_plan_review" %in% names(data)) return(data)
+  for (key in keys) {
+    plan_id <- suppressWarnings(as.integer(key))
+    if (is.na(plan_id)) next
+    snapshot <- get(key, envir = cache, inherits = FALSE)
+    old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
+    data$review_plan_review <- rbind(
+      data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
+      snapshot$review
+    )
+    if ("review_section_score" %in% names(data)) {
+      data$review_section_score <- rbind(
+        data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
+        snapshot$scores
+      )
+    }
+  }
+  data
+}
+
 # A "shared" service is used by more than one active entity that submits
 # its own plan (reference.plan_entity_service) -- e.g. a single grant
 # program (Art and Culture Grants) funding several peer quasi-agency
@@ -8585,25 +8618,11 @@ server <- function(input, output, session) {
     review_snapshot_cache[[as.character(as.integer(plan_id))]] <- snapshot
     invisible(TRUE)
   }
-  data_with_cached_review_snapshot <- function(data, plan_id) {
-    key <- as.character(as.integer(plan_id))
-    if (!exists(key, envir = review_snapshot_cache, inherits = FALSE)) return(data)
-    snapshot <- get(key, envir = review_snapshot_cache, inherits = FALSE)
-    plan_id <- as.integer(plan_id)
-    if ("review_plan_review" %in% names(data)) {
-      old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
-      data$review_plan_review <- rbind(
-        data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
-        snapshot$review
-      )
-      if ("review_section_score" %in% names(data)) {
-        data$review_section_score <- rbind(
-          data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
-          snapshot$scores
-        )
-      }
-    }
-    data
+  # See merge_cached_review_snapshots() for what this does and why -- kept
+  # as a thin wrapper here so callers in server() don't need to pass
+  # review_snapshot_cache explicitly.
+  data_with_cached_review_snapshot <- function(data) {
+    merge_cached_review_snapshots(data, review_snapshot_cache)
   }
   current_submitter_value <- function() {
     selected <- input$selected_agency %||% input$selected_agency_nav %||% input$selected_agency_mobile
@@ -11292,12 +11311,7 @@ server <- function(input, output, session) {
         page_data <- data_with_cached_section_draft(page_data, plan$plan_id[[1]], current_page())
       }
     }
-    if (identical(current_page(), "plan_review_detail")) {
-      review_plan_id <- suppressWarnings(as.integer(current_history_plan_id() %||% NA_integer_))
-      if (!is.na(review_plan_id)) {
-        page_data <- data_with_cached_review_snapshot(page_data, review_plan_id)
-      }
-    }
+    page_data <- data_with_cached_review_snapshot(page_data)
     page_ui(
       current_page(),
       page_data,
