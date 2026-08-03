@@ -508,6 +508,7 @@ CREATE TABLE IF NOT EXISTS performance.performance_measure (
     validated boolean NOT NULL DEFAULT false,
     approval_status varchar(30) NOT NULL DEFAULT 'Draft' CHECK (approval_status IN ('Draft', 'PendingApproval', 'Validated', 'Rejected')),
     submitted_for_approval_at timestamptz,
+    ever_validated_at timestamptz,
     created_date date NOT NULL DEFAULT current_date,
     last_updated timestamptz NOT NULL DEFAULT now(),
     CHECK (is_city OR is_agency OR is_service),
@@ -517,11 +518,20 @@ CREATE TABLE IF NOT EXISTS performance.performance_measure (
 ALTER TABLE performance.performance_measure ADD COLUMN IF NOT EXISTS approval_status varchar(30) NOT NULL DEFAULT 'Draft';
 ALTER TABLE performance.performance_measure ADD COLUMN IF NOT EXISTS submitted_for_approval_at timestamptz;
 ALTER TABLE performance.performance_measure ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE performance.performance_measure ADD COLUMN IF NOT EXISTS ever_validated_at timestamptz;
 ALTER TABLE performance.performance_measure ALTER COLUMN update_frequency TYPE text;
 ALTER TABLE performance.performance_measure ALTER COLUMN title TYPE text;
 ALTER TABLE performance.performance_measure ALTER COLUMN data_source TYPE text;
 ALTER TABLE performance.performance_measure ALTER COLUMN data_location TYPE text;
 UPDATE performance.performance_measure SET approval_status = 'Validated' WHERE validated AND approval_status = 'Draft';
+-- Backfill for measures that were already validated before ever_validated_at
+-- existed, so their historic fiscal-year data doesn't unlock the moment this
+-- ships (see measure_actual_is_locked()/measure_target_is_locked() in
+-- R/database.R, which now key off ever_validated_at rather than the live
+-- approval_status). Idempotent: only touches rows where it's still unset.
+UPDATE performance.performance_measure
+    SET ever_validated_at = COALESCE(submitted_for_approval_at, now())
+    WHERE ever_validated_at IS NULL AND (validated OR approval_status = 'Validated');
 
 ALTER TABLE performance.performance_measure DROP COLUMN IF EXISTS is_kpi;
 
