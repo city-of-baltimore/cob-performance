@@ -28,8 +28,22 @@ test_that("measure_missing_required_fields flags every blank required field by l
 
   incomplete_values <- complete_values
   incomplete_values$data_location <- ""
-  incomplete_values$why_meaningful <- NA_character_
-  expect_equal(measure_missing_required_fields(incomplete_values), c("Data location", "Why this measure is meaningful"))
+  incomplete_values$how_data_used <- NA_character_
+  expect_equal(measure_missing_required_fields(incomplete_values), c("Data location", "How the data is used"))
+})
+
+test_that("measure_missing_required_fields does not flag a blank why_meaningful", {
+  # Dropped 2026-08-04: 560 of 607 already-Validated measures in production
+  # (92%) were blank on why_meaningful alone -- it was never actually
+  # enforced in practice, so it's no longer required.
+  values <- list(
+    title = "A measure", description = "Definition", measure_type = "Output",
+    desired_direction = "Increase", format_type = "Count", data_source = "Source",
+    data_owner = "Owner", data_owner_role = "Role", update_frequency = "Monthly",
+    formula = "Formula", data_location = "Location", collection_method = "Method",
+    how_data_used = "Used", why_meaningful = ""
+  )
+  expect_equal(measure_missing_required_fields(values), character(0))
 })
 
 test_that("measure_ever_validated is TRUE only once a real timestamp is set", {
