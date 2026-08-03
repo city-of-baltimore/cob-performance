@@ -4534,10 +4534,25 @@ textarea.cls-over-limit,
 
 .measure-editor-modal {
   width: min(1120px, calc(100vw - 2rem));
-  /* The form runs long (Definition + up to 7 fiscal years of actuals/
-     targets), so this modal gets more vertical room than the shared
-     .custom-modal default before it needs to scroll at all. */
-  max-height: min(56rem, calc(100vh - 2rem));
+  /* A fixed height (not just a cap) turns this into a real header/
+     scrolling-body/footer layout, via the flex rules below, so the action
+     bar is always anchored at the true bottom of the modal -- not just
+     wherever the form content happens to end. */
+  height: min(56rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 1.25rem 1.25rem 0;
+}
+
+.measure-editor-modal .custom-modal-header {
+  flex-shrink: 0;
+}
+
+.measure-editor-modal .measure-form-stack {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .measure-modal-title-block {
@@ -4791,19 +4806,16 @@ textarea.cls-over-limit,
 }
 
 /* The measure edit modal's form can run long enough to need scrolling
-   (Definition + up to 6 fiscal years of actuals/targets), which pushed
-   Save/Submit below the fold. Pins the action bar to the bottom of the
-   modal's own scroll container (.custom-modal has overflow: auto) instead
-   of scrolling away with the form -- scoped to .measure-editor-modal only,
-   since .measure-modal-actions is shared with the shorter team-role and
-   risk modals that don't need this. */
+   (Definition + up to 7 fiscal years of actuals/targets), which pushed
+   Save/Submit below the fold. .measure-editor-modal above turns this
+   modal into a fixed header/scrolling-body/footer layout, so this bar is
+   a real (non-scrolling) flex child always anchored at the bottom --
+   scoped to .measure-editor-modal only, since .measure-modal-actions is
+   shared with the shorter team-role and risk modals that don't need this. */
 .measure-editor-modal .measure-modal-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  margin: 0 -1.25rem;
-  padding: 1rem 1.25rem;
-  background: var(--lp-surface-default);
+  flex-shrink: 0;
+  padding-top: 1rem;
+  padding-bottom: 1.25rem;
 }
 
 .measure-modal-actions > div {
