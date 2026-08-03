@@ -2008,6 +2008,15 @@ measure_ever_validated <- function(ever_validated_at) {
 # publish the *plan* (see plan_measures_missing_required_fiscal_data()), not
 # to save or submit an individual measure -- a measure can be fully defined
 # and submitted for approval before that data exists.
+#
+# why_meaningful dropped from this list 2026-08-04: auditing production
+# after shipping the forced-Draft rule above found 560 of 607 already-
+# Validated measures (92%) blank on why_meaningful alone -- it was never
+# actually enforced in practice, so treating it as hard-required here would
+# have forced the vast majority of the city's validated measures back to
+# Draft the moment anyone re-saved them. The performance_measure column
+# itself is untouched; it's just no longer required to save/submit/stay
+# Validated.
 measure_required_field_labels <- c(
   title = "Measure name",
   description = "Definition",
@@ -2021,8 +2030,7 @@ measure_required_field_labels <- c(
   formula = "Formula or calculation",
   data_location = "Data location",
   collection_method = "Collection method",
-  how_data_used = "How the data is used",
-  why_meaningful = "Why this measure is meaningful"
+  how_data_used = "How the data is used"
 )
 
 measure_missing_required_fields <- function(values) {
