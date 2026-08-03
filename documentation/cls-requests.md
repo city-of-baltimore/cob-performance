@@ -8,9 +8,10 @@ ask BBMR to fund the cost of maintaining its current level of service — mandat
 increases, cyclical costs, extraordinary inflation, and similar. Each request breaks
 down into line items (object categories) and position requests.
 
-> **Currently gated.** Budget Planning — and therefore all three CLS pages — is visible
-> only to **SystemAdmin** (`can_access_budget_planning()`). Agencies cannot reach any of
-> this yet. The gate stays until the real spend-category list lands; see
+> **Gated to BBMR.** Budget Planning — and therefore all three CLS pages — is visible to
+> **BBMRReviewer** and **SystemAdmin** only (`can_access_budget_planning()`). Opened to
+> BBMR's 14 analysts on 2026-08-03. **Agencies still cannot reach any of this**, and that
+> stays true until the real spend-category list lands; see
 > [Open items](#notes-and-open-items).
 
 ## The workflow
@@ -70,7 +71,7 @@ Access is by app role, checked both server-side (page gate) and in the nav:
 - **BBMRReviewer** — sees the **CLS Review** page and records the decision. Opens
   requests **read-only**; the decision belongs on the review page, not in the agency's
   submission. Their back link returns to CLS Review.
-- **SystemAdmin** — full access, and today the only role that can reach the pages at all.
+- **SystemAdmin** — full access, for support and testing.
 - Everyone else (OPIReviewer, DeputyMayor, CAOffice) — nav items hidden, pages redirect.
 
 Helpers in `app.R`: `can_access_budget_planning()`, `can_view_cls_requests()`,
@@ -100,8 +101,9 @@ Total positions), a **collapsible** bar chart broken out by service, the **Add C
 Request** bar, and the table.
 
 The table sorts by **Request name / Service / Amount / Status**. Long request names wrap
-to two lines and then ellipsise, with the full name on hover. Amounts show as `$X.XK` /
-`$X.XM`; **Total requested** shows exact dollars with separators (`$2,837,000`). Each row
+to two lines and then ellipsise, with the full name on hover. Amounts show as separated whole
+dollars (`$60,000`) everywhere — the `$X.XK` / `$X.XM` abbreviation was removed, because it
+hid the figure people were checking. Each row
 carries its own hand-off action — **Submit** for writers, **Send to BBMR** for submitters,
 shown only at the right status — plus **Delete** and **Modify →**. A request that has
 reached BBMR shows a lock instead of Delete, and `delete_cls_request()` refuses it
@@ -134,6 +136,11 @@ indicator on the top row.
 - There is no create or save button. The draft row is created when **Add CLS Request** is
   clicked, so objects and positions have a `cls_id` to attach to immediately, and
   everything autosaves from the first keystroke.
+- **An abandoned draft is discarded.** Creating the row up front means walking away would
+  otherwise leave a blank request on the agency's list. `discard_empty_cls_draft()` removes
+  it, on navigating away *and* on the browser session ending. It only deletes a row that is
+  genuinely untouched — no real name, no amounts, no summary, no type, no objects, no
+  positions, and still *In Progress* — so nobody's work in progress is at risk.
 - Leaving with a mandatory field empty is **blocked**, with the fields named. Leaving an
   unbalanced request warns. Leaving a complete one says nothing.
 - A request that has reached BBMR is read-only, as is any request opened by a BBMR
@@ -141,7 +148,10 @@ indicator on the top row.
 
 ### CLS Review (`cls_review`)
 
-Four cards (Pending Requests, Requests for Review, Total requested, Total positions), a
+Four cards — Pending Requests (all), Requests for Review (only those sent to BBMR), and
+**Total requested / Total positions, both across every request**. The two totals used to
+count only the sent ones, which made the card disagree with the sum of the table under it
+and read as broken. Then a
 collapsible bar chart by agency, three filters, and the request table.
 
 **Filters** are checkbox dropdowns (`cls_check_dropdown()`) for **Status**, **Agency** and
@@ -158,11 +168,18 @@ SENT TO AGENCIES*), **Approved FY28** / **Approved positions**, and **Analyst no
 **Bulk approve** replaces that table with one line per request:
 
 ```
-Agency | Service | Request | Type | FY28 | Duration | Pos. | BBMR approval | Appr. FY28 | Appr. pos.
+Agency | Service | Request | Type | FY28 | Duration | Pos. | BBMR approval | Appr. FY28 | Appr. pos. | Return
 ```
 
-The first seven are read-only context; the last three are editable. **Save and close**
+The first seven are read-only context; the next three are editable. **Save and close**
 writes every row with a decision set; **Cancel** leaves without saving.
+
+**Return** sends a request back to the agency to rework. Because "locked" is derived from
+status, this moves it to *In Progress*, which is what makes it editable again, and clears
+any recorded decision (`clear_cls_review_decision()`) so the agency is not looking at a
+stale approval. **Analyst notes are kept** — they are the reason it went back. The button
+only appears on a request that is actually locked; anything still In Progress or in Agency
+Review shows a dash.
 
 The Excel export covers every agency, or names the agency when the filter is down to one.
 

@@ -434,3 +434,68 @@ an admin's edit.
 Applied to the dev database: **55 of 57** agencies now carry an analyst, a second run
 short-circuits, and 174/174 tests still pass. **AGC7000 Transportation** and **AGC9900
 CAFR Adjustments** are absent from the CSV; Transportation looks like a genuine omission.
+
+---
+
+## Round 12 — open CLS to BBMR's analysts
+
+Six items. The headline is the gate: `can_access_budget_planning()` now admits
+**BBMRReviewer** alongside SystemAdmin, so BBMR's 14 analysts can work the review queue.
+Agencies are still excluded, and should stay excluded until the real `SC6xxx` list replaces
+the placeholders.
+
+**Commas, properly this time.** Round 11 put separators on the *Total requested* card but
+left `cls_format_km()` running four other call sites — the requests-list Amount column and
+the chart's value labels, legend and tooltips. So the deployed app really did still show
+"$60.0K" and "$2.3M" where separators were asked for. Rather than patch the call sites,
+`cls_format_km()` was deleted: the reason a rounded figure is wrong is that it hides the
+number being checked, and that holds in a chart label as much as in a table cell. Two knock-
+on adjustments — the chart's right gutter grew from 74px to 112px so "$2,308,000" fits, and
+the bulk grid's FY28 column dropped its cents, which are always ".00" now that amounts are
+integers, to make room for the new Return column.
+
+**Total requested was measuring the wrong set.** On CLS Review it summed only requests
+already sent to BBMR: $2,837,000 against a table of 13 requests totalling $4,023,000. Both
+that card and Total positions now count every request, so the card agrees with the table
+beneath it.
+
+**Abandoned drafts.** Round 9 moved request creation to the moment "Add CLS Request" is
+clicked, because objects and positions need a `cls_id` to attach to. The cost of that was
+litter: walk away and a blank request stays on the agency's list. `discard_empty_cls_draft()`
+now removes it, both on navigating away and on the session ending, but only when the row is
+genuinely untouched — no real name, no amounts, no summary, no type, no objects, no
+positions, still In Progress. Verified all three ways: an empty draft is discarded, a named
+request with an amount is not, and an unnamed draft that has an object attached is not.
+
+Session-end cleanup needed the id parked outside the reactive graph, since
+`onSessionEnded` runs without a reactive context and cannot read a `reactiveVal`. A small
+plain environment holds it, and the cleanup runs before `dbDisconnect()` so the delete has
+a live connection.
+
+**Return.** An eleventh column on the bulk grid sends a submitted request back to the
+agency. "Locked" is derived from status, so unlocking means moving it to *In Progress*;
+`clear_cls_review_decision()` then drops the approval and the approved figures so the agency
+is not reworking against a stale decision. **Analyst notes are deliberately kept** — they
+are the reason it went back and the most useful thing the agency can read. The button only
+renders on a request that is actually locked; anything already with the agency shows a dash.
+
+### Verification
+
+- Gate: BBMRReviewer and SystemAdmin TRUE; AgencyWriter, AgencySubmitter, AgencyViewer,
+  OPIReviewer and DeputyMayor all FALSE.
+- No `$X.XK`/`$X.XM` anywhere in the rendered pages — a regex sweep of the body text
+  returned zero matches. `cls_format_km` no longer exists in the environment.
+- Bulk grid: 11 columns, 795px inside 795px at a 900px viewport and 1175px inside 1175px at
+  1280px, no sideways scroll and no wrapped cells at either size. 7 Return buttons and 6
+  dashes across 13 requests, matching the locked/unlocked split. Chart value labels fit
+  inside the viewBox at both sizes.
+- Return: status went BBMR Review → In Progress (unlocked), `bbmr_approval` and
+  `approved_amount` cleared, analyst notes intact.
+- 174/174 tests, `app.js` parses via `new Function` over the served script, and a database
+  built from `target_schema.sql` alone loads all 40 tables.
+
+Branch protection was also turned on for `main` this round: PRs required, the `test` check
+required, zero approvals so a solo author can still merge, admins exempt as an escape
+hatch, force-push and branch deletion blocked.
+
+**Status:** ✅ built and verified; not yet committed.

@@ -242,3 +242,34 @@ Verified: the seed applied 55 rows, and a second run correctly short-circuits.
 - Nobody has yet **click-tested the live, logged-in app** — see the build log. All
   verification to date is server-side rendering plus browser measurement of those
   renders.
+
+## Round 12 — open CLS to BBMR's analysts
+
+| # | Note | Status |
+|---|------|--------|
+| 142 | Branch protection on `main` | ✅ PRs required, `test` check required, 0 approvals, admins exempt, force-push and deletion blocked |
+| 143 | Commas missing on the chart, the requests list and the review page | ✅ `cls_format_km()` deleted outright — every CLS surface now shows separated whole dollars |
+| 144 | Don't create a request if the user never gives it a name or an amount and leaves | ✅ `discard_empty_cls_draft()`, on navigate-away and on session end |
+| 145 | A **Return** button on Bulk approval that unlocks the request for agencies | ✅ sets status to *In Progress* and clears the decision; analyst notes are kept |
+| 146 | Total requested is broken — make it the sum of all requests | ✅ the CLS Review card counted only sent-to-BBMR requests; both totals now count every request |
+| 147 | Open the CLS pages to BBMR review roles | ✅ `can_access_budget_planning()` admits **BBMRReviewer** + SystemAdmin. Agencies still excluded |
+
+**The 14 BBMR reviewers now with access** — all active, none agency-scoped, so each sees
+every agency: Devlin Tricamo-Palmer, Eric Duneman, Gabriel Stuart-Sikowitz, John Burklew,
+Kamaria Harmon, Malachi Gaines, Mara James, Matthew Rappaport, Matthew Zachary, Michael
+Brede, Robert Feehley, Stephanie Hentemann, Sumaiya Binta Islam, Zachary Harris.
+
+Several are also the named budget analysts in `agency_budget_analyst_seed.csv`, which is
+the expected overlap — the BBMRReviewer role *is* the analyst roster.
+
+**What BBMR reviewers get:** the **CLS Review** page and the **individual request page**
+(read-only, per round 8). They deliberately do **not** get the agency-facing CLS Requests
+list — `can_view_cls_requests()` excludes them and `page_ui()` redirects them to CLS
+Review, which was the round-8 decision that reviewers should not wander into an agency's
+list. Say so if that should change.
+
+**Why `cls_format_km()` went entirely** rather than being kept for the chart: the whole
+point of the request was that a rounded "$2.3M" hides the figure being checked, and that is
+as true in a chart label as in a table cell. The chart's right gutter grew from 74px to
+112px to fit a full figure, and the bulk grid's FY28 column dropped its cents — always
+".00" now that amounts are integers — to make room for the Return column.

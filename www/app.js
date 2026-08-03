@@ -1336,6 +1336,20 @@
       }, { priority: "event" });
       return;
     }
+    // Send a submitted request back to the agency, which unlocks it for editing.
+    // Confirmed first: it clears the recorded decision and the agency sees the
+    // change immediately.
+    var clsSendBack = event.target.closest("[data-cls-send-back]");
+    if (clsSendBack && window.Shiny) {
+      var backName = clsSendBack.getAttribute("data-cls-name") || "this request";
+      if (window.confirm('Send "' + backName + '" back to the agency?\n\nThis unlocks it for editing and clears any approval already recorded. Analyst notes are kept.')) {
+        window.Shiny.setInputValue("cls_send_back", {
+          clsId: clsSendBack.getAttribute("data-cls-send-back"),
+          nonce: Date.now()
+        }, { priority: "event" });
+      }
+      return;
+    }
     var clsReviewSave = event.target.closest("[data-cls-review-save]");
     if (clsReviewSave && window.Shiny) {
       window.Shiny.setInputValue("cls_review_save", {
