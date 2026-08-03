@@ -202,15 +202,17 @@ can_view_performance_reviewing <- function(app_roles) {
   has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "CAOffice", "DeputyMayor"))
 }
 
-# The Budget Planning (CLS) section just merged and isn't ready for its
-# intended audience yet -- restricted to SystemAdmin only across nav
-# visibility, the auto-redirect-away logic, and page access, until that
-# changes. The role functions below (can_view_cls_requests(),
-# can_review_cls(), etc.) still encode the real long-term permission
-# model; this is a single override to remove once the feature is ready to
-# open up.
+# Budget Planning (CLS) opened to BBMR's analysts on 2026-08-03, on Sarah's
+# instruction. It is still NOT open to agencies: the gate admits BBMRReviewer
+# (the 14-strong analyst roster) and SystemAdmin only, so BBMR can work the
+# review queue while the placeholder spend-category list is still in place.
+# Agency roles stay out until that list is replaced.
+#
+# The role functions below (can_view_cls_requests(), can_review_cls(), etc.)
+# encode the real long-term permission model; this remains a single override to
+# remove entirely once the feature opens to agencies.
 can_access_budget_planning <- function(app_roles) {
-  has_any_role(app_roles, "SystemAdmin")
+  has_any_role(app_roles, c("BBMRReviewer", "SystemAdmin"))
 }
 
 # CLS requests are an agency-facing budget tool. Viewers can see them; writers,
@@ -6604,15 +6606,8 @@ build_cls_request_pdf <- function(db, plan, output_file) {
   invisible(output_file)
 }
 
-cls_format_km <- function(value) {
-  v <- suppressWarnings(as.numeric(value))
-  if (length(v) != 1 || is.na(v)) return("—")
-  sign <- if (v < 0) "-" else ""
-  a <- abs(v)
-  if (a >= 1e6) paste0(sign, "$", formatC(a / 1e6, format = "f", digits = 1), "M")
-  else if (a >= 1e3) paste0(sign, "$", formatC(a / 1e3, format = "f", digits = 1), "K")
-  else paste0(sign, "$", formatC(a, format = "f", digits = 1))
-}
+# cls_format_km() was removed here: every CLS surface now shows separated whole
+# dollars via cls_format_commas(). "$2.3M" hid the figure people were checking.
 
 # A request is "complete" when the mandatory fields are filled in and the FY28
 # amount is fully described by its objects plus positions. Used for the red
@@ -6927,7 +6922,7 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
             )
           ),
           span(cls_service_label(db, r$service_id)),
-          span(class = "cls-request-amount", cls_format_km(r$request_amount)),
+          span(class = "cls-request-amount", cls_format_commas(r$request_amount)),
           span(cls_status_chip(status)),
           div(
             class = "cls-request-actions",
@@ -7138,8 +7133,10 @@ cls_review_chart <- function(rows, group_col = "agency", group_noun = "agency") 
 
   # Narrow bars and small type: the chart is a shape-at-a-glance, and a tall one
   # pushed the table below the fold (analyst feedback round 2).
+  # The right gutter has to hold a full separated figure ("$2,308,000"), not the
+  # old "$2.3M", so it is wider than the abbreviated version needed.
   bar_h <- 13; gap <- 7; label_w <- 170; chart_w <- 680
-  plot_w <- chart_w - label_w - 74
+  plot_w <- chart_w - label_w - 112
   height <- length(agencies) * (bar_h + gap) + 8
 
   bars <- lapply(seq_along(agencies), function(i) {
@@ -7154,7 +7151,7 @@ cls_review_chart <- function(rows, group_col = "agency", group_noun = "agency") 
       w <- max(1, value / max_total * plot_w)
       n <- sum(keep & seg_values[, seg$key] > 0)
       pieces[[length(pieces) + 1L]] <- tags$g(
-        tags$title(sprintf("%s — %s %s across %d %s", a, seg$label, cls_format_km(value), n, if (n == 1) "request" else "requests")),
+        tags$title(sprintf("%s — %s %s across %d %s", a, seg$label, cls_format_commas(value), n, if (n == 1) "request" else "requests")),
         tags$rect(x = x, y = y, width = w, height = bar_h, rx = 2, class = paste("cls-chart-bar", seg$class))
       )
       x <- x + w
@@ -7162,7 +7159,7 @@ cls_review_chart <- function(rows, group_col = "agency", group_noun = "agency") 
     tags$g(
       tags$text(x = label_w - 6, y = y + bar_h / 2 + 3, `text-anchor` = "end", class = "cls-chart-label", substr(a, 1, 30)),
       pieces,
-      tags$text(x = min(x + 5, chart_w - 4), y = y + bar_h / 2 + 3, class = "cls-chart-value", cls_format_km(totals[[i]]))
+      tags$text(x = min(x + 5, chart_w - 4), y = y + bar_h / 2 + 3, class = "cls-chart-value", cls_format_commas(totals[[i]]))
     )
   })
 
@@ -7171,7 +7168,7 @@ cls_review_chart <- function(rows, group_col = "agency", group_noun = "agency") 
     if (total <= 0) return(NULL)
     span(class = "cls-chart-legend-item",
       span(class = paste("cls-chart-swatch", seg$class)),
-      paste0(seg$label, " ", cls_format_km(total)))
+      paste0(seg$label, " ", cls_format_commas(total)))
   })
 
   div(
@@ -7283,7 +7280,8 @@ cls_bulk_grid <- function(rows, approval_choices) {
     span("Agency"), span("Service"), span("Request"), span("Type"),
     span(class = "num", "FY28"),
     span("Duration"), span(class = "num", "Pos."),
-    span("BBMR approval"), span(class = "num", "Appr. FY28"), span(class = "num", "Appr. pos.")
+    span("BBMR approval"), span(class = "num", "Appr. FY28"), span(class = "num", "Appr. pos."),
+    span(class = "cls-bulk-back-head", "Return")
   )
   body <- lapply(seq_len(nrow(rows)), function(i) {
     r <- rows[i, , drop = FALSE]
@@ -7297,7 +7295,9 @@ cls_bulk_grid <- function(rows, approval_choices) {
       # Full definition of the type on hover, as on the collapsed review row.
       span(title = cls_request_type_tooltip(r$request_type),
            if (nzchar(as.character(r$request_type %||% ""))) r$request_type else "—"),
-      span(class = "num", cls_format_dollars(r$request_amount)),
+      # Whole dollars here rather than cents: amounts are integers now, so the
+      # cents were always ".00" and the width is better spent on the Return column.
+      span(class = "num", cls_format_commas(r$request_amount)),
       cell(if (isTRUE(r$one_time)) "One-time" else "Recurring"),
       span(class = "num", r$position_count),
       selectInput(paste0("cls_bulk_bbmr_", id), NULL, choices = approval_choices,
@@ -7305,13 +7305,29 @@ cls_bulk_grid <- function(rows, approval_choices) {
       cls_money_input(paste0("cls_bulk_amount_", id), NULL,
                       value = if (!is.na(r$approved_amount)) r$approved_amount else NA),
       cls_money_input(paste0("cls_bulk_positions_", id), NULL,
-                      value = if (!is.na(r$approved_positions)) r$approved_positions else NA)
+                      value = if (!is.na(r$approved_positions)) r$approved_positions else NA),
+      # Send back: hands the request to the agency to rework, which means
+      # unlocking it. Only offered for a request that is currently locked -
+      # anything still In Progress or in Agency Review is already theirs.
+      if (cls_status_is_complete(r$status)) {
+        tags$button(
+          type = "button", class = "civic-button secondary small cls-icon-only cls-bulk-back",
+          `data-cls-send-back` = id, `data-cls-name` = r$request_name,
+          title = paste0("Send “", r$request_name, "” back to the agency to rework. This unlocks it for editing."),
+          `aria-label` = paste("Send", r$request_name, "back to the agency"),
+          icon("rotate-left")
+        )
+      } else {
+        span(class = "cls-bulk-back-na", title = "Already with the agency", "—")
+      }
     )
   })
   tagList(
     div(class = "cls-bulk-scroll", div(class = "cls-bulk-grid", head_row, body)),
     p(class = "cls-bulk-hint",
-      "Leave a row's approval blank to skip it. Approved FY28 and Approved pos. are what the agency will see.")
+      "Leave a row's approval blank to skip it. Approved FY28 and Approved pos. are what the agency will see.",
+      tags$br(),
+      "Return sends a request back to the agency and unlocks it for editing, clearing any decision already recorded.")
   )
 }
 
@@ -7321,8 +7337,11 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
   total_pending <- if (nrow(rows)) nrow(rows) else 0L
   complete_rows <- if (nrow(rows)) rows[rows$completed, , drop = FALSE] else rows
   total_for_review <- if (nrow(complete_rows)) nrow(complete_rows) else 0L
-  total_dollars <- if (nrow(complete_rows)) sum(complete_rows$request_amount, na.rm = TRUE) else 0
-  total_positions <- if (nrow(complete_rows)) sum(complete_rows$position_count, na.rm = TRUE) else 0
+  # Total requested and Total positions count EVERY request, not just the ones
+  # already sent to BBMR. Counting only the sent ones made the card disagree with
+  # the sum of the table below it, which read as broken (analyst feedback).
+  total_dollars <- if (nrow(rows)) sum(rows$request_amount, na.rm = TRUE) else 0
+  total_positions <- if (nrow(rows)) sum(rows$position_count, na.rm = TRUE) else 0
 
   agency_choices <- if (nrow(rows)) sort(unique(rows$agency)) else character(0)
   service_choices_rv <- if (nrow(rows)) sort(unique(rows$service)) else character(0)
@@ -8048,8 +8067,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260731-1"),
-    tags$script(src = "app.js?v=20260731-1", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260803-1"),
+    tags$script(src = "app.js?v=20260803-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -8241,7 +8260,30 @@ server <- function(input, output, session) {
     ensure_review_schema(database)
     options(beacon.review_schema_checked = TRUE)
   }
-  session$onSessionEnded(function() DBI::dbDisconnect(database))
+  # A plain (non-reactive) holder for the id of a freshly created CLS draft.
+  # onSessionEnded runs outside the reactive graph, so it cannot read a
+  # reactiveVal - it needs the id parked somewhere ordinary.
+  cls_draft_watch <- new.env(parent = emptyenv())
+  cls_draft_watch$cls_id <- NA_integer_
+  # Discard an untouched draft when the user abandons it. Safe to call with
+  # anything: discard_empty_cls_draft() only deletes a row that is genuinely
+  # empty, so a named or detailed request is never at risk.
+  cls_discard_draft <- function(cls_id = cls_draft_watch$cls_id) {
+    cls_id <- suppressWarnings(as.integer(cls_id))
+    if (length(cls_id) != 1 || is.na(cls_id)) return(invisible(FALSE))
+    dropped <- tryCatch(
+      isTRUE(discard_empty_cls_draft(database, cls_id, CLS_DRAFT_NAME)),
+      error = function(error) FALSE
+    )
+    if (identical(cls_draft_watch$cls_id, cls_id)) cls_draft_watch$cls_id <- NA_integer_
+    invisible(dropped)
+  }
+  session$onSessionEnded(function() {
+    # Closing the browser must not leave a blank request behind on the agency's
+    # list. Runs before the disconnect so the delete has a live connection.
+    tryCatch(cls_discard_draft(), error = function(error) NULL)
+    DBI::dbDisconnect(database)
+  })
   app_data <- reactiveVal(NULL)
   current_user <- reactiveVal(NULL)
   auth_state <- reactiveVal(list(view = "login"))
@@ -9481,6 +9523,9 @@ server <- function(input, output, session) {
     }
     refresh_app_data()
     current_cls_id(as.integer(created))
+    # Remember it outside the reactive graph too, so the session-ended handler
+    # can clean it up if the user simply closes the browser.
+    cls_draft_watch$cls_id <- as.integer(created)
     cls_detail_origin("cls_requests")
     cls_last_save(NULL)
     current_page("cls_request_detail")
@@ -9634,6 +9679,33 @@ server <- function(input, output, session) {
   observeEvent(input$cls_bulk_approve, {
     if (!can_review_cls(current_user_app_roles())) return()
     cls_bulk_mode(identical(as.character(input$cls_bulk_approve$what %||% ""), "open"))
+  }, ignoreInit = TRUE)
+  # Send back: returns a submitted request to the agency and unlocks it. Because
+  # "locked" is derived from status, moving it back to In Progress is what makes
+  # it editable again; any decision already recorded is cleared so the agency is
+  # not looking at a stale approval while they rework it.
+  observeEvent(input$cls_send_back, {
+    if (!can_review_cls(current_user_app_roles())) {
+      showNotification("Only BBMR Reviewers can send a request back to an agency.", type = "error", duration = 6)
+      return()
+    }
+    cls_id <- suppressWarnings(as.integer(input$cls_send_back$clsId))
+    if (is.na(cls_id)) return()
+    data <- ensure_app_data()
+    name <- cls_request_name_for(data, cls_id)
+    result <- tryCatch({
+      clear_cls_review_decision(database, cls_id, reviewed_by = cls_user_id())
+      set_cls_status(database, cls_id, "In Progress", cls_user_id())
+    }, error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(conditionMessage(result), type = "error", duration = 8)
+      return()
+    }
+    refresh_app_data()
+    showNotification(
+      paste0("“", name, "” was sent back to the agency and is unlocked for editing."),
+      type = "message", duration = 7
+    )
   }, ignoreInit = TRUE)
   observeEvent(input$cls_bulk_save, {
     if (!can_review_cls(current_user_app_roles())) return()
@@ -11012,8 +11084,10 @@ server <- function(input, output, session) {
       current_history_plan_id(NULL)
       current_history_include_review(TRUE)
     }
-    # Leaving the CLS request page: pick up autosaved changes for the list view.
+    # Leaving the CLS request page: drop the request if it was never filled in,
+    # then pick up autosaved changes for the list view.
     if (identical(current_page(), "cls_request_detail") && !identical(input$current_page, "cls_request_detail")) {
+      cls_discard_draft(current_cls_id())
       refresh_app_data()
     }
     current_page(input$current_page)
