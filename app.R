@@ -2864,6 +2864,20 @@ plan_team_service_ids <- function(db, plan) {
   unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
 }
 
+# Reported 2026-08-03: the plan review/scoring page rendered whatever
+# happened to be in performance.plan_service for a plan with no regard for
+# whether that service actually belongs to the plan's entity, and Mayoral
+# Offices -- which are exempt from having any services at all
+# (submitter_is_mayoral_service()) -- showed a service anyway. Used to scope
+# plan_service/service_rows in the review page to only the services this
+# specific plan is actually allowed to have.
+plan_review_allowed_service_ids <- function(db, plan, all_service_ids) {
+  if (submitter_is_mayoral_service(db, submitter_value_for_plan(plan))) return(character(0))
+  if (!plan_is_entity_submitter(plan)) return(all_service_ids)
+  entity_service_ids <- plan_team_service_ids(db, plan)
+  all_service_ids[all_service_ids %in% entity_service_ids]
+}
+
 # Reported 2026-08-04: a plan's row in the review queue/publishing/approval
 # list pages showed overall_score exactly as of the last full
 # refresh_app_data() -- scoring a plan and navigating back to a list still
@@ -4758,6 +4772,9 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
+  allowed_service_ids <- plan_review_allowed_service_ids(db, plan, service_rows$service_id)
+  services <- services[services$service_id %in% allowed_service_ids, , drop = FALSE]
+  service_rows <- service_rows[service_rows$service_id %in% allowed_service_ids, , drop = FALSE]
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
   notes_summary <- review_notes_summary(review_bits)
