@@ -6568,15 +6568,16 @@ body.desktop-nav-collapsed .app-footer {
 }
 
 /* Agency | Service | Request | Type | FY28 | Duration | Pos. | BBMR approval |
-   Appr. FY28 | Appr. pos. - FY29/FY30 dropped, Type added, and the space they
-   freed went to Agency and Type (analyst feedback round 2). */
+   Appr. FY28 | Appr. pos. | Return - FY29/FY30 dropped and Type added in round
+   2; Return added in round 3, which is why FY28 lost its cents to make room. */
 .cls-bulk-row {
   display: grid;
   grid-template-columns:
-    minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 1fr)
-    minmax(5rem, 0.7fr)
-    minmax(4.4rem, 0.55fr) minmax(2.6rem, 0.3fr)
-    minmax(6rem, 0.8fr) minmax(5.2rem, 0.62fr) minmax(4.4rem, 0.5fr);
+    minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 0.95fr)
+    minmax(4.8rem, 0.62fr)
+    minmax(4.4rem, 0.5fr) minmax(2.6rem, 0.28fr)
+    minmax(5.8rem, 0.75fr) minmax(5rem, 0.58fr) minmax(4.2rem, 0.46fr)
+    minmax(2.3rem, 0.26fr);
   gap: 0.3rem;
   align-items: center;
   padding: 0.3rem 0.45rem;
@@ -6626,6 +6627,23 @@ body.desktop-nav-collapsed .app-footer {
   margin-top: 0.55rem;
   font-size: 0.8rem;
   color: var(--lp-text-secondary);
+}
+
+/* Return column: icon-only so it costs almost no width. */
+.cls-bulk-back-head { text-align: center; }
+
+.civic-button.cls-bulk-back {
+  padding: 0 0.35rem;
+  min-width: 0;
+  width: 100%;
+  height: 1.85rem;
+  justify-content: center;
+}
+
+.cls-bulk-back-na {
+  text-align: center;
+  color: var(--lp-text-secondary);
+  opacity: 0.55;
 }
 
 

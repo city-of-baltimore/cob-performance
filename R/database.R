@@ -1633,6 +1633,25 @@ save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
   invisible(cls_id)
 }
 
+# Clear the BBMR decision on a request without discarding the analyst's notes.
+# Used when a request is sent back to the agency: the approval no longer applies
+# to work that is about to change, but the notes are the reason it went back and
+# are exactly what the agency needs to read.
+clear_cls_review_decision <- function(connection, cls_id, reviewed_by = NULL) {
+  cls_id <- as.integer(cls_id)
+  if (is.na(cls_id)) stop("Choose a valid request.")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_review SET bbmr_approval = NULL, approved_amount = NULL,",
+      "approved_positions = NULL, reviewed_by = COALESCE($2::integer, reviewed_by), updated_at = now()",
+      "WHERE cls_id = $1"
+    ),
+    params = list(cls_id, nullable_integer_param(reviewed_by))
+  )
+  invisible(cls_id)
+}
+
 delete_cls_request <- function(connection, cls_id) {
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
@@ -1652,6 +1671,42 @@ delete_cls_request <- function(connection, cls_id) {
     DBI::dbExecute(connection, "DELETE FROM budget.cls_request WHERE cls_id = $1", params = list(cls_id))
   })
   invisible(cls_id)
+}
+
+# A request row is created the moment "Add CLS Request" is clicked, so that
+# objects and positions have a cls_id to attach to. If the user then walks away
+# without naming it or giving it an amount, that row is litter on the agency's
+# list. This removes it - but only when it is genuinely untouched: no real name,
+# no amount, no summary, no type, no objects, no positions, and still In
+# Progress. Anything else is somebody's work in progress and is left alone.
+#
+# Returns TRUE if a row was discarded.
+discard_empty_cls_draft <- function(connection, cls_id, draft_name = "Untitled CLS request") {
+  cls_id <- suppressWarnings(as.integer(cls_id))
+  if (length(cls_id) != 1 || is.na(cls_id)) return(invisible(FALSE))
+  rows <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT cls_id FROM budget.cls_request r",
+      "WHERE r.cls_id = $1",
+      "  AND COALESCE(r.status, 'In Progress') = 'In Progress'",
+      "  AND (r.request_name IS NULL OR btrim(r.request_name) = '' OR r.request_name = $2)",
+      "  AND COALESCE(r.request_amount, 0) <= 0",
+      "  AND COALESCE(r.amount_next_fy, 0) <= 0",
+      "  AND COALESCE(r.amount_2next_fy, 0) <= 0",
+      "  AND COALESCE(btrim(r.overall_summary), '') = ''",
+      "  AND COALESCE(btrim(r.request_type), '') = ''",
+      "  AND NOT EXISTS (SELECT 1 FROM budget.cls_request_line l WHERE l.cls_id = r.cls_id)",
+      "  AND NOT EXISTS (SELECT 1 FROM budget.cls_request_position p WHERE p.cls_id = r.cls_id)"
+    ),
+    params = list(cls_id, draft_name)
+  )
+  if (!nrow(rows)) return(invisible(FALSE))
+  DBI::dbWithTransaction(connection, {
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_review WHERE cls_id = $1", params = list(cls_id))
+    DBI::dbExecute(connection, "DELETE FROM budget.cls_request WHERE cls_id = $1", params = list(cls_id))
+  })
+  invisible(TRUE)
 }
 
 add_cls_request_line <- function(connection, cls_id, object_category = NULL, amount = NULL, justification = NULL,
