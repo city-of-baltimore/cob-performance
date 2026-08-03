@@ -3838,11 +3838,16 @@ metric_export_summary <- function(db, measure_ids, current_fy = 2027) {
   })
 }
 
+# overall_score has exactly one writer (save_plan_review_scores(), in
+# R/database.R) and it's always already a 0-100 weighted score -- there is
+# no remaining code path that stores a raw 1-4 average into it. The old
+# "score <= 4 means it's still on a 1-4 scale, multiply by 25" heuristic
+# below was therefore pure guesswork by value alone, and it actively
+# misfired on any plan that was genuinely, correctly scored low (a raw
+# weighted score of 3 is a real "3/100", not a "75/100").
 score_out_of_100 <- function(score) {
   if (is.na(score)) return("Not scored")
-  numeric_score <- as.numeric(score)
-  if (numeric_score <= 4) numeric_score <- numeric_score * 25
-  paste0(round(numeric_score), "/100")
+  paste0(round(as.numeric(score)), "/100")
 }
 
 plan_review_expected_count <- function(goal_count, service_count) {
@@ -4939,7 +4944,15 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
         div(
           class = "review-summary-card",
           span("Overall score"),
-          strong(if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored")
+          # Frozen at whatever it was when this page/modal last rendered --
+          # the autosave observer (plan_review_save_request) deliberately
+          # skips a server re-render on every scoring tick (see its comment)
+          # to avoid collapsing open goal/service drawers, so this card
+          # doesn't update again during the same session on its own.
+          # handlePlanReviewSaveResult() in app.js patches this element's
+          # text directly from the same save result that updates the
+          # autosave status line, so both stay in sync without a re-render.
+          strong(id = "review_overall_score_value", if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored")
         ),
         div(
           class = "review-summary-card",

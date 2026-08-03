@@ -3111,6 +3111,13 @@
   function handlePlanReviewSaveResult(message) {
     if (!message || !message.ok) return;
     setReviewSaveStatus("Review autosaved at " + message.savedAt + ". Current score: " + message.score + "/100.");
+    // The "Overall score" summary card is server-rendered once and never
+    // re-rendered during autosave (see plan_review_save_request's comment
+    // in app.R -- a re-render would collapse open scoring drawers), so it
+    // needs to be patched here directly or it stays frozen at whatever it
+    // showed on page load while the status line above already moved on.
+    var overallScore = document.getElementById("review_overall_score_value");
+    if (overallScore) overallScore.textContent = message.score + "/100";
   }
 
   function requestSharedDraft(page) {
