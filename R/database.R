@@ -2237,11 +2237,16 @@ save_plan_review_scores <- function(connection, plan_id, reviewer_id, scores, in
     }
     if (identical(section_code, "S3")) {
       plan_rows <- Filter(function(row) identical(row$target_type, "plan"), rows)
-      plan_score <- sum(vapply(plan_rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
+      plan_raw_score <- sum(vapply(plan_rows, function(row) row$weighted_score, numeric(1)), na.rm = TRUE)
       plan_max <- sum(vapply(plan_rows, function(row) row$weight, numeric(1)), na.rm = TRUE)
-      plan_score <- scale_score(plan_score, plan_max, 5)
       service_rows <- Filter(function(row) identical(row$target_type, "service"), rows)
-      if (!length(service_rows)) return(plan_score)
+      if (!length(service_rows)) {
+        # Plans with no services (e.g. Mayoral Offices, which are exempt from
+        # the Services section entirely) get the full S3 allocation folded
+        # into Family of Measures instead of being capped at 5/20.
+        return(scale_score(plan_raw_score, plan_max, 20))
+      }
+      plan_score <- scale_score(plan_raw_score, plan_max, 5)
       target_keys <- unique(vapply(service_rows, function(row) paste(row$target_type, row$target_id, sep = ":"), character(1)))
       service_scores <- vapply(target_keys, function(key) {
         target_rows <- service_rows[vapply(service_rows, function(row) identical(paste(row$target_type, row$target_id, sep = ":"), key), logical(1))]
