@@ -1270,7 +1270,7 @@ load_app_data <- function(connection) {
       paste(
         "SELECT pm.measure_id, pm.pillar_id, pm.pillar_goal_id, pm.title, pm.desired_direction,",
         "pm.display_unit, pm.format_type, pm.approval_status, pm.agency_id,",
-        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name,",
+        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name, mel.entity_id AS owning_entity_id,",
         "p.pillar_name, pg.goal_code AS pillar_goal_code, pg.goal_title AS pillar_goal_title,",
         "actual_row.annual_actual AS current_value, target_row.target_value AS target_value",
         "FROM performance.performance_measure pm",
@@ -1284,9 +1284,11 @@ load_app_data <- function(connection) {
         # not just the shared parent agency (Mayor's Office) every mayoral
         # suboffice measure is otherwise indistinguishable under. Pick one
         # deterministically since a measure could in principle have more
-        # than one link row.
+        # than one link row. owning_entity_id feeds the owning-entity
+        # selector on the Action Plan Measures page so it can pre-select
+        # the measure's current owner.
         "LEFT JOIN LATERAL (",
-        "  SELECT mel.public_name FROM performance.measure_entity_link mel",
+        "  SELECT mel.public_name, mel.entity_id FROM performance.measure_entity_link mel",
         "  WHERE mel.measure_id = pm.measure_id ORDER BY mel.updated_at DESC LIMIT 1",
         ") mel ON TRUE",
         "WHERE pm.is_city AND pm.active",
@@ -2055,7 +2057,25 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
       measure_id <- row$measure_id[[1]]
     } else {
       measure_id <- as.integer(values$measure_id)
-      DBI::dbExecute(
+      # The WHERE clause used to always require agency_id=$1 (values$agency_id,
+      # which for an EXISTING measure is current_agency_id() -- whatever
+      # agency the CURRENT VIEWER happens to be acting as, not the measure's
+      # own agency). A SystemAdmin editing a measure from a different agency's
+      # context than the measure's own -- e.g. via the Action Plan Measures
+      # admin page, which deliberately lets an admin open any Citywide
+      # measure regardless of current context -- matched zero rows and
+      # silently saved nothing, with no error shown. Worse, the caller still
+      # went on to call ensure_measure_current_entity_link() as if the save
+      # had succeeded, which is how a measure ended up linked to the
+      # viewer's agency's entity while its own agency_id never actually
+      # changed (reported 2026-07-31, "Average Age of Fleet"). Admins may
+      # edit any measure_id; only non-admins are restricted to their own
+      # agency's measures. $34 (is_admin) short-circuits the agency_id check
+      # rather than dropping $1 from the query text entirely -- omitting a
+      # parameter placeholder that's still present in `params` makes
+      # Postgres unable to infer its type ("could not determine data type
+      # of parameter $1").
+      changed <- DBI::dbExecute(
         connection,
         paste(
           "UPDATE performance.performance_measure SET initial_cycle=$2, title=$3, measure_type=$4, description=$5, data_source=$6, data_owner=$7,",
@@ -2064,10 +2084,13 @@ save_measure_record <- function(connection, values, yearly_values, reported_by, 
           "collection_method=$20, how_data_used=$21, why_meaningful=$22, proxy_measure=$23, improvement_notes=$24, change_mapping=$25,",
           "pillar_id=$26, pillar_goal_id=$27, is_city=$28, is_agency=$29, is_service=$30, approval_status=$31::varchar(30),",
           "submitted_for_approval_at=$32::timestamptz, validated=CASE WHEN $31::text='Validated' THEN true ELSE false END, last_updated=now()",
-          "WHERE measure_id=$33 AND agency_id=$1"
+          "WHERE measure_id=$33 AND ($34::boolean OR agency_id=$1)"
         ),
-        params = c(params, list(measure_id))
+        params = c(params, list(measure_id, isTRUE(is_admin)))
       )
+      # A non-admin whose agency doesn't match gets a clear error instead of
+      # a save that looks successful but silently changed nothing.
+      if (changed != 1) stop("Measure not found, or you do not have permission to edit it.")
     }
     for (year_value in yearly_values) {
       DBI::dbExecute(
@@ -3313,6 +3336,23 @@ draft_field <- function(payload, field_id, fallback = "") {
   as.character(value)
 }
 
+# Raw-connection equivalent of service_is_shared() in app.R (which checks
+# the in-memory reactive db) -- used when promoting a submitted plan's
+# draft payload to real records, where only a DBI connection is available.
+service_is_shared_db <- function(connection, service_id) {
+  count <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT COUNT(DISTINCT pes.entity_id) AS n",
+      "FROM reference.plan_entity_service pes",
+      "JOIN reference.plan_entity pe ON pe.entity_id = pes.entity_id",
+      "WHERE pes.service_id = $1 AND pe.active AND pe.has_own_plan"
+    ),
+    params = list(service_id)
+  )$n[[1]]
+  isTRUE(count > 1)
+}
+
 apply_plan_drafts_to_records <- function(connection, plan_id) {
   plan_id <- as.integer(plan_id)
   payloads <- plan_draft_payloads(connection, plan_id)
@@ -3426,22 +3466,104 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
   services <- payloads$services
   if (!is.null(services)) {
     plan_services <- DBI::dbGetQuery(connection, "SELECT service_id FROM performance.plan_service WHERE plan_id = $1", params = list(plan_id))
+    plan_row <- DBI::dbGetQuery(connection, "SELECT agency_id, entity_id FROM planning.agency_plan WHERE plan_id = $1", params = list(plan_id))
+    # A shared service's description is locked to SystemAdmin/BBMRReviewer
+    # in the UI (see can_edit_shared_service_description() in app.R), but
+    # that's only a client-side disable -- promoting the draft must not
+    # trust it blindly, and must not blindly SKIP it either, or a
+    # legitimate admin edit would sit in the draft forever, never applied.
+    # Check who actually saved the services draft last.
+    services_draft_editor <- DBI::dbGetQuery(
+      connection,
+      "SELECT updated_by FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'services'",
+      params = list(plan_id)
+    )$updated_by[[1]]
+    services_draft_editor_is_admin <- !is.null(services_draft_editor) && !is.na(services_draft_editor) && nrow(DBI::dbGetQuery(
+      connection,
+      "SELECT 1 FROM access.user_role WHERE user_id = $1 AND app_role IN ('SystemAdmin', 'BBMRReviewer')",
+      params = list(as.integer(services_draft_editor))
+    )) > 0
+    plan_entity_id <- if (nrow(plan_row) && !is.na(plan_row$entity_id[[1]])) as.integer(plan_row$entity_id[[1]]) else NA_integer_
+    plan_entity <- if (!is.na(plan_entity_id)) {
+      DBI::dbGetQuery(connection, "SELECT parent_agency_id, entity_type, public_name FROM reference.plan_entity WHERE entity_id = $1", params = list(plan_entity_id))
+    } else {
+      data.frame()
+    }
+    accounting_agency_id <- if (nrow(plan_row) && !is.na(plan_row$agency_id[[1]])) {
+      plan_row$agency_id[[1]]
+    } else if (nrow(plan_entity)) {
+      plan_entity$parent_agency_id[[1]]
+    } else {
+      NA_character_
+    }
+    link_entity_type <- if (nrow(plan_entity)) {
+      switch(
+        as.character(plan_entity$entity_type[[1]]),
+        MayoraltyOffice = "mayoral service",
+        `mayoral service` = "mayoral service",
+        QuasiAgency = "quasi agency",
+        `quasi agency` = "quasi agency",
+        Other = "quasi agency",
+        "quasi agency"
+      )
+    } else {
+      NA_character_
+    }
+
     for (service_id in plan_services$service_id) {
       service_key <- as.character(service_id)
+      # A service shared by multiple entities (e.g. a grant program with
+      # several peer grantee agencies) has one shared description and
+      # per-entity metric selections -- see service_is_shared() in app.R
+      # for the same check against the in-memory db. Reported 2026-07-31.
+      shared <- service_is_shared_db(connection, service_key)
+
       description <- draft_field(services, paste0("service_description_", service_key), NA_character_)
-      if (!is.na(description)) {
+      if (!is.na(description) && (!shared || services_draft_editor_is_admin)) {
         DBI::dbExecute(connection, "UPDATE reference.service SET service_description = $2 WHERE service_id = $1", params = list(service_key, description))
       }
+
       if (!is.null(services$serviceMetrics[[service_key]])) {
-        DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE service_id = $1", params = list(service_key))
         metric_ids <- suppressWarnings(as.integer(unlist(services$serviceMetrics[[service_key]])))
         metric_ids <- metric_ids[!is.na(metric_ids)]
+
+        if (!shared) {
+          DBI::dbExecute(connection, "DELETE FROM performance.pm_service_link WHERE service_id = $1", params = list(service_key))
+        }
         for (measure_id in metric_ids) {
           DBI::dbExecute(
             connection,
             "INSERT INTO performance.pm_service_link (measure_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             params = list(measure_id, service_key)
           )
+        }
+
+        if (shared && !is.na(plan_entity_id)) {
+          DBI::dbExecute(
+            connection,
+            "DELETE FROM performance.measure_entity_link WHERE service_id = $1 AND entity_id = $2",
+            params = list(service_key, plan_entity_id)
+          )
+          for (measure_id in metric_ids) {
+            DBI::dbExecute(
+              connection,
+              paste(
+                "INSERT INTO performance.measure_entity_link",
+                "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                "ON CONFLICT (measure_id, agency_id, service_id, entity_type, entity_id)",
+                "DO UPDATE SET public_name = EXCLUDED.public_name, updated_at = now()"
+              ),
+              params = list(
+                measure_id,
+                accounting_agency_id,
+                service_key,
+                link_entity_type,
+                plan_entity_id,
+                plan_entity$public_name[[1]]
+              )
+            )
+          }
         }
       }
     }

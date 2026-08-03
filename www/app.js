@@ -1529,6 +1529,10 @@
 
   document.addEventListener("click", function (event) {
     if (event.target.closest("[data-measure-review-action]")) return;
+    // The Action Plan Measures row is clickable to open the measure, but
+    // also holds an owning-entity <select> -- clicking or picking from
+    // that select must not also open the row's measure modal underneath it.
+    if (event.target.closest(".action-plan-measure-owner-select")) return;
     var row = event.target.closest("[data-measure-id]");
     var addButton = event.target.closest("[data-new-measure]");
     if ((!row && !addButton) || !window.Shiny) return;
@@ -1542,6 +1546,29 @@
     // remembers to check the box by hand.
     var newMeasureValue = addButton && addButton.getAttribute("data-default-city") === "true" ? "new:city" : "new";
     window.Shiny.setInputValue("open_measure_id", addButton ? newMeasureValue : row.getAttribute("data-measure-id"), { priority: "event" });
+  });
+
+  // The Action Plan Measures row itself is a div (role="button", not a
+  // real <button>) so it can host the owner <select> without nesting
+  // interactive content inside a button element -- restore Enter/Space
+  // keyboard activation by re-dispatching as a click, which the delegate
+  // above already handles.
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    var row = event.target.closest(".action-plan-measures-row[role='button']");
+    if (!row || event.target.closest("select")) return;
+    event.preventDefault();
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+
+  document.addEventListener("change", function (event) {
+    var select = event.target.closest(".action-plan-measure-owner-select");
+    if (!select || !window.Shiny) return;
+    window.Shiny.setInputValue("action_plan_measure_owner_request", {
+      measureId: Number(select.getAttribute("data-measure-id")),
+      value: select.value,
+      nonce: Date.now()
+    }, { priority: "event" });
   });
 
   document.addEventListener("click", function (event) {
@@ -3098,6 +3125,13 @@
   function handlePlanReviewSaveResult(message) {
     if (!message || !message.ok) return;
     setReviewSaveStatus("Review autosaved at " + message.savedAt + ". Current score: " + message.score + "/100.");
+    // The "Overall score" summary card is server-rendered once and never
+    // re-rendered during autosave (see plan_review_save_request's comment
+    // in app.R -- a re-render would collapse open scoring drawers), so it
+    // needs to be patched here directly or it stays frozen at whatever it
+    // showed on page load while the status line above already moved on.
+    var overallScore = document.getElementById("review_overall_score_value");
+    if (overallScore) overallScore.textContent = message.score + "/100";
   }
 
   function requestSharedDraft(page) {

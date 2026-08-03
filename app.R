@@ -250,6 +250,13 @@ uses_review_administration_mode <- function(app_roles) {
   has_any_role(app_roles, c("CAOffice", "DeputyMayor"))
 }
 
+# A shared service's description (see service_is_shared()) is locked to
+# admins/BBMR analysts, not agency users -- everyone else can view but not
+# edit it, regardless of their own agency's edit permissions.
+can_edit_shared_service_description <- function(app_roles) {
+  has_any_role(app_roles, c("SystemAdmin", "BBMRReviewer"))
+}
+
 risk_type_label <- function(value) {
   labels <- names(risk_type_choices)
   match_index <- match(value, unname(risk_type_choices))
@@ -741,10 +748,18 @@ service_body_output_id <- function(service_id) {
   paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
 }
 
-service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE) {
+service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE, can_edit_shared_description = FALSE) {
   if (is.null(service_row) || !nrow(service_row)) return(NULL)
   service_id <- service_row$service_id[[1]]
   service_is_admin <- is_administration_service(service_row)
+  # A service shared by multiple entities (e.g. a grant program with
+  # several peer grantee agencies) has one description but many editors --
+  # lock it to system admins/BBMR analysts (can_edit_shared_description)
+  # regardless of plan-editability so no single grantee can overwrite the
+  # others' shared text. Each entity still manages its OWN metric
+  # selection below via measure_entity_link.
+  service_shared <- service_is_shared(db, service_id)
+  description_locked <- isTRUE(locked) || (service_shared && !isTRUE(can_edit_shared_description))
   if (is.null(measures)) {
     measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
   }
@@ -845,7 +860,12 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
       p(class = "goal-field-instruction", "Describe the service in a consistent outcome-oriented structure: start with what the service provides, explain the goal or value it creates for the agency or residents, then name the core activities performed by the service."),
       p(class = "goal-field-instruction", "A strong description should avoid a simple task list. It should connect administrative, operational, or resident-facing work to the agency's strategic priorities, such as operational success, accountability, effective use of data, service excellence, or attracting and retaining talented people."),
       p(class = "goal-field-instruction", "Example structure: This service provides executive direction, communications and public relations, fiscal management, human capital management, and performance management for the department. The goal of this service is to drive innovation, promote the agency's strategic plan, and strengthen service excellence. Activities performed by this service include administrative direction, fiscal management, human resource support, performance management, communications, and change management."),
-      textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description)
+      if (description_locked) div(
+        class = "measure-validated-lock-note",
+        icon("lock"),
+        if (service_shared) "This service is shared by multiple entities, so its description is locked to system admins and BBMR analysts." else "This plan is no longer editable."
+      ),
+      disable_input_tag(textAreaInput(paste0("service_description_", service_id), label = NULL, rows = 4, value = description), description_locked)
     ),
     if (service_is_admin) div(
       class = "goal-form-field full-width",
@@ -917,7 +937,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   rows[order(rows$title), , drop = FALSE]
 }
 
-legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE) {
+legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible = FALSE, entity_scoped_only = FALSE) {
   link_table <- if (include_ineligible && "performance_pm_service_link_all" %in% names(db)) db$performance_pm_service_link_all else db$performance_pm_service_link
   if (is.null(link_table) || !nrow(link_table) || !length(service_ids)) return(integer(0))
   link_rows <- link_table[as.character(link_table$service_id) %in% as.character(service_ids), , drop = FALSE]
@@ -930,7 +950,23 @@ legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible
   if (!nrow(measure_rows)) return(integer(0))
 
   accounting_agency_id <- plan_accounting_agency_id(db, plan)
+  # A shared service's measures (a grant program with several peer
+  # quasi-agency grantees, etc.) remain valid CANDIDATES for every
+  # grantee via the bare agency_id match -- they all draw from the same
+  # program's measure catalog. But when computing what's CURRENTLY
+  # selected/attached for one specific entity (entity_scoped_only, used by
+  # service_metric_ids()), that same bare match must not apply --
+  # grantees typically share their parent agency's agency_id, so it would
+  # show every OTHER entity's picks as already selected too. Only an
+  # explicit entity-specific link (below) counts as "selected" for a
+  # shared service.
   keep_ids <- measure_rows$measure_id[measure_rows$agency_id == accounting_agency_id]
+  if (entity_scoped_only) {
+    service_ids_unique <- unique(as.character(service_ids))
+    shared_service_ids <- service_ids_unique[vapply(service_ids_unique, function(sid) service_is_shared(db, sid), logical(1))]
+    measures_on_shared_service <- if (length(shared_service_ids)) unique(link_rows$measure_id[as.character(link_rows$service_id) %in% shared_service_ids]) else integer(0)
+    keep_ids <- keep_ids[!keep_ids %in% measures_on_shared_service]
+  }
 
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link) && !is.na(plan$entity_id[[1]])) {
     scoped_links <- db$performance_measure_entity_link[
@@ -949,7 +985,13 @@ legacy_service_measure_ids <- function(db, plan, service_ids, include_ineligible
 measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.null(plan) || !nrow(plan)) return(db$performance_performance_measure[0, , drop = FALSE])
   agency_id <- plan_accounting_agency_id(db, plan)
-  if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
+  # Must not require the entity_link table to already have rows SOMEWHERE
+  # (nrow() > 0 is a global check, not scoped to this plan) -- a shared
+  # service with no entity links created yet for ANY entity would
+  # otherwise skip the entity-aware branch below and fall through to the
+  # unscoped blanket agency dump further down, showing every grantee the
+  # exact same unfiltered agency-wide catalog.
+  if ("performance_measure_entity_link" %in% names(db)) {
     if (include_ineligible && is.na(plan$entity_id[[1]])) {
       library_links <- db$performance_measure_entity_link[
         db$performance_measure_entity_link$agency_id == plan$agency_id[[1]] &
@@ -999,7 +1041,7 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
 }
 
 service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
-  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible)
+  linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible, entity_scoped_only = TRUE)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
     if (!is.null(plan) && nrow(plan)) {
@@ -2822,6 +2864,48 @@ plan_team_service_ids <- function(db, plan) {
   unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
 }
 
+# A "shared" service is used by more than one active entity that submits
+# its own plan (reference.plan_entity_service) -- e.g. a single grant
+# program (Art and Culture Grants) funding several peer quasi-agency
+# grantees (BMA, Symphony, Zoo, Walters), none of which individually owns
+# it. Reported 2026-07-31: grantees under a shared service typically share
+# their parent agency's agency_id, so every entity could see (and
+# overwrite) every OTHER entity's service description and metric
+# selections. Distinct from plan_team_unique_service_ids(), which is
+# scoped to one plan's own team and returns the OPPOSITE (non-shared)
+# subset.
+service_is_shared <- function(db, service_id) {
+  if (is.null(service_id) || length(service_id) != 1 || is.na(service_id) || !nzchar(trimws(as.character(service_id)))) return(FALSE)
+  links <- db$reference_plan_entity_service[as.character(db$reference_plan_entity_service$service_id) == as.character(service_id), , drop = FALSE]
+  if (!nrow(links)) return(FALSE)
+  entities <- db$reference_plan_entity[
+    !is.na(db$reference_plan_entity$active) & db$reference_plan_entity$active &
+      !is.na(db$reference_plan_entity$has_own_plan) & db$reference_plan_entity$has_own_plan,
+    ,
+    drop = FALSE
+  ]
+  length(unique(links$entity_id[links$entity_id %in% entities$entity_id])) > 1
+}
+
+# A shared service's own measures aren't just shared for description/
+# metric-selection purposes -- performance.measure_actuals has no
+# per-entity column, so two grantees editing the SAME measure_id's
+# definition or fiscal-year data would clobber each other. Reported
+# 2026-07-31: an AgencyWriter previewing as one grantee (Walters) could
+# still open and edit another grantee's measure under the same shared
+# service, since the measure modal's edit permission was a pure role
+# check with no ownership check at all. Locked to SystemAdmin/BBMR
+# (can_edit_shared_service_description()) the same as the description,
+# until each measure is attributed to its own specific entity via
+# measure_entity_link and this can be scoped more narrowly.
+measure_belongs_to_shared_service <- function(db, measure_id) {
+  measure_id <- suppressWarnings(as.integer(measure_id))
+  if (is.na(measure_id)) return(FALSE)
+  linked_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$measure_id == measure_id])
+  if (!length(linked_service_ids)) return(FALSE)
+  any(vapply(linked_service_ids, function(service_id) service_is_shared(db, service_id), logical(1)))
+}
+
 plan_team_unique_service_ids <- function(db, plan) {
   service_ids <- plan_team_service_ids(db, plan)
   if (!length(service_ids)) return(character(0))
@@ -3756,11 +3840,16 @@ metric_export_summary <- function(db, measure_ids, current_fy = 2027) {
   })
 }
 
+# overall_score has exactly one writer (save_plan_review_scores(), in
+# R/database.R) and it's always already a 0-100 weighted score -- there is
+# no remaining code path that stores a raw 1-4 average into it. The old
+# "score <= 4 means it's still on a 1-4 scale, multiply by 25" heuristic
+# below was therefore pure guesswork by value alone, and it actively
+# misfired on any plan that was genuinely, correctly scored low (a raw
+# weighted score of 3 is a real "3/100", not a "75/100").
 score_out_of_100 <- function(score) {
   if (is.na(score)) return("Not scored")
-  numeric_score <- as.numeric(score)
-  if (numeric_score <= 4) numeric_score <- numeric_score * 25
-  paste0(round(numeric_score), "/100")
+  paste0(round(as.numeric(score)), "/100")
 }
 
 plan_review_expected_count <- function(goal_count, service_count) {
@@ -4857,7 +4946,15 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
         div(
           class = "review-summary-card",
           span("Overall score"),
-          strong(if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored")
+          # Frozen at whatever it was when this page/modal last rendered --
+          # the autosave observer (plan_review_save_request) deliberately
+          # skips a server re-render on every scoring tick (see its comment)
+          # to avoid collapsing open goal/service drawers, so this card
+          # doesn't update again during the same session on its own.
+          # handlePlanReviewSaveResult() in app.js patches this element's
+          # text directly from the same save result that updates the
+          # autosave status line, so both stay in sync without a re-render.
+          strong(id = "review_overall_score_value", if (!is.null(review_bits$review)) score_out_of_100(review_bits$review$overall_score[[1]]) else "Not scored")
         ),
         div(
           class = "review-summary-card",
@@ -5143,7 +5240,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   # server-side in collect_measure_form()/collect_measure_years() and
   # save_measure_record() regardless of what this UI renders.
   is_measure_validated <- identical(status, "Validated")
-  definition_locked <- measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data
+  # can_edit_form being FALSE (e.g. a shared-service measure not owned by
+  # the current viewer -- see current_user_can_edit_measure()) used to only
+  # set a data-can-edit="false" attribute for client-side JS to disable,
+  # but that JS (initializeReadOnlyModals()) is wired to a MutationObserver
+  # on #page, and this modal renders in a separate uiOutput("measure_modal")
+  # outside #page -- so it never actually ran, and the form looked
+  # editable even though persist_measure() correctly rejected the save
+  # server-side. Folding it into definition_locked disables every field
+  # directly in the server-rendered HTML instead, the same reliable
+  # mechanism already used for the Validated-measure lock.
+  form_locked <- !isTRUE(can_edit_form)
+  definition_locked <- (measure_definition_is_locked(is_measure_validated) && !can_edit_locked_data) || form_locked
   effective_can_edit_scope <- can_edit_scope && !definition_locked
   status_meta <- if (is_new) list(label = "Draft", tone = "warning") else measure_library_status(measure)
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
@@ -5186,7 +5294,14 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-form-stack",
         div(class = "required-fields-note", "Fields marked Required must be completed before submitting a measure for approval. Drafts can still be saved while these fields are incomplete."),
-        if (definition_locked) {
+        if (form_locked) {
+          div(
+            class = "measure-validated-lock-note measure-shared-lock-note",
+            icon("lock"),
+            "This measure belongs to a shared service and can only be edited by its own entity or a System Admin. You can view it, but Save and Submit are disabled."
+          )
+        },
+        if (definition_locked && !form_locked) {
           div(
             class = "measure-validated-lock-note",
             icon("lock"),
@@ -5317,8 +5432,8 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
-              actual_locked <- measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data
-              target_locked <- measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data
+              actual_locked <- (measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
+              target_locked <- (measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
               actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
               target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
               is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
@@ -5356,17 +5471,21 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
       div(
         class = "measure-modal-actions",
         div(
-          if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", icon("trash-can"), "Delete measure"),
-          if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", icon("ban"), "Make inactive"),
-          if (!is_new && !isTRUE(value("active", TRUE))) actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small"),
-          if (!is_new && is_measure_validated && isTRUE(can_edit_locked_data)) tags$button(id = "request_measure_revert_to_draft", type = "button", class = "civic-button secondary small", icon("rotate-left"), "Revert to Draft")
+          if (!is_new && isTRUE(can_delete_measure)) tags$button(id = "delete_measure", type = "button", class = "civic-button danger small", disabled = if (form_locked) "disabled", icon("trash-can"), "Delete measure"),
+          if (!is_new && isTRUE(value("active", TRUE))) tags$button(id = "request_measure_deactivate", type = "button", class = "civic-button danger small", disabled = if (form_locked) "disabled", icon("ban"), "Make inactive"),
+          if (!is_new && !isTRUE(value("active", TRUE))) {
+            reactivate_button <- actionButton("reactivate_measure", "Reactivate", class = "civic-button secondary small")
+            if (form_locked) reactivate_button$attribs$disabled <- "disabled"
+            reactivate_button
+          },
+          if (!is_new && is_measure_validated && isTRUE(can_edit_locked_data)) tags$button(id = "request_measure_revert_to_draft", type = "button", class = "civic-button secondary small", disabled = if (form_locked) "disabled", icon("rotate-left"), "Revert to Draft")
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
+          p(class = "approval-workflow-note", if (form_locked) "This measure is locked -- Save and Submit are disabled." else "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
           div(
-            tags$button(id = "save_measure", type = "button", class = "civic-button secondary", "Save"),
-            tags$button(id = "submit_measure", type = "button", class = "civic-button primary", "Submit for approval")
+            tags$button(id = "save_measure", type = "button", class = "civic-button secondary", disabled = if (form_locked) "disabled", "Save"),
+            tags$button(id = "submit_measure", type = "button", class = "civic-button primary", disabled = if (form_locked) "disabled", "Submit for approval")
           )
         )
       ),
@@ -5467,8 +5586,9 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
 # whole Performance Reviewing group; the modal's own can_edit_scope check
 # still restricts who can actually mark a measure Citywide or change its
 # pillar to SystemAdmin/OPIReviewer.
-page_action_plan_measures <- function(db) {
+page_action_plan_measures <- function(db, can_edit_owner = FALSE) {
   measures <- db$city_measures
+  owner_choices <- if (can_edit_owner) agency_selector_choices(db) else character(0)
   snapshot_years <- fiscal_measure_snapshot_years()
   missing_pillar_count <- if (nrow(measures)) sum(is.na(measures$pillar_id)) else 0L
   awaiting_data_count <- if (nrow(measures)) sum(is.na(measures$current_value) & is.na(measures$target_value)) else 0L
@@ -5509,13 +5629,27 @@ page_action_plan_measures <- function(db) {
             target <- format_measure_value(measures$target_value[i], measures$format_type[i], measures$display_unit[i], "Not set")
             pillar_label <- if (is.na(measures$pillar_name[i])) "Not linked" else measures$pillar_name[i]
             agency_label <- if (!is.na(measures$agency_public_name[i]) && nzchar(measures$agency_public_name[i])) measures$agency_public_name[i] else measures$agency_name[i]
-            tags$button(
-              type = "button",
+            current_owner_value <- if (!is.na(measures$owning_entity_id[i])) paste0("entity:", measures$owning_entity_id[i]) else paste0("agency:", measures$agency_id[i])
+            owner_cell <- if (can_edit_owner) {
+              tags$select(
+                class = "form-control action-plan-measure-owner-select",
+                `data-measure-id` = measures$measure_id[i],
+                lapply(seq_along(owner_choices), function(choice_index) {
+                  value <- unname(owner_choices[[choice_index]])
+                  tags$option(value = value, selected = if (identical(value, current_owner_value)) "selected", names(owner_choices)[[choice_index]])
+                })
+              )
+            } else {
+              span(agency_label)
+            }
+            div(
               class = "table-row action-plan-measures-row measure-library-row",
+              role = "button",
+              tabindex = "0",
               `data-measure-id` = measures$measure_id[i],
               span(measures$title[i]),
               span(class = if (is.na(measures$pillar_name[i])) "action-plan-measure-unlinked", pillar_label),
-              span(agency_label),
+              owner_cell,
               span(paste(actual, "/", target)),
               status_chip(status_meta$label, status_meta$tone)
             )
@@ -5929,7 +6063,7 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
   )
 }
 
-page_services <- function(db, agency_id, can_edit_plan = TRUE) {
+page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_service_description = FALSE) {
   plan <- current_plan(db, agency_id)
   service_rows <- plan_service_rows(db, plan)
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
@@ -6007,7 +6141,8 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE) {
                 service_rows[i, , drop = FALSE],
                 measures = measures,
                 metric_choices = metric_choices,
-                locked = !plan_is_editable(plan) || !can_edit_plan
+                locked = !plan_is_editable(plan) || !can_edit_plan,
+                can_edit_shared_description = can_edit_shared_service_description
               )
             )
           )
@@ -7902,7 +8037,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     approval_queue = page_plan_approval_queue(db, app_roles, selected_user_id),
     publishing_queue = page_publishing_queue(db),
     measure_review = page_measure_review(db),
-    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db) else page_landing(db, agency_id, app_roles, agency_roles),
+    action_plan_measures = if (can_view_performance_reviewing(app_roles)) page_action_plan_measures(db, can_review_measures(app_roles)) else page_landing(db, agency_id, app_roles, agency_roles),
     bug_fix = if (can_view_application_admin(app_roles)) {
       page_bug_fix(
         db,
@@ -7919,7 +8054,7 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
     metrics = page_metrics(db, agency_id, measure_status_filter),
     overview = page_overview(db, agency_id, can_edit_plan),
     goals = page_goals(db, agency_id, can_edit_plan),
-    services = page_services(db, agency_id, can_edit_plan),
+    services = page_services(db, agency_id, can_edit_plan, can_edit_shared_service_description(app_roles)),
     risks = page_risks(db, agency_id, can_edit_plan),
     cls_requests = if (can_access_budget_planning(app_roles)) page_cls_requests(db, agency_id, app_roles) else page_landing(db, agency_id, app_roles, agency_roles),
     cls_request_detail = if (can_access_budget_planning(app_roles)) page_cls_request_detail(db, selected_cls_id, app_roles, agency_id, cls_detail_origin, editing_line_id, editing_position_id) else page_landing(db, agency_id, app_roles, agency_roles),
@@ -8235,7 +8370,8 @@ server <- function(input, output, session) {
             service_row[1, , drop = FALSE],
             measures = measures,
             metric_choices = metric_choices,
-            locked = !plan_is_editable(plan) || !current_user_can_edit_plan()
+            locked = !plan_is_editable(plan) || !current_user_can_edit_plan(),
+            can_edit_shared_description = can_edit_shared_service_description(current_user_app_roles())
           )
         })
       })
@@ -8625,6 +8761,18 @@ server <- function(input, output, session) {
   current_user_can_manage_measure_admin_fields <- function() {
     can_review_measures(current_user_app_roles())
   }
+  # A shared service's measures are only editable by SystemAdmin/BBMR, OR
+  # by the specific entity that measure_entity_link attributes it to --
+  # not by every grantee under the shared parent agency. Non-shared
+  # measures are unaffected (existing role check governs those alone).
+  current_user_can_edit_measure <- function(data, measure_id, plan) {
+    if (current_user_can_manage_measure_admin_fields()) return(TRUE)
+    if (!measure_belongs_to_shared_service(data, measure_id)) return(TRUE)
+    if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(FALSE)
+    links <- data$performance_measure_entity_link
+    measure_id <- as.integer(measure_id)
+    any(!is.na(links$entity_id) & links$entity_id == plan$entity_id[[1]] & links$measure_id == measure_id)
+  }
   current_user_can_edit_locked_measure_data <- function() {
     can_edit_locked_measure_data(current_user_app_roles())
   }
@@ -8877,6 +9025,17 @@ server <- function(input, output, session) {
     if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
     entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
     if (!nrow(entity)) return(invisible(FALSE))
+    # A measure must never link to an entity outside its own owning agency
+    # -- e.g. saving an EXISTING DGS measure while the current viewer
+    # happens to be acting as OPI's plan (a common admin/testing scenario)
+    # must not silently relabel it as an OPI-owned measure. Reported
+    # 2026-07-31: "Average Age of Fleet" (agency_id AGC2600/DGS) picked up
+    # a stray link to OPI's entity this way, and the Action Plan Measures
+    # list -- which shows the linked entity's name over the bare agency
+    # name -- started displaying it as owned by OPI instead of DGS.
+    measure_row <- data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(measure_id), , drop = FALSE]
+    if (!nrow(measure_row)) return(invisible(FALSE))
+    if (!identical(as.character(measure_row$agency_id[[1]]), as.character(plan_accounting_agency_id(data, plan)))) return(invisible(FALSE))
     services <- plan_service_rows(data, plan)
     services <- services[!is_administration_service(services), , drop = FALSE]
     if (!nrow(services)) services <- plan_service_rows(data, plan)
@@ -8913,6 +9072,26 @@ server <- function(input, output, session) {
         as.character(entity$public_name[[1]])
       )
     )
+    invisible(TRUE)
+  }
+  # Reassigning a measure's owner from the Action Plan Measures list
+  # (action_plan_measure_owner_select) moves the measure to the new
+  # owner's accounting agency and replaces its entity link -- consistent
+  # with how a brand-new Citywide measure's owning-entity picker already
+  # works (resolve_owning_agency_id()/ensure_measure_current_entity_link()).
+  # A measure only ever has one owning agency, so this is a full
+  # reassignment, not just a display relabel.
+  reassign_measure_owner <- function(measure_id, submitter_value) {
+    measure_id <- as.integer(measure_id)
+    new_agency_id <- resolve_owning_agency_id(app_data(), submitter_value)
+    if (is.na(new_agency_id) || !nzchar(new_agency_id)) return(invisible(FALSE))
+    DBI::dbExecute(database, "UPDATE performance.performance_measure SET agency_id = $2 WHERE measure_id = $1", params = list(measure_id, new_agency_id))
+    DBI::dbExecute(database, "DELETE FROM performance.measure_entity_link WHERE measure_id = $1", params = list(measure_id))
+    refresh_app_data(after = function() {
+      fresh_data <- app_data()
+      ensure_measure_current_entity_link(measure_id, fresh_data, current_plan(fresh_data, submitter_value))
+      showNotification("Measure owner updated.", type = "message")
+    })
     invisible(TRUE)
   }
   is_blank_value <- function(value) {
@@ -9069,6 +9248,14 @@ server <- function(input, output, session) {
       return()
     }
     existing_measure_id <- current_measure_id()
+    if (!identical(existing_measure_id, "new")) {
+      data <- app_data()
+      plan <- current_plan(data, current_submitter_value())
+      if (!current_user_can_edit_measure(data, existing_measure_id, plan)) {
+        showNotification("This measure belongs to a shared service and can only be edited by its own entity or a System Admin.", type = "error", duration = 8)
+        return()
+      }
+    }
     values <- collect_measure_form()
     yearly_values <- collect_measure_years()
     locked_changes_missing_note <- Filter(
@@ -9170,6 +9357,20 @@ server <- function(input, output, session) {
       current_measure_id(NULL)
       showNotification("Measure deleted.", type = "message", duration = 6)
     })
+  }, ignoreInit = TRUE)
+  observeEvent(input$action_plan_measure_owner_request, {
+    if (!current_user_can_manage_measure_admin_fields()) {
+      showNotification("Only System Admins and OPI reviewers can reassign a measure's owner.", type = "error", duration = 8)
+      return()
+    }
+    request <- input$action_plan_measure_owner_request
+    measure_id <- suppressWarnings(as.integer(request$measureId))
+    submitter_value <- request$value
+    if (is.na(measure_id) || is.null(submitter_value) || !nzchar(submitter_value)) return()
+    result <- tryCatch(reassign_measure_owner(measure_id, submitter_value), error = function(error) error)
+    if (inherits(result, "error")) {
+      showNotification(paste("Couldn't reassign the measure's owner:", conditionMessage(result)), type = "error", duration = 8)
+    }
   }, ignoreInit = TRUE)
   observeEvent(input$guidance_download_started, {
     showNotification("Performance planning guidance download started.", type = "message")
@@ -11132,7 +11333,8 @@ server <- function(input, output, session) {
       if (identical(measure_id, "new")) NULL else as.integer(measure_id),
       current_user_can_manage_measure_admin_fields(),
       target_fy,
-      current_user_can_submit_measure() || current_user_can_review_measures(),
+      (current_user_can_submit_measure() || current_user_can_review_measures()) &&
+        (identical(measure_id, "new") || current_user_can_edit_measure(data, measure_id, plan)),
       can_delete_measures(current_user_app_roles()),
       current_user_can_edit_locked_measure_data(),
       identical(measure_id, "new") && isTRUE(pending_new_measure_default_city()),
