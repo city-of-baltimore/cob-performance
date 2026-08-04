@@ -4503,6 +4503,16 @@ textarea.cls-over-limit,
   margin: 0;
 }
 
+.measure-review-history-entry + .measure-review-history-entry {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--lp-border-default);
+}
+
+.measure-review-history-entry-past {
+  opacity: 0.75;
+}
+
 .risk-register-row {
   width: 100%;
   border: 0;

@@ -2291,11 +2291,39 @@ page_plan_review_detail <- function(db, plan_id, can_edit_review = FALSE, can_as
   )
 }
 
-latest_measure_review <- function(db, measure_id) {
+measure_reviews_for <- function(db, measure_id) {
   if (!"review_measure_review" %in% names(db) || !nrow(db$review_measure_review)) return(data.frame())
   rows <- db$review_measure_review[db$review_measure_review$measure_id == measure_id, , drop = FALSE]
   if (!nrow(rows)) return(rows)
-  rows[order(rows$reviewed_at, rows$measure_review_id, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
+  rows[order(rows$reviewed_at, rows$measure_review_id, decreasing = TRUE), , drop = FALSE]
+}
+
+latest_measure_review <- function(db, measure_id) {
+  measure_reviews_for(db, measure_id)[1, , drop = FALSE]
+}
+
+# One block per past review decision that actually left feedback, newest
+# first -- a measure returned more than once used to only ever show the
+# latest round's comment (latest_measure_review()'s [1,] slice), losing
+# the context of what earlier rounds asked for. All of the underlying rows
+# were already loaded into db$review_measure_review; this just stops
+# throwing the older ones away before they reach the UI.
+measure_review_history_blocks <- function(reviews) {
+  if (!nrow(reviews)) return(NULL)
+  has_feedback <- !is.na(reviews$feedback) & nzchar(trimws(reviews$feedback))
+  reviews <- reviews[has_feedback, , drop = FALSE]
+  if (!nrow(reviews)) return(NULL)
+  lapply(seq_len(nrow(reviews)), function(i) {
+    div(
+      class = paste("measure-review-history-entry", if (i > 1) "measure-review-history-entry-past" else ""),
+      div(
+        class = "chip-row",
+        status_chip(reviews$decision[i], if (identical(reviews$decision[i], "Approved")) "success" else "warning"),
+        status_chip(if (is.na(reviews$reviewed_at[i])) "Review date unavailable" else as.character(reviews$reviewed_at[i]), "primary")
+      ),
+      p(reviews$feedback[i])
+    )
+  })
 }
 
 measure_review_card <- function(db, measure) {
@@ -5406,7 +5434,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
   format_choices <- if (identical(selected_format, "N/A")) c("N/A (legacy)" = "N/A", "Percent" = "Percent", "Count" = "Count", "Currency" = "Currency") else c("Percent", "Count", "Currency")
   selected_display_unit <- value("display_unit")
-  latest_review <- if (is_new) data.frame() else latest_measure_review(db, measure_id)
+  measure_review_history <- if (is_new) data.frame() else measure_reviews_for(db, measure_id)
   selected_pillar_id <- value("pillar_id")
   selected_pillar <- db$reference_pillar[db$reference_pillar$pillar_id == selected_pillar_id, , drop = FALSE]
   selected_pillar_goal_id <- value("pillar_goal_id")
@@ -5470,17 +5498,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             )
           )
         },
-        if (nrow(latest_review) && nzchar(trimws(latest_review$feedback[[1]] %||% ""))) {
-          tags$section(
-            class = "modal-section-block measure-review-feedback",
-            h3("Reviewer Feedback"),
-            div(
-              class = "chip-row",
-              status_chip(latest_review$decision[[1]], if (identical(latest_review$decision[[1]], "Approved")) "success" else "warning"),
-              status_chip(if (is.na(latest_review$reviewed_at[[1]])) "Review date unavailable" else as.character(latest_review$reviewed_at[[1]]), "primary")
-            ),
-            p(latest_review$feedback[[1]])
-          )
+        {
+          review_history_blocks <- measure_review_history_blocks(measure_review_history)
+          if (!is.null(review_history_blocks)) {
+            tags$section(
+              class = "modal-section-block measure-review-feedback",
+              h3("Reviewer Feedback"),
+              # Every past round that left feedback, newest first -- not
+              # just the latest, so a measure returned more than once shows
+              # what earlier rounds asked for too (2026-08-04).
+              review_history_blocks
+            )
+          }
         },
         tags$section(
           class = "modal-section-block measure-form-section",
