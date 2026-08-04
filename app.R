@@ -2583,7 +2583,19 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
   category_filter <- category_filter[nzchar(category_filter)]
   priority_filter <- priority_filter[nzchar(priority_filter)]
   status_filter <- status_filter[nzchar(status_filter)]
-  if (!length(status_filter)) status_filter <- default_feedback_status_filter
+  # An empty selection means "no filter" (show every status), exactly like
+  # category/priority above -- it must NOT get silently rewritten to
+  # default_feedback_status_filter here. That used to happen on every
+  # render, which set the rendered selectInput's `selected =` to a value
+  # that didn't match what feedback_status_filter_value() actually held;
+  # Shiny re-syncing that mismatch (the freshly-rendered widget reporting
+  # its "selected" values back as a new input) could re-trigger a full
+  # page re-render, which could reproduce the same mismatch again --
+  # reported 2026-08-03 as the Bug/Fix page reloading in a loop when
+  # toggling the status filter. The default now only applies at
+  # initialization/sign-in (see feedback_status_filter_value's declaration
+  # and complete_sign_in()), where the reactive value and the rendered
+  # selection start out equal, so there's nothing to resync.
   status_filter <- status_filter[status_filter %in% feedback_status_choices]
   if (nrow(filtered_feedback) && nzchar(search)) {
     haystack <- tolower(paste(
@@ -5297,7 +5309,18 @@ measure_value_input <- function(input_id, label, value = NA, format_type = "Coun
     div(
       class = "form-group shiny-input-container",
       tags$label(class = "control-label", `for` = input_id, label),
-      do.call(tags$input, input_attrs)
+      do.call(tags$input, input_attrs),
+      # Rendered unconditionally (not gated on format_type == "Percent")
+      # and hidden by default via the measure-fraction-warning-hidden
+      # class, so it already exists in the DOM even when the format
+      # dropdown gets switched to Percent client-side without a reload --
+      # otherwise a brand-new measure, or an existing one whose format is
+      # being changed for the first time this session, would have nothing
+      # for checkMeasureFractionWarning() in app.js to toggle. Toggled on
+      # every keystroke, not just blur -- deliberately louder than a
+      # corner notification (per Melanie 2026-08-04: the toast for this
+      # exact case wasn't noticeable enough for this audience).
+      div(class = "measure-fraction-warning measure-fraction-warning-hidden", icon("triangle-exclamation"), tags$span())
     )
   )
 }
@@ -8546,7 +8569,11 @@ server <- function(input, output, session) {
   feedback_search_value <- reactiveVal("")
   feedback_category_filter_value <- reactiveVal(character(0))
   feedback_priority_filter_value <- reactiveVal(character(0))
-  feedback_status_filter_value <- reactiveVal(character(0))
+  # Initialized to the intended default (not character(0)) so the reactive
+  # value always matches what page_feedback() actually renders as
+  # `selected =` -- see the reload-loop comment there for why that mismatch
+  # matters.
+  feedback_status_filter_value <- reactiveVal(default_feedback_status_filter)
   measure_status_filter_value <- reactiveVal("All except deprecated")
   service_open_flags <- new.env(parent = emptyenv())
   service_body_outputs_registered <- new.env(parent = emptyenv())
@@ -8671,7 +8698,7 @@ server <- function(input, output, session) {
     feedback_search_value("")
     feedback_category_filter_value(character(0))
     feedback_priority_filter_value(character(0))
-    feedback_status_filter_value(character(0))
+    feedback_status_filter_value(default_feedback_status_filter)
     measure_status_filter_value("All except deprecated")
     # Same reasoning for the CLS workspace: the applied CLS Review filters, the
     # request that happened to be open, and its "last saved by" note are all
@@ -8684,7 +8711,7 @@ server <- function(input, output, session) {
     updateTextInput(session, "feedback_search", value = "")
     updateSelectInput(session, "feedback_category_filter", selected = character(0))
     updateSelectInput(session, "feedback_priority_filter", selected = character(0))
-    updateSelectInput(session, "feedback_status_filter", selected = character(0))
+    updateSelectInput(session, "feedback_status_filter", selected = default_feedback_status_filter)
     updateSelectInput(session, "measure_status_filter", selected = "All except deprecated")
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
