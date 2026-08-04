@@ -2934,6 +2934,28 @@ plan_review_allowed_service_ids <- function(db, plan, all_service_ids) {
   all_service_ids[all_service_ids %in% entity_service_ids]
 }
 
+# Reported 2026-08-05: a Mayoral Office scored 4/4 on every criterion still
+# came out capped at 85/100. plan_service_rows() can synthesize "extra"
+# service rows for a plan from reference_plan_entity_service/
+# performance_measure_entity_link even when performance.plan_service has
+# zero rows for it, and scorable_service_rows() only strips
+# Administrative-type services -- neither checks
+# submitter_is_mayoral_service(), unlike plan_review_allowed_service_ids()
+# above. collect_plan_review_scores() (server(), submits scores on save)
+# used to build its service list from plan_service_rows()/
+# scorable_service_rows() alone, so a Mayoral Office's phantom (unscored)
+# service row made the S3 scoring formula take the 5+15 split path
+# instead of folding the full 20 points into Family of Measures --
+# history_plan_modal()'s rendering and plan_export_payload() were already
+# correctly filtered through plan_review_allowed_service_ids(); this
+# gives collect_plan_review_scores() (and any other future caller) the
+# same one-line-correct service list instead of duplicating the filter.
+plan_review_scorable_services <- function(db, plan) {
+  services <- plan_service_rows(db, plan)
+  services <- scorable_service_rows(services)
+  services[services$service_id %in% plan_review_allowed_service_ids(db, plan, services$service_id), , drop = FALSE]
+}
+
 # Reported 2026-08-04: a plan's row in the review queue/publishing/approval
 # list pages showed overall_score exactly as of the last full
 # refresh_app_data() -- scoring a plan and navigating back to a list still
@@ -10676,8 +10698,7 @@ server <- function(input, output, session) {
     if (!nrow(plan)) return(list())
     goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
     goals <- goals[order(goals$sort_order), , drop = FALSE]
-    services <- plan_service_rows(data, plan)
-    services <- scorable_service_rows(services)
+    services <- plan_review_scorable_services(data, plan)
     rows <- list()
     append_rows <- function(criteria, target_type = "plan", target_id = NA_integer_) {
       for (i in seq_len(nrow(criteria))) {
