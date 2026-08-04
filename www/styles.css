@@ -4503,6 +4503,16 @@ textarea.cls-over-limit,
   margin: 0;
 }
 
+.measure-review-history-entry + .measure-review-history-entry {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--lp-border-default);
+}
+
+.measure-review-history-entry-past {
+  opacity: 0.75;
+}
+
 .risk-register-row {
   width: 100%;
   border: 0;
@@ -4795,6 +4805,36 @@ textarea.cls-over-limit,
 .measure-number-field.format-percent .shiny-input-container::after {
   right: 0.75rem;
   content: "%";
+}
+
+/* Deliberately louder than the corner save notification (Melanie
+   2026-08-04: that toast wasn't noticeable enough for this audience) --
+   a solid, bordered, icon-led inline banner directly under the field,
+   updated live as the person types via checkMeasureFractionWarning() in
+   app.js. Hidden by default via measure-fraction-warning-hidden. */
+.measure-fraction-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #b64454;
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-status-error-bg);
+  color: #8a2f3b;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.measure-fraction-warning svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  color: #b64454;
+}
+
+.measure-fraction-warning-hidden {
+  display: none;
 }
 
 .measure-modal-actions {

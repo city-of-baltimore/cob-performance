@@ -2291,11 +2291,39 @@ page_plan_review_detail <- function(db, plan_id, can_edit_review = FALSE, can_as
   )
 }
 
-latest_measure_review <- function(db, measure_id) {
+measure_reviews_for <- function(db, measure_id) {
   if (!"review_measure_review" %in% names(db) || !nrow(db$review_measure_review)) return(data.frame())
   rows <- db$review_measure_review[db$review_measure_review$measure_id == measure_id, , drop = FALSE]
   if (!nrow(rows)) return(rows)
-  rows[order(rows$reviewed_at, rows$measure_review_id, decreasing = TRUE), , drop = FALSE][1, , drop = FALSE]
+  rows[order(rows$reviewed_at, rows$measure_review_id, decreasing = TRUE), , drop = FALSE]
+}
+
+latest_measure_review <- function(db, measure_id) {
+  measure_reviews_for(db, measure_id)[1, , drop = FALSE]
+}
+
+# One block per past review decision that actually left feedback, newest
+# first -- a measure returned more than once used to only ever show the
+# latest round's comment (latest_measure_review()'s [1,] slice), losing
+# the context of what earlier rounds asked for. All of the underlying rows
+# were already loaded into db$review_measure_review; this just stops
+# throwing the older ones away before they reach the UI.
+measure_review_history_blocks <- function(reviews) {
+  if (!nrow(reviews)) return(NULL)
+  has_feedback <- !is.na(reviews$feedback) & nzchar(trimws(reviews$feedback))
+  reviews <- reviews[has_feedback, , drop = FALSE]
+  if (!nrow(reviews)) return(NULL)
+  lapply(seq_len(nrow(reviews)), function(i) {
+    div(
+      class = paste("measure-review-history-entry", if (i > 1) "measure-review-history-entry-past" else ""),
+      div(
+        class = "chip-row",
+        status_chip(reviews$decision[i], if (identical(reviews$decision[i], "Approved")) "success" else "warning"),
+        status_chip(if (is.na(reviews$reviewed_at[i])) "Review date unavailable" else as.character(reviews$reviewed_at[i]), "primary")
+      ),
+      p(reviews$feedback[i])
+    )
+  })
 }
 
 measure_review_card <- function(db, measure) {
@@ -2566,15 +2594,7 @@ feedback_admin_card <- function(row, admin_choices) {
   )
 }
 
-page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
-  feedback <- db$application_feedback_request
-  admin_choices <- feedback_system_admin_choices(db)
-  status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
-  feedback_status_count <- function(status) {
-    if (!length(status_counts) || !status %in% names(status_counts)) return(0L)
-    as.integer(status_counts[[status]])
-  }
-  filtered_feedback <- feedback
+feedback_normalize_filters <- function(search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
   search <- if (is.null(search) || length(search) == 0 || is.na(search[[1]])) "" else as.character(search[[1]])
   search <- tolower(trimws(search))
   category_filter <- if (is.null(category_filter) || length(category_filter) == 0) character(0) else as.character(category_filter)
@@ -2583,9 +2603,18 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
   category_filter <- category_filter[nzchar(category_filter)]
   priority_filter <- priority_filter[nzchar(priority_filter)]
   status_filter <- status_filter[nzchar(status_filter)]
-  if (!length(status_filter)) status_filter <- default_feedback_status_filter
+  # An empty selection means "no filter" (show every status), exactly like
+  # category/priority. It must never get silently rewritten to
+  # default_feedback_status_filter here -- see feedback_list_ui()'s comment
+  # for why.
   status_filter <- status_filter[status_filter %in% feedback_status_choices]
-  if (nrow(filtered_feedback) && nzchar(search)) {
+  list(search = search, category_filter = category_filter, priority_filter = priority_filter, status_filter = status_filter)
+}
+
+feedback_filtered_rows <- function(feedback, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  filters <- feedback_normalize_filters(search, category_filter, priority_filter, status_filter)
+  filtered_feedback <- feedback
+  if (nrow(filtered_feedback) && nzchar(filters$search)) {
     haystack <- tolower(paste(
       filtered_feedback$user_email,
       filtered_feedback$comment,
@@ -2594,17 +2623,45 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
       filtered_feedback$assigned_admin_name,
       sep = " "
     ))
-    filtered_feedback <- filtered_feedback[grepl(search, haystack, fixed = TRUE), , drop = FALSE]
+    filtered_feedback <- filtered_feedback[grepl(filters$search, haystack, fixed = TRUE), , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(category_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$category %in% category_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$category_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$category %in% filters$category_filter, , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(priority_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$priority %in% priority_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$priority_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$priority %in% filters$priority_filter, , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(status_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$status %in% status_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$status_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$status %in% filters$status_filter, , drop = FALSE]
   }
+  filtered_feedback
+}
+
+# Rendered by its own uiOutput("feedback_admin_list") (see server()), kept
+# separate from page_bug_fix()'s filter controls on purpose -- see the
+# comment on that uiOutput call for why the two must not share a render
+# cycle.
+feedback_list_ui <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  feedback <- db$application_feedback_request
+  admin_choices <- feedback_system_admin_choices(db)
+  filtered_feedback <- feedback_filtered_rows(feedback, search, category_filter, priority_filter, status_filter)
+  if (!nrow(feedback)) {
+    div(class = "empty-state", h3("No feedback yet"), p("Submitted feedback will appear here for System Admin review."))
+  } else if (!nrow(filtered_feedback)) {
+    div(class = "empty-state", h3("No matching feedback"), p("Clear or adjust the filters to see more requests."))
+  } else {
+    div(class = "feedback-admin-list", lapply(seq_len(nrow(filtered_feedback)), function(i) feedback_admin_card(filtered_feedback[i, , drop = FALSE], admin_choices)))
+  }
+}
+
+page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  feedback <- db$application_feedback_request
+  status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
+  feedback_status_count <- function(status) {
+    if (!length(status_counts) || !status %in% names(status_counts)) return(0L)
+    as.integer(status_counts[[status]])
+  }
+  filters <- feedback_normalize_filters(search, category_filter, priority_filter, status_filter)
   tagList(
     div(
       class = "briefing-header compact",
@@ -2628,18 +2685,12 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
       "Filter, categorize, prioritize, archive, delete, or mark requests complete.",
       div(
         class = "feedback-filter-grid",
-        div(class = "measure-field", textInput("feedback_search", "Search", value = search, placeholder = "Search email, page, or comment")),
-        div(class = "measure-field", selectInput("feedback_category_filter", "Category", choices = feedback_category_choices, selected = category_filter, multiple = TRUE)),
-        div(class = "measure-field", selectInput("feedback_priority_filter", "Priority", choices = feedback_priority_choices, selected = priority_filter, multiple = TRUE)),
-        div(class = "measure-field", selectInput("feedback_status_filter", "Status", choices = feedback_status_choices, selected = status_filter, multiple = TRUE))
+        div(class = "measure-field", textInput("feedback_search", "Search", value = filters$search, placeholder = "Search email, page, or comment")),
+        div(class = "measure-field", selectInput("feedback_category_filter", "Category", choices = feedback_category_choices, selected = filters$category_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_priority_filter", "Priority", choices = feedback_priority_choices, selected = filters$priority_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_status_filter", "Status", choices = feedback_status_choices, selected = filters$status_filter, multiple = TRUE))
       ),
-      if (!nrow(feedback)) {
-        div(class = "empty-state", h3("No feedback yet"), p("Submitted feedback will appear here for System Admin review."))
-      } else if (!nrow(filtered_feedback)) {
-        div(class = "empty-state", h3("No matching feedback"), p("Clear or adjust the filters to see more requests."))
-      } else {
-        div(class = "feedback-admin-list", lapply(seq_len(nrow(filtered_feedback)), function(i) feedback_admin_card(filtered_feedback[i, , drop = FALSE], admin_choices)))
-      }
+      uiOutput("feedback_admin_list")
     )
   )
 }
@@ -2707,6 +2758,8 @@ page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_ro
   services <- plan_service_rows(db, plan)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
   selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
   invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
@@ -3483,6 +3536,8 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
   services <- plan_service_rows(db, plan)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
   selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
   invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
@@ -3786,6 +3841,45 @@ draft_value <- function(draft, field_id, fallback = "") {
   value <- draft$values[[field_id]]
   if (is.null(value) || length(value) == 0 || is.na(value)) return(fallback)
   as.character(value)
+}
+
+# Applies a risks section draft (see merge_risks_draft_payload() in
+# R/database.R for the payload shape) on top of the live service_risk rows
+# for a plan -- edits overwrite in place, deletes drop the row, adds append
+# a synthetic row keyed by its temp id. risk_id becomes character throughout
+# the result (real ids included) since a temp "new-<epoch>" id can't be
+# coerced to integer -- every caller comparing against risk_id needs to
+# compare as character after this, not with numeric ==.
+risks_with_draft_overlay <- function(risks, plan_id, draft) {
+  if (is.null(draft)) return(risks)
+  risks$risk_id <- as.character(risks$risk_id)
+  if (nrow(risks)) {
+    keep <- !risks$risk_id %in% unlist(draft$deletes %||% list())
+    risks <- risks[keep, , drop = FALSE]
+  }
+  edits <- draft$edits %||% list()
+  for (id in names(edits)) {
+    idx <- which(risks$risk_id == id)
+    if (length(idx)) {
+      risks$risk_type[idx] <- edits[[id]]$risk_type
+      risks$description[idx] <- edits[[id]]$description
+    }
+  }
+  adds <- draft$adds %||% list()
+  if (length(adds)) {
+    added <- do.call(rbind, lapply(names(adds), function(id) {
+      data.frame(
+        risk_id = id,
+        plan_id = plan_id,
+        risk_type = adds[[id]]$risk_type,
+        description = adds[[id]]$description,
+        stringsAsFactors = FALSE
+      )
+    }))
+    common <- intersect(names(risks), names(added))
+    risks <- rbind(risks[, common, drop = FALSE], added[, common, drop = FALSE])
+  }
+  risks
 }
 
 validate_measure_selection_limit <- function(payload_json, section_key, limit = 5L) {
@@ -4432,12 +4526,14 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   overview_draft <- if (payload_preview) section_draft_payload(db, plan_id, "overview") else NULL
   goals_draft <- if (payload_preview) section_draft_payload(db, plan_id, "goals") else NULL
   services_draft <- if (payload_preview) section_draft_payload(db, plan_id, "services") else NULL
+  risks_draft <- if (payload_preview) section_draft_payload(db, plan_id, "risks") else NULL
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan_id, , drop = FALSE]
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
+  risks <- risks_with_draft_overlay(risks, plan_id, risks_draft)
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   scorable_plan_service_ids <- services$plan_service_id[services$service_id %in% scorable_service_rows(service_rows)$service_id]
   review_bits$scores <- filter_review_scores_to_scorable_services(review_bits$scores, scorable_plan_service_ids)
@@ -4771,6 +4867,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   overview_draft <- if (payload_preview) section_draft_payload(db, plan_id, "overview") else NULL
   goals_draft <- if (payload_preview) section_draft_payload(db, plan_id, "goals") else NULL
   services_draft <- if (payload_preview) section_draft_payload(db, plan_id, "services") else NULL
+  risks_draft <- if (payload_preview) section_draft_payload(db, plan_id, "risks") else NULL
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan_id, , drop = FALSE]
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
@@ -4781,6 +4878,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   service_rows <- service_rows[service_rows$service_id %in% allowed_service_ids, , drop = FALSE]
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
+  risks <- risks_with_draft_overlay(risks, plan_id, risks_draft)
   notes_summary <- review_notes_summary(review_bits)
   current_fy <- max(db$planning_agency_plan$fiscal_year, na.rm = TRUE)
   overview_text <- if (nrow(overview)) overview$overview[[1]] else ""
@@ -5242,7 +5340,18 @@ measure_value_input <- function(input_id, label, value = NA, format_type = "Coun
     div(
       class = "form-group shiny-input-container",
       tags$label(class = "control-label", `for` = input_id, label),
-      do.call(tags$input, input_attrs)
+      do.call(tags$input, input_attrs),
+      # Rendered unconditionally (not gated on format_type == "Percent")
+      # and hidden by default via the measure-fraction-warning-hidden
+      # class, so it already exists in the DOM even when the format
+      # dropdown gets switched to Percent client-side without a reload --
+      # otherwise a brand-new measure, or an existing one whose format is
+      # being changed for the first time this session, would have nothing
+      # for checkMeasureFractionWarning() in app.js to toggle. Toggled on
+      # every keystroke, not just blur -- deliberately louder than a
+      # corner notification (per Melanie 2026-08-04: the toast for this
+      # exact case wasn't noticeable enough for this audience).
+      div(class = "measure-fraction-warning measure-fraction-warning-hidden", icon("triangle-exclamation"), tags$span())
     )
   )
 }
@@ -5317,7 +5426,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   selected_format <- if (value("format_type", "Count") %in% c("Percent", "Count", "Currency", "N/A")) value("format_type", "Count") else "Count"
   format_choices <- if (identical(selected_format, "N/A")) c("N/A (legacy)" = "N/A", "Percent" = "Percent", "Count" = "Count", "Currency" = "Currency") else c("Percent", "Count", "Currency")
   selected_display_unit <- value("display_unit")
-  latest_review <- if (is_new) data.frame() else latest_measure_review(db, measure_id)
+  measure_review_history <- if (is_new) data.frame() else measure_reviews_for(db, measure_id)
   selected_pillar_id <- value("pillar_id")
   selected_pillar <- db$reference_pillar[db$reference_pillar$pillar_id == selected_pillar_id, , drop = FALSE]
   selected_pillar_goal_id <- value("pillar_goal_id")
@@ -5381,17 +5490,18 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             )
           )
         },
-        if (nrow(latest_review) && nzchar(trimws(latest_review$feedback[[1]] %||% ""))) {
-          tags$section(
-            class = "modal-section-block measure-review-feedback",
-            h3("Reviewer Feedback"),
-            div(
-              class = "chip-row",
-              status_chip(latest_review$decision[[1]], if (identical(latest_review$decision[[1]], "Approved")) "success" else "warning"),
-              status_chip(if (is.na(latest_review$reviewed_at[[1]])) "Review date unavailable" else as.character(latest_review$reviewed_at[[1]]), "primary")
-            ),
-            p(latest_review$feedback[[1]])
-          )
+        {
+          review_history_blocks <- measure_review_history_blocks(measure_review_history)
+          if (!is.null(review_history_blocks)) {
+            tags$section(
+              class = "modal-section-block measure-review-feedback",
+              h3("Reviewer Feedback"),
+              # Every past round that left feedback, newest first -- not
+              # just the latest, so a measure returned more than once shows
+              # what earlier rounds asked for too (2026-08-04).
+              review_history_blocks
+            )
+          }
         },
         tags$section(
           class = "modal-section-block measure-form-section",
@@ -6267,6 +6377,8 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_s
 page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   risk_criteria <- plan_review_criteria("plan_risks")
   risk_rubric_row <- function(row) {
     tags$tr(
@@ -6329,7 +6441,13 @@ page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
 
 risk_modal_ui <- function(db, agency_id, risk_id = NULL) {
   plan <- current_plan(db, agency_id)
-  risk <- if (is.null(risk_id)) data.frame() else db$performance_service_risk[db$performance_service_risk$risk_id == risk_id & db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
+  # risk_id may be a temp "new-<epoch>" id for a not-yet-promoted add --
+  # risks_with_draft_overlay() makes risk_id character throughout, so this
+  # must compare as character, not the numeric == this used before.
+  risk <- if (is.null(risk_id)) data.frame() else risks[risks$risk_id == as.character(risk_id), , drop = FALSE]
   is_new <- nrow(risk) == 0
   value <- function(name, default = "") {
     if (is_new || !name %in% names(risk) || is.na(risk[[name]][1])) default else risk[[name]][1]
@@ -8483,7 +8601,11 @@ server <- function(input, output, session) {
   feedback_search_value <- reactiveVal("")
   feedback_category_filter_value <- reactiveVal(character(0))
   feedback_priority_filter_value <- reactiveVal(character(0))
-  feedback_status_filter_value <- reactiveVal(character(0))
+  # Initialized to the intended default (not character(0)) so the reactive
+  # value always matches what page_feedback() actually renders as
+  # `selected =` -- see the reload-loop comment there for why that mismatch
+  # matters.
+  feedback_status_filter_value <- reactiveVal(default_feedback_status_filter)
   measure_status_filter_value <- reactiveVal("All except deprecated")
   service_open_flags <- new.env(parent = emptyenv())
   service_body_outputs_registered <- new.env(parent = emptyenv())
@@ -8608,7 +8730,7 @@ server <- function(input, output, session) {
     feedback_search_value("")
     feedback_category_filter_value(character(0))
     feedback_priority_filter_value(character(0))
-    feedback_status_filter_value(character(0))
+    feedback_status_filter_value(default_feedback_status_filter)
     measure_status_filter_value("All except deprecated")
     # Same reasoning for the CLS workspace: the applied CLS Review filters, the
     # request that happened to be open, and its "last saved by" note are all
@@ -8621,7 +8743,7 @@ server <- function(input, output, session) {
     updateTextInput(session, "feedback_search", value = "")
     updateSelectInput(session, "feedback_category_filter", selected = character(0))
     updateSelectInput(session, "feedback_priority_filter", selected = character(0))
-    updateSelectInput(session, "feedback_status_filter", selected = character(0))
+    updateSelectInput(session, "feedback_status_filter", selected = default_feedback_status_filter)
     updateSelectInput(session, "measure_status_filter", selected = "All except deprecated")
     submitter_value <- matched_user_submitter_value(data, user_id)
     if (!is.null(submitter_value)) {
@@ -10400,12 +10522,21 @@ server <- function(input, output, session) {
     }
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
+    if (!plan_is_editable(plan)) {
+      showNotification("This plan is locked and cannot be edited.", type = "error", duration = 8)
+      return()
+    }
     risk_id <- current_risk_id()
-    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
+    # NULL only for the literal "new" sentinel (a brand-new risk, no draft
+    # entry yet). A "new-<epoch>" temp id (re-editing an unsaved add before
+    # it's ever promoted) must pass through as-is so
+    # save_risks_draft_upsert() reuses that same draft entry instead of
+    # minting a second one.
+    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NULL else risk_id
     result <- tryCatch(
-      save_service_risk(
-        database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description,
-        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      save_risks_draft_upsert(
+        database, plan$plan_id[[1]], risk_id, input$risk_type, input$risk_description,
+        updated_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
       ),
       error = function(error) error
     )
@@ -10426,12 +10557,16 @@ server <- function(input, output, session) {
     }
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
+    if (!plan_is_editable(plan)) {
+      showNotification("This plan is locked and cannot be edited.", type = "error", duration = 8)
+      return()
+    }
     risk_id <- current_risk_id()
-    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
+    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NULL else risk_id
     result <- tryCatch(
-      delete_service_risk(
-        database, risk_id, plan$plan_id[[1]],
-        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      save_risks_draft_delete(
+        database, plan$plan_id[[1]], risk_id,
+        updated_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
       ),
       error = function(error) error
     )
@@ -11379,6 +11514,32 @@ server <- function(input, output, session) {
   observeEvent(input$feedback_status_filter, feedback_status_filter_value(input$feedback_status_filter %||% character(0)), ignoreInit = TRUE, ignoreNULL = FALSE)
   observeEvent(input$measure_status_filter, measure_status_filter_value(input$measure_status_filter %||% "All except deprecated"), ignoreInit = TRUE, ignoreNULL = FALSE)
 
+  # Rendered separately from output$page on purpose. page_bug_fix()'s filter
+  # selectInputs used to be recreated from scratch every time any of these
+  # reactiveVals changed, since output$page's one giant renderUI depended on
+  # them too. A freshly (re)initialized selectize widget echoes its own
+  # "selected" back to the server as if the person had just changed it --
+  # normally a harmless no-op, since reactiveVal ignores an identical value.
+  # But recreating the widget while a removal is still in flight could echo
+  # back the *previous* (pre-removal) selection, flipping the reactiveVal
+  # back, re-rendering again, echoing the *new* one, flipping back again --
+  # reported 2026-08-04 as the Bug/Fix status filter getting "caught in a
+  # loop" when removing a single status (confirmed via server-side logging:
+  # the value oscillated between the pre- and post-removal selection).
+  # Keeping the filter controls out of output$page's dependency graph (see
+  # isolate() around feedback_filters below) means changing a filter no
+  # longer touches their DOM at all -- only this list output re-renders.
+  output$feedback_admin_list <- renderUI({
+    req(identical(current_page(), "bug_fix"))
+    feedback_list_ui(
+      ensure_app_data(),
+      feedback_search_value(),
+      feedback_category_filter_value(),
+      feedback_priority_filter_value(),
+      feedback_status_filter_value()
+    )
+  })
+
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
       state <- auth_state()
@@ -11405,12 +11566,20 @@ server <- function(input, output, session) {
       current_role_preview_user_id() %||% input$role_preview_user_id %||% "",
       current_history_plan_id() %||% NA_integer_,
       current_history_include_review(),
-      feedback_filters = list(
+      # isolate()'d so this only supplies the filter controls' initial
+      # `selected =`/`value =` whenever output$page redraws for some OTHER
+      # reason (e.g. navigating to the page). Reading these reactively here
+      # would recreate the controls on every filter change -- see the
+      # comment on output$feedback_admin_list above for why that's the bug.
+      # The controls stay live via observeEvent(input$feedback_status_filter,
+      # ...) above and feed the actual filtering through that separate
+      # output instead.
+      feedback_filters = isolate(list(
         search = feedback_search_value(),
         category = feedback_category_filter_value(),
         priority = feedback_priority_filter_value(),
         status = feedback_status_filter_value()
-      ),
+      )),
       selected_cls_id = current_cls_id(),
       cls_detail_origin = cls_detail_origin(),
       editing_line_id = cls_editing_line(),
@@ -11477,7 +11646,10 @@ server <- function(input, output, session) {
   output$risk_modal <- renderUI({
     risk_id <- current_risk_id()
     if (is.null(risk_id)) return(NULL)
-    risk_modal_ui(ensure_app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else as.integer(risk_id))
+    # Passed through as character, not coerced to integer -- a "new-<epoch>"
+    # temp id (reopening an unsaved add) must reach risk_modal_ui() intact
+    # so it can prefill from the draft overlay instead of showing blank.
+    risk_modal_ui(ensure_app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else risk_id)
   })
   output$team_role_modal <- renderUI({
     access_id <- current_team_access_id()
