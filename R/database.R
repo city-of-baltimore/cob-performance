@@ -3578,6 +3578,31 @@ submit_agency_plan <- function(connection, plan_id, submitted_by = NULL) {
     ),
     params = list(plan_id, submitted_by, changed$from_status[[1]])
   )
+  # Reported 2026-08-05: review.section_feedback has a resolved_at column
+  # that nothing ever wrote to, so a plan reviewed/returned/resubmitted
+  # multiple times kept showing the SAME feedback from its very first
+  # review round forever (confirmed in production: 3 real feedback rows a
+  # full month stale, still surfacing at the top of every export). A
+  # resubmission is this function's whole job -- it's the one place that
+  # already knows the agency is re-entering review having (presumably)
+  # addressed what the last round asked for -- so this is the natural
+  # place to finally use that column: mark anything still outstanding on
+  # the plan's current review as resolved. A no-op if there's no review
+  # yet or nothing outstanding. Deliberately not deleting these rows --
+  # unlike the current export/summary display, a future history view
+  # (the Phase 3 audit-history backlog item) can still show what earlier
+  # rounds asked for.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE review.section_feedback SET resolved_at = now()",
+      "WHERE resolved_at IS NULL AND review_id = (",
+      "SELECT review_id FROM review.plan_review WHERE plan_id = $1",
+      "ORDER BY review_started_at DESC NULLS LAST, review_id DESC LIMIT 1",
+      ")"
+    ),
+    params = list(plan_id)
+  )
   invisible(plan_id)
 }
 

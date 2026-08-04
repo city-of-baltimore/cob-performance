@@ -4440,8 +4440,11 @@ review_notes_summary <- function(review_bits) {
   scores <- review_bits$scores
   notes <- character(0)
   if (nrow(feedback)) {
-    priority_feedback <- feedback[feedback$return_required, , drop = FALSE]
-    priority_feedback <- priority_feedback[order(!is.na(priority_feedback$resolved_at)), , drop = FALSE]
+    # resolved_at IS NULL means "still outstanding on the plan's current
+    # review round" -- submit_agency_plan() (R/database.R) stamps it on
+    # resubmission, so a plan reviewed more than once doesn't keep
+    # surfacing feedback from an earlier round it already addressed.
+    priority_feedback <- feedback[feedback$return_required & is.na(feedback$resolved_at), , drop = FALSE]
     notes <- c(notes, priority_feedback$feedback_text)
   }
   if (length(notes) < 3 && nrow(scores)) {
