@@ -2780,7 +2780,7 @@ page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_ro
   complete_goal_count <- goal_readiness$complete_count
   aligned_goal_count <- goal_readiness$aligned_count
   minimum_goals <- goal_minimum_count(plan)
-  goal_measure_counts <- plan_goal_measure_counts(db, goals)
+  goal_measure_counts <- plan_goal_measure_counts(db, plan, goals)
   service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
   service_metric_service_ids <- service_measure_counts$service_id[service_measure_counts$measure_count > 0]
   services_with_metrics <- sum(scorable_services$service_id %in% service_metric_service_ids)
@@ -3445,13 +3445,30 @@ goal_kpi_choice_rows <- function(db, plan, goals) {
   rows[order(rows$title), , drop = FALSE]
 }
 
-plan_goal_measure_counts <- function(db, goals) {
+# Reported 2026-08-05: a Returned plan's "Plan readiness" checklist flagged
+# a goal as over the 5-KPI limit when the KPI list actually shown to the
+# agency (in the Goals editor and the View-plan modal, both of which read
+# goals_draft$kpis) was at or under 5. Root cause: this only ever counted
+# performance_pm_goal_link rows -- the live table, last updated whenever the
+# goal was previously Approved/Published -- with no awareness that the
+# agency may have since trimmed the KPI list in their current draft.
+# Mirrors plan_service_measure_counts()'s draft-aware pattern just below.
+plan_goal_measure_counts <- function(db, plan, goals) {
   if (is.null(goals) || !nrow(goals)) return(data.frame(agency_goal_id = integer(), measure_count = integer()))
-  links <- db$performance_pm_goal_link[db$performance_pm_goal_link$agency_goal_id %in% goals$agency_goal_id, , drop = FALSE]
-  if (!nrow(links)) return(data.frame(agency_goal_id = goals$agency_goal_id, measure_count = 0L))
-  counts <- stats::aggregate(measure_id ~ agency_goal_id, data = unique(links[, c("agency_goal_id", "measure_id"), drop = FALSE]), FUN = length)
-  names(counts)[names(counts) == "measure_id"] <- "measure_count"
-  merge(data.frame(agency_goal_id = goals$agency_goal_id), counts, by = "agency_goal_id", all.x = TRUE)
+  goals_draft <- if (!is.null(plan) && nrow(plan) && plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "goals") else NULL
+  measure_count <- vapply(goals$agency_goal_id, function(goal_id) {
+    draft_values <- if (!is.null(goals_draft) && !is.null(goals_draft$kpis[[as.character(goal_id)]])) {
+      suppressWarnings(as.integer(unlist(goals_draft$kpis[[as.character(goal_id)]])))
+    } else {
+      NULL
+    }
+    if (!is.null(draft_values)) {
+      draft_values <- draft_values[!is.na(draft_values)]
+      return(length(unique(draft_values)))
+    }
+    length(unique(db$performance_pm_goal_link$measure_id[db$performance_pm_goal_link$agency_goal_id == goal_id]))
+  }, integer(1))
+  data.frame(agency_goal_id = goals$agency_goal_id, measure_count = unname(measure_count))
 }
 
 plan_service_measure_counts <- function(db, plan, services) {
@@ -3551,7 +3568,7 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
   aligned_goal_count <- goal_readiness$aligned_count
   minimum_goals <- goal_minimum_count(plan)
   maximum_goals <- goal_maximum_count(plan)
-  goal_measure_counts <- plan_goal_measure_counts(db, goals)
+  goal_measure_counts <- plan_goal_measure_counts(db, plan, goals)
   scorable_services <- scorable_service_rows(services)
   service_measure_counts <- plan_service_measure_counts(db, plan, scorable_services)
   goals_over_measure_limit <- goal_measure_counts[goal_measure_counts$measure_count > 5, , drop = FALSE]
@@ -4587,6 +4604,16 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
+  # Reported 2026-08-05: a Mayoral Office's PDF/PPTX export showed a service
+  # that shouldn't exist for it at all. plan_review_allowed_service_ids()
+  # (app.R ~2930) already excludes exactly this case for the review page
+  # (history_plan_modal(), added 2026-08-03) -- export never got the same
+  # filter, so it rendered whatever raw performance.plan_service rows
+  # existed regardless of whether the plan's entity is actually allowed to
+  # have services.
+  allowed_service_ids <- plan_review_allowed_service_ids(db, plan, service_rows$service_id)
+  services <- services[services$service_id %in% allowed_service_ids, , drop = FALSE]
+  service_rows <- service_rows[service_rows$service_id %in% allowed_service_ids, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
   risks <- risks_with_draft_overlay(risks, plan_id, risks_draft)
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
@@ -6233,9 +6260,11 @@ page_goals <- function(db, agency_id, can_edit_plan = TRUE) {
                 ),
                 div(
                   class = "goal-editor-actions",
-                  if (i > 1) {
-                    tags$button(type = "button", class = "civic-button danger small remove-goal-button", icon("trash-can"), "Remove goal")
-                  }
+                  # Rendered for every goal, including the first -- JS
+                  # (updateGoalControls() in app.js) enables/disables it
+                  # based on the plan's actual minimum (data-min-goals
+                  # above), not by singling out the first goal's position.
+                  tags$button(type = "button", class = "civic-button danger small remove-goal-button", icon("trash-can"), "Remove goal")
                 )
               )
             )
@@ -11183,6 +11212,14 @@ server <- function(input, output, session) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
       data <- app_data()
+      # Reported 2026-08-05: a plan reviewed/returned more than once could
+      # export with an earlier round's review text at the top. The
+      # on-screen review page patches in review_snapshot_cache (see
+      # output$page's data_with_cached_review_snapshot() call) because
+      # review-score/note autosaves deliberately skip refresh_app_data()
+      # (would collapse the open scoring UI mid-edit) -- export read
+      # app_data() directly and missed that same patch.
+      data <- data_with_cached_review_snapshot(data)
       export_draft <- current_export_draft()
       if (!is.null(export_draft) && identical(as.integer(export_draft$plan_id), as.integer(plan_id))) {
         data <- data_with_cached_section_draft(data, plan_id, export_draft$section_key)
@@ -11202,6 +11239,7 @@ server <- function(input, output, session) {
       plan_id <- current_export_plan_id()
       if (is.null(plan_id)) stop("No plan selected for export")
       data <- app_data()
+      data <- data_with_cached_review_snapshot(data)
       export_draft <- current_export_draft()
       if (!is.null(export_draft) && identical(as.integer(export_draft$plan_id), as.integer(plan_id))) {
         data <- data_with_cached_section_draft(data, plan_id, export_draft$section_key)
