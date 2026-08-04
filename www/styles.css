@@ -6678,6 +6678,116 @@ body.desktop-nav-collapsed .app-footer {
   color: var(--lp-text-secondary);
 }
 
+/* ---- Budget Planning section on CLS Review ---- */
+.cls-bp-section { margin-bottom: 1.25rem; }
+
+.cls-bp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.85rem;
+}
+
+.cls-bp-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--lp-border-default);
+  border-left: 4px solid var(--lp-brand-primary);
+  border-radius: var(--lp-radius-surface);
+  background: var(--lp-surface-subtle);
+  padding: 0.9rem 1rem;
+  min-width: 0;
+}
+
+.cls-bp-card.is-unavailable {
+  border-left-color: var(--lp-border-strong);
+  opacity: 0.72;
+}
+
+.cls-bp-card-head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.cls-bp-card-icon {
+  color: var(--lp-brand-primary);
+  font-size: 1.05rem;
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+
+.cls-bp-card-title {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.cls-bp-card-blurb {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--lp-text-secondary);
+}
+
+.cls-bp-card-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--lp-text-secondary);
+}
+
+/* Test agencies: flagged in a distinct colour so a sandbox never reads as real. */
+.cls-bp-test {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px dashed #8a620f;
+  border-radius: var(--lp-radius-surface);
+  background: #fdf7e8;
+}
+
+.cls-bp-test-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #8a620f;
+  margin-bottom: 0.4rem;
+}
+
+.cls-bp-test-icon { font-size: 0.9em; }
+
+.cls-bp-test-copy {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--lp-text-secondary);
+}
+
+.cls-bp-test-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.cls-bp-test-list li { margin: 0.15rem 0; }
+
+/* The sandbox banner at the top of a test agency's request page. */
+.cls-reminder.cls-reminder-test {
+  background: #fdf7e8;
+  border-color: #8a620f;
+}
+
+.cls-reminder.cls-reminder-test .cls-reminder-icon { color: #8a620f; }
+
 /* Return column: icon-only so it costs almost no width. */
 .cls-bulk-back-head { text-align: center; }
 

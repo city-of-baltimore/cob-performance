@@ -273,3 +273,53 @@ point of the request was that a rounded "$2.3M" hides the figure being checked, 
 as true in a chart label as in a table cell. The chart's right gutter grew from 74px to
 112px to fit a full figure, and the bulk grid's FY28 column dropped its cents — always
 ".00" now that amounts are integers — to make room for the Return column.
+
+## Round 13 — money formatting fix, and CLS for BBMR to test with
+
+| # | Note | Status |
+|---|------|--------|
+| 148 | Amounts above $2.1bn rendered as **$NA** | ✅ `cls_format_commas()` used `formatC(format = "d")`, which coerces to a 32-bit integer. Now `format = "f", digits = 0` |
+| 149 | BBMR reviewers should be able to **edit** requests on the test entities | ✅ read-only carve-out for test agencies only |
+| 150 | …and **flip through** all the test entities | ✅ the agency switcher now offers them to reviewers, who previously had no entries at all |
+| 151 | Add a section to CLS Review so all reviewers can see the Budget Planning section and its 2 pages | ✅ `cls_budget_planning_section()` |
+
+**The $NA bug was not cosmetic.** Reported as "the application is down". The app was
+serving normally; what was real was a log full of `NAs introduced by coercion to integer
+range` and one figure rendering as `$NA`. Production held a request of $23,232,322,322 (a
+test entry) which tripped it on every render. Baltimore's budget runs to billions, so the
+citywide *Total requested* card — changed in round 12 to sum every request — would have
+shown `$NA` as soon as real data arrived. 18 regression assertions now cover both sides of
+the 32-bit boundary, and `cls_format_dollars()` was checked for the same class of bug and
+is clean.
+
+**Test agencies.** Production has three, one of each entity type:
+
+| agency_id | Name | Type |
+|---|---|---|
+| `TST9001` | TEST Agency of Sparkly Sidewalks | Agency |
+| `TST9002` | TEST Quasi Bureau of Waffle Forecasting | QuasiAgency |
+| `TST9003` | TEST Mayor's Office of Tiny Triumphs | MayoraltyOffice |
+
+There is **no `is_test` column**, so membership is derived from the naming convention — a
+`TST` agency_id or a name starting `TEST` — in `cls_test_agency_ids()`. That one function is
+the only place to change if it should become data-driven. It is covered by tests that
+deliberately include near-misses ("Office of Protest and Testimony", "Contested Elections
+Board", "Latest Initiatives Office", "Attestation Services") because a false positive would
+silently hand reviewers edit rights over a real agency's submissions.
+
+**What changed for reviewers, precisely:**
+
+- `can_view_cls_requests()` now includes `BBMRReviewer`, so they get the agency-facing page.
+  This reverses the round-8 decision that kept them out of it; their switcher offers only
+  test agencies, so no real agency's list is put in front of them.
+- The switcher previously gave reviewers **nothing** — `user_submitter_choices()` keys off
+  agency/entity grants and `BBMRReviewer` rows carry none, so `current_submitter_value()`
+  returned `""`. `cls_add_test_choices_for_reviewers()` adds the test agencies and their
+  entities on top of whatever a user already has.
+- On a test agency a reviewer may edit at **any** status, including a request already sent
+  to BBMR. On a real agency they remain read-only, unchanged. A dashed amber banner marks
+  the sandbox on the request page.
+- `current_submitter_value()` and `current_user_submitter_choices()` had duplicated the same
+  role-branching logic; the former now calls the latter, so the resolved value can never be
+  something the visible dropdown does not offer.
+- `reviewer_view` was deleted — it had had no readers since round 9.
