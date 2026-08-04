@@ -3690,50 +3690,6 @@ agency_choices_only <- function(db) {
   choices[startsWith(unname(choices), "agency:")]
 }
 
-# --- Test agencies -----------------------------------------------------------
-# Three purpose-built agencies exist for exercising the workflow end to end
-# without touching a real agency's data: TST9001 "TEST Agency of Sparkly
-# Sidewalks", TST9002 "TEST Quasi Bureau of Waffle Forecasting" and TST9003
-# "TEST Mayor's Office of Tiny Triumphs" - one of each entity type, so the
-# entity/agency grouping gets exercised too.
-#
-# There is no is_test flag on reference.agency, so this is derived from the
-# deliberate naming convention: a TST-prefixed agency_id, or a name starting
-# "TEST". Both are checked so neither alone can silently drop one. If these ever
-# need to be data-driven, add a boolean to reference.agency and change only this
-# function.
-cls_test_agency_ids <- function(db) {
-  a <- db$reference_agency
-  if (is.null(a) || !nrow(a)) return(character(0))
-  ids <- as.character(a$agency_id)
-  names_v <- toupper(trimws(as.character(a$agency_name %||% "")))
-  public_v <- toupper(trimws(as.character(a$public_name %||% "")))
-  is_test <- startsWith(toupper(ids), "TST") |
-    startsWith(names_v, "TEST ") | names_v == "TEST" |
-    startsWith(public_v, "TEST ") | public_v == "TEST"
-  sort(unique(ids[!is.na(is_test) & is_test]))
-}
-
-cls_is_test_agency <- function(db, agency_id) {
-  agency_id <- as.character(agency_id %||% "")
-  if (!length(agency_id) || !nzchar(agency_id) || is.na(agency_id)) return(FALSE)
-  agency_id %in% cls_test_agency_ids(db)
-}
-
-# Every selector entry that belongs to a test agency - the agency itself and any
-# entity rolling up to it, so a reviewer can flip between all of them.
-cls_test_selector_choices <- function(db) {
-  test_ids <- cls_test_agency_ids(db)
-  if (!length(test_ids)) return(character(0))
-  choices <- agency_selector_choices(db)
-  if (!length(choices)) return(character(0))
-  keep <- vapply(unname(choices), function(value) {
-    owning <- resolve_owning_agency_id(db, value)
-    !is.na(owning) && owning %in% test_ids
-  }, logical(1))
-  choices[keep]
-}
-
 resolve_owning_agency_id <- function(db, value) {
   submitter <- parse_submitter_value(value)
   if (identical(submitter$type, "entity")) {
@@ -3878,17 +3834,6 @@ user_submitter_choices <- function(db, user_id) {
   valid_choices[valid_values %in% values]
 }
 
-# BBMR reviewers hold no agency or entity grant, so user_submitter_choices()
-# returns nothing for them and the agency switcher comes up empty. They do need
-# the test agencies, though, to exercise the CLS workflow end to end. This adds
-# those - and only those - on top of whatever the user already has.
-cls_add_test_choices_for_reviewers <- function(db, choices, app_roles) {
-  if (!has_any_role(app_roles, "BBMRReviewer")) return(choices)
-  extra <- cls_test_selector_choices(db)
-  if (!length(extra)) return(choices)
-  merged <- c(choices, extra[!unname(extra) %in% unname(choices)])
-  merged[order(names(merged))]
-}
 
 plan_uses_draft_payload <- function(plan) {
   if (is.null(plan) || !nrow(plan)) return(FALSE)
@@ -7059,14 +7004,19 @@ cls_request_type_tooltip <- function(request_type) {
   rt
 }
 
+# The dropdown list: chart-of-accounts codes from reference.spend_category, plus
+# anything existing requests already reference so a stored value is never silently
+# dropped from its own row. Codes keep their chart order (sort_order); sorting the
+# whole thing alphabetically would scatter the numeric blocks.
 cls_spend_category_options <- function(db) {
+  catalogue <- spend_category_labels(db)
   used <- character(0)
   lines <- db$budget_cls_request_line
   if (!is.null(lines) && nrow(lines)) {
     used <- trimws(as.character(lines$spend_category))
     used <- used[!is.na(used) & nzchar(used)]
   }
-  sort(unique(c(cls_spend_category_choices, used)))
+  c(catalogue, sort(unique(setdiff(used, catalogue))))
 }
 
 # Every Agency Submitter for this agency, named in the submission notice. Plural
@@ -7235,7 +7185,20 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
               tags$span(class = "cls-delete-locked", title = "Sent for BBMR review - this request can no longer be deleted",
                 icon("lock"))
             },
-            tags$button(type = "button", class = "civic-button primary small cls-enter-arrow", `data-cls-open` = r$cls_id, `aria-label` = paste("Modify request", r$request_name), "Modify", icon("arrow-right"))
+            # Once a request has gone to BBMR it is read-only, so the action says
+            # View rather than Modify - it was promising an edit it could not
+            # deliver (analyst feedback 2026-08-04).
+            if (cls_status_is_complete(status)) {
+              tags$button(type = "button", class = "civic-button secondary small cls-enter-arrow",
+                `data-cls-open` = r$cls_id,
+                `aria-label` = paste("View request", r$request_name),
+                "View", icon("eye"))
+            } else {
+              tags$button(type = "button", class = "civic-button primary small cls-enter-arrow",
+                `data-cls-open` = r$cls_id,
+                `aria-label` = paste("Modify request", r$request_name),
+                "Modify", icon("arrow-right"))
+            }
           )
         )
       })
@@ -7259,7 +7222,7 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
       ),
       cls_collapsible_chart(
         "agency",
-        "Request volume",
+        "Requests by Service",
         "How this agency's requested dollars are distributed across its services.",
         cls_review_chart(mine, group_col = "service", group_noun = "service")
       )
@@ -7268,26 +7231,40 @@ page_cls_requests <- function(db, agency_id, app_roles = character(0)) {
 
   agency_label <- cls_agency_display_name(db, cls_agency)
   submitter_names <- cls_submitter_names_for_agency(db, cls_agency)
+  analyst_name <- { a <- agency_budget_analyst(db, cls_agency); if (is.na(a)) "Unassigned" else a }
   # "needs" when one person holds final sign-off, "need" when several do.
   needs_verb <- if (identical(submitter_names, "Your Agency Submitter") ||
                     grepl(" and ", submitter_names, fixed = TRUE)) "need" else "needs"
+  # Rewritten as numbered instructions (2026-08-04). The prose version carried the
+  # same facts but read as background; agencies were missing the steps and, in
+  # particular, that they should be working with their budget analyst rather than
+  # submitting cold.
   subtext <- tagList(
     span(class = "cls-subtext-line",
-      "CLS requests will be summarized by initiative/project.",
-      " Feel free to work collaboratively across the agency to complete these submissions."),
+      "Build one request per initiative or project, then break its total out by expenditure ",
+      "object and any new positions."),
+    tags$ol(class = "cls-subtext-steps",
+      tags$li("Select ", tags$strong("Add CLS Request"), " and give it a name, service and type."),
+      tags$li("Enter the FY28 amount. If the request recurs, enter FY29 and FY30 as well."),
+      tags$li("Break that total out until the banner confirms it is fully described. Objects and ",
+              "positions both count toward it."),
+      tags$li(tags$strong(paste0("Work with your budget analyst, ", analyst_name, ",")),
+              " as you build each request — they can tell you whether a cost belongs in CLS ",
+              "and how to categorise it."),
+      tags$li(paste0("Submit the request to ", submitter_names, ", who ", needs_verb,
+                     " to give it a final review before it goes to BBMR."))),
     span(class = "cls-subtext-line",
-      tags$strong(submitter_names), " ", needs_verb, " to have final review to submit entries on behalf of ",
-      tags$strong(agency_label), ". Plan to give enough time for review.",
-      " The deadline for requests is ", tags$strong("September 15th COB (4:30pm)"),
-      ". After this date the system will be locked."),
+      "Anyone at ", tags$strong(agency_label), " can enter and edit requests, so work on them ",
+      "together. Only a submitter can send one on. The deadline is ",
+      tags$strong("September 15th COB (4:30pm)"), ", after which the system locks — leave time ",
+      "for that final review."),
     # Who signs off and who at BBMR to ask, named on the page rather than looked
     # up elsewhere (analyst feedback round 2).
     span(class = "cls-subtext-line cls-subtext-people",
       span(class = "cls-people-line",
         span(class = "cls-people-label", "Submitter:"), " ", submitter_names),
       span(class = "cls-people-line",
-        span(class = "cls-people-label", "Budget Analyst:"), " ",
-        { analyst <- agency_budget_analyst(db, cls_agency); if (is.na(analyst)) "Unassigned" else analyst }))
+        span(class = "cls-people-label", "Budget Analyst:"), " ", analyst_name))
   )
 
   surface(
@@ -7567,6 +7544,7 @@ cls_bulk_grid <- function(rows, approval_choices) {
     span("Agency"), span("Service"), span("Request"), span("Type"),
     span(class = "num", "FY28"),
     span("Duration"), span(class = "num", "Pos."),
+    span("Analyst rec."),
     span("BBMR approval"), span(class = "num", "Appr. FY28"), span(class = "num", "Appr. pos."),
     span(class = "cls-bulk-back-head", "Return")
   )
@@ -7587,6 +7565,14 @@ cls_bulk_grid <- function(rows, approval_choices) {
       span(class = "num", cls_format_commas(r$request_amount)),
       cell(if (isTRUE(r$one_time)) "One-time" else "Recurring"),
       span(class = "num", r$position_count),
+      # The analyst recommendation is context for the decision, not part of it, so
+      # it is read-only here: a bulk approver can see the advice without being able
+      # to overwrite it. It stays editable in the per-request analyst panel.
+      span(class = "cls-bulk-analyst",
+           title = if (nzchar(as.character(r$analyst_approval %||% ""))) {
+             paste("Analyst recommendation:", r$analyst_approval)
+           } else "No analyst recommendation recorded",
+           if (nzchar(as.character(r$analyst_approval %||% ""))) r$analyst_approval else "—"),
       selectInput(paste0("cls_bulk_bbmr_", id), NULL, choices = approval_choices,
                   selected = r$bbmr_approval, selectize = FALSE, width = "100%"),
       cls_money_input(paste0("cls_bulk_amount_", id), NULL,
@@ -7618,57 +7604,19 @@ cls_bulk_grid <- function(rows, approval_choices) {
   )
 }
 
-# The Budget Planning section, laid out on the CLS Review page: both pages named,
-# described and linked, plus the test agencies a reviewer can practise on. Added
-# because reviewers had no way to discover the agency-facing page - it was hidden
-# from them entirely until 2026-08-03.
+# The Budget Planning section on CLS Review: the two pages the section contains,
+# named and nothing more. It started out with descriptions, Open buttons and a
+# test-agency panel; all three were removed on request (2026-08-04) - reviewers
+# reach both pages from the left nav, so this is orientation, not navigation.
 cls_budget_planning_section <- function(db, app_roles = character(0)) {
-  test_choices <- cls_test_selector_choices(db)
-  page_card <- function(page, title, blurb, icon_name, available) {
-    div(
-      class = paste("cls-bp-card", if (!available) "is-unavailable" else ""),
-      div(class = "cls-bp-card-head",
-        span(class = "cls-bp-card-icon", icon(icon_name)),
-        div(h3(class = "cls-bp-card-title", title), p(class = "cls-bp-card-blurb", blurb))),
-      if (available) {
-        tags$button(type = "button", class = "civic-button primary small",
-          `data-page` = page, "Open", icon("arrow-right"))
-      } else {
-        span(class = "cls-bp-card-locked", icon("lock"), "Not available to your role")
-      }
-    )
-  }
   tags$section(
     class = "section-surface cls-bp-section",
-    div(class = "surface-header",
-      div(h2("Budget Planning"),
-        p("The two pages in this section, and the test agencies you can practise on."))),
-    div(
-      class = "cls-bp-grid",
-      page_card("cls_requests", "CLS Requests",
-        paste("The agency-facing list: create a request, break it out by object and position,",
-              "and hand it on. This is what an agency sees."),
-        "list-check", can_view_cls_requests(app_roles)),
-      page_card("cls_review", "CLS Review",
-        paste("This page. Every agency's submitted requests, with the analyst panel and",
-              "bulk approve for recording decisions."),
-        "clipboard-check", can_review_cls(app_roles))
-    ),
-    if (length(test_choices)) {
-      div(
-        class = "cls-bp-test",
-        div(class = "cls-bp-test-title",
-          span(class = "cls-bp-test-icon", icon("flask")), "Test agencies you can edit"),
-        p(class = "cls-bp-test-copy",
-          "Switch between these with the agency selector at the top of the page. On a test",
-          " agency you can create and change requests at any status, so you can walk the whole",
-          " workflow through without touching real data."),
-        tags$ul(class = "cls-bp-test-list",
-          lapply(names(test_choices), function(label) tags$li(label))))
-    } else {
-      p(class = "cls-bp-test-copy",
-        "No test agencies are set up on this database, so there is nothing to practise on here.")
-    }
+    div(class = "surface-header", div(h2("Budget Planning"))),
+    tags$ul(
+      class = "cls-bp-list",
+      tags$li("CLS Requests"),
+      tags$li("CLS Review")
+    )
   )
 }
 
@@ -7702,7 +7650,12 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
     view_rows <- view_rows[view_rows$service %in% sel_service, , drop = FALSE]
   }
 
-  approval_choices <- c("(not set)" = "", "Approved" = "Approved", "Partial" = "Partial", "Denied" = "Denied")
+  # Two separate vocabularies on purpose: the analyst recommends, BBMR approves.
+  # Sharing one list made the advisory field look as binding as the decision.
+  approval_choices <- c(stats::setNames("", "(not set)"),
+                        stats::setNames(cls_bbmr_approval_choices, cls_bbmr_approval_choices))
+  analyst_choices <- c(stats::setNames("", "(not set)"),
+                       stats::setNames(cls_analyst_recommendation_choices, cls_analyst_recommendation_choices))
   review_rows_ui <- lapply(seq_len(nrow(view_rows)), function(i) {
     r <- view_rows[i, , drop = FALSE]
     id <- r$cls_id
@@ -7802,7 +7755,7 @@ page_cls_review <- function(db, app_roles = character(0), status_filter = charac
           div(class = "cls-analyst-panel-title", "Analyst review"),
           div(class = "cls-review-field-grid",
             # Advisory only - deliberately not wired to the request status.
-            selectInput(paste0("cls_rv_analyst_", id), "Analyst recommendation", choices = approval_choices, selected = r$analyst_approval, selectize = FALSE),
+            selectInput(paste0("cls_rv_analyst_", id), "Analyst recommendation", choices = analyst_choices, selected = r$analyst_approval, selectize = FALSE),
             # This one does set the status, which is why it is called out in red.
             div(class = "cls-bbmr-approval-field",
               selectInput(paste0("cls_rv_bbmr_", id), "BBMR approval", choices = approval_choices, selected = r$bbmr_approval, selectize = FALSE),
@@ -7993,19 +7946,14 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
     if (nrow(plan) && !is.na(plan$agency_id[[1]])) as.character(plan$agency_id[[1]])
     else cls_agency_id_for_submitter(db, paste0("entity:", plan$entity_id[[1]]))
   }
-  is_test_agency <- cls_is_test_agency(db, cls_agency)
-
   # Analyst feedback, round 1: once a request has gone to BBMR the agency can no
   # longer change it, and BBMR reviewers see it read-only too - their decision is
   # recorded on the CLS Review page, not by editing the agency's submission.
   #
-  # The one exception (2026-08-03): on a TEST agency a BBMR reviewer may edit
-  # freely, including a request that has already been sent, because the whole
-  # point of those agencies is rehearsing the workflow from both sides.
+  # A test-agency exception was added 2026-08-03 and removed again 2026-08-04:
+  # reviewers now see every agency, and read-only applies uniformly.
   locked_status <- !is_new && cls_status_is_complete(cls_status_label(request))
-  read_only_reason <- if (is_test_agency && (is_bbmr_reviewer || has_any_role(app_roles, "SystemAdmin"))) {
-    NULL
-  } else if (is_bbmr_reviewer) {
+  read_only_reason <- if (is_bbmr_reviewer) {
     "BBMR reviewers open requests read-only. Record your decision on the CLS Review page."
   } else if (locked_status) {
     "This request has been sent for BBMR review, so it can no longer be changed."
@@ -8310,16 +8258,6 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
       if (!can_edit && !show_positions) div(class = "cls-empty-state", p(class = "empty-state-copy", "No position requests were included.")) else positions_body)
   }
 
-  # On a TEST agency, say so plainly and at the top. Anyone editing here needs to
-  # know nothing they type is a real budget request.
-  test_banner <- if (is_test_agency) div(
-    class = "cls-reminder cls-reminder-test",
-    span(class = "cls-reminder-icon", icon("flask")),
-    span(tags$strong("Test agency. "),
-      "This is a sandbox for rehearsing the CLS workflow. Nothing entered here is a real budget request, ",
-      "and it can be edited at any status.")
-  ) else NULL
-
   reminder <- if (!is.null(read_only_reason)) div(class = "cls-reminder cls-reminder-locked",
     span(class = "cls-reminder-icon", icon("lock")),
     span(read_only_reason)
@@ -8343,7 +8281,6 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
       back_link,
       if (can_edit && !is_new) div(class = "cls-save-status", span(class = "cls-save-icon", icon("cloud-arrow-up")), uiOutput("cls_save_status", inline = TRUE))
     ),
-    test_banner,
     reminder,
     summary_section,
     details_section,
@@ -8432,8 +8369,8 @@ ui <- tagList(
   tags$head(
     tags$title("Beacon Baltimore City Performance & Budgeting"),
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
-    tags$link(rel = "stylesheet", href = "styles.css?v=20260803-1"),
-    tags$script(src = "app.js?v=20260803-1", defer = "defer")
+    tags$link(rel = "stylesheet", href = "styles.css?v=20260804-1"),
+    tags$script(src = "app.js?v=20260804-1", defer = "defer")
   ),
   div(
     class = "app-shell",
@@ -8998,12 +8935,13 @@ server <- function(input, output, session) {
     if (is.null(data)) data <- ensure_app_data()
     app_roles <- current_user_app_roles()
     user_id <- current_role_preview_user_id() %||% input$role_preview_user_id %||% ""
-    if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer"))) {
+    # BBMR reviewers work across every agency, so they get the full list rather
+    # than the grant-derived one - their role carries no agency or entity grant,
+    # which would otherwise leave the switcher empty.
+    if (has_any_role(app_roles, c("SystemAdmin", "OPIReviewer", "BBMRReviewer"))) {
       agency_selector_choices(data)
     } else {
-      # BBMR reviewers additionally get the test agencies, so they can flip
-      # through them and exercise the CLS workflow.
-      cls_add_test_choices_for_reviewers(data, user_submitter_choices(data, user_id), app_roles)
+      user_submitter_choices(data, user_id)
     }
   }
   update_role_preview_agency_selector <- function(data = NULL, selected = NULL) {

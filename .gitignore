@@ -66,3 +66,14 @@ terraform.tfstate
 *.hcl
 *.tfvars
 *.tfplan
+
+# Baltimore's chart-of-accounts spend categories. Deliberately NOT committed:
+# this repository is public. The file is only an input to
+# scripts/load_spend_categories.R, which writes the codes into
+# reference.spend_category; the app reads the table, never the file.
+database/seed/spend_category_seed.csv
+
+# Throwaway render harnesses used for browser verification. These contain fully
+# rendered pages, including the spend-category dropdown, so they must never be
+# committed to a public repository.
+www/_*.html
