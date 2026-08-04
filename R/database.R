@@ -2038,6 +2038,53 @@ measure_missing_required_fields <- function(values) {
   unname(measure_required_field_labels[vapply(names(measure_required_field_labels), function(name) is_blank(values[[name]]), logical(1))])
 }
 
+has_two_or_fewer_decimals <- function(value) {
+  is.na(value) || abs(value * 100 - round(value * 100)) < 0.000001
+}
+
+# Percent used to require whole numbers, but that only ever blocked
+# decimals outright -- it didn't actually guard against the real failure
+# mode (a value entered on the wrong 0-1/0-100 scale; 97 and 9.7 are both
+# "whole enough" to pass either way). Loosened 2026-08-04 to the same
+# two-decimal precision as Currency/Count, since a genuine rate (interest
+# rate, forecast accuracy) can legitimately need decimal precision.
+# measure_values_with_suspicious_fraction() below is the real guard against
+# the 0-1-instead-of-0-100 mistake -- a warning, not a hard block, since a
+# true sub-1% value is rare but not impossible.
+validate_measure_values <- function(format_type, yearly_values) {
+  values <- unlist(lapply(yearly_values, function(row) c(row$annual_actual, row$target_value)), use.names = FALSE)
+  values <- values[!is.na(values)]
+  if (!length(values)) return(NULL)
+  if (identical(format_type, "Percent")) {
+    if (any(values < 0 | values > 100) || any(!vapply(values, has_two_or_fewer_decimals, logical(1)))) {
+      return("For percent measures, actuals and targets must be from 0 to 100, with no more than two decimal places.")
+    }
+  }
+  if (format_type %in% c("Currency", "Count")) {
+    if (any(!vapply(values, has_two_or_fewer_decimals, logical(1)))) {
+      return(paste(format_type, "actuals and targets can use no more than two decimal places."))
+    }
+  }
+  NULL
+}
+
+# A value strictly between 0 and 1 on a Percent measure is the exact
+# fingerprint of entering a fraction (0.97) instead of a percent (97) --
+# confirmed against real production data (2026-08-04): every measure found
+# with this pattern was a genuine wrong-scale entry, not a real sub-1%
+# value. Non-blocking (just a heads-up), since a true sub-1% rate is rare
+# but not impossible, and this can't tell the two apart with certainty on
+# its own.
+measure_values_with_suspicious_fraction <- function(format_type, yearly_values) {
+  if (!identical(format_type, "Percent")) return(character(0))
+  unlist(lapply(yearly_values, function(row) {
+    labels <- character(0)
+    if (!is.na(row$annual_actual) && row$annual_actual > 0 && row$annual_actual < 1) labels <- c(labels, paste0(fy_label(row$fiscal_year), " actual"))
+    if (!is.na(row$target_value) && row$target_value > 0 && row$target_value < 1) labels <- c(labels, paste0(fy_label(row$fiscal_year), " target"))
+    labels
+  }))
+}
+
 save_measure_record <- function(connection, values, yearly_values, reported_by, submit = FALSE, is_admin = FALSE, required_fields_complete = TRUE) {
   DBI::dbWithTransaction(connection, {
     is_validated <- !is.null(values$measure_id) && identical(values$approval_status, "Validated")
