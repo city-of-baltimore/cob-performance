@@ -2758,6 +2758,8 @@ page_landing <- function(db, agency_id, app_roles = c("AgencyViewer"), agency_ro
   services <- plan_service_rows(db, plan)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
   selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
   invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
@@ -3534,6 +3536,8 @@ plan_readiness_summary <- function(db, submitter_value, plan) {
   services <- plan_service_rows(db, plan)
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan$plan_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, services)
   selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
   invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
@@ -3892,6 +3896,45 @@ draft_value <- function(draft, field_id, fallback = "") {
   value <- draft$values[[field_id]]
   if (is.null(value) || length(value) == 0 || is.na(value)) return(fallback)
   as.character(value)
+}
+
+# Applies a risks section draft (see merge_risks_draft_payload() in
+# R/database.R for the payload shape) on top of the live service_risk rows
+# for a plan -- edits overwrite in place, deletes drop the row, adds append
+# a synthetic row keyed by its temp id. risk_id becomes character throughout
+# the result (real ids included) since a temp "new-<epoch>" id can't be
+# coerced to integer -- every caller comparing against risk_id needs to
+# compare as character after this, not with numeric ==.
+risks_with_draft_overlay <- function(risks, plan_id, draft) {
+  if (is.null(draft)) return(risks)
+  risks$risk_id <- as.character(risks$risk_id)
+  if (nrow(risks)) {
+    keep <- !risks$risk_id %in% unlist(draft$deletes %||% list())
+    risks <- risks[keep, , drop = FALSE]
+  }
+  edits <- draft$edits %||% list()
+  for (id in names(edits)) {
+    idx <- which(risks$risk_id == id)
+    if (length(idx)) {
+      risks$risk_type[idx] <- edits[[id]]$risk_type
+      risks$description[idx] <- edits[[id]]$description
+    }
+  }
+  adds <- draft$adds %||% list()
+  if (length(adds)) {
+    added <- do.call(rbind, lapply(names(adds), function(id) {
+      data.frame(
+        risk_id = id,
+        plan_id = plan_id,
+        risk_type = adds[[id]]$risk_type,
+        description = adds[[id]]$description,
+        stringsAsFactors = FALSE
+      )
+    }))
+    common <- intersect(names(risks), names(added))
+    risks <- rbind(risks[, common, drop = FALSE], added[, common, drop = FALSE])
+  }
+  risks
 }
 
 validate_measure_selection_limit <- function(payload_json, section_key, limit = 5L) {
@@ -4538,12 +4581,14 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   overview_draft <- if (payload_preview) section_draft_payload(db, plan_id, "overview") else NULL
   goals_draft <- if (payload_preview) section_draft_payload(db, plan_id, "goals") else NULL
   services_draft <- if (payload_preview) section_draft_payload(db, plan_id, "services") else NULL
+  risks_draft <- if (payload_preview) section_draft_payload(db, plan_id, "risks") else NULL
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan_id, , drop = FALSE]
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
+  risks <- risks_with_draft_overlay(risks, plan_id, risks_draft)
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   scorable_plan_service_ids <- services$plan_service_id[services$service_id %in% scorable_service_rows(service_rows)$service_id]
   review_bits$scores <- filter_review_scores_to_scorable_services(review_bits$scores, scorable_plan_service_ids)
@@ -4877,6 +4922,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   overview_draft <- if (payload_preview) section_draft_payload(db, plan_id, "overview") else NULL
   goals_draft <- if (payload_preview) section_draft_payload(db, plan_id, "goals") else NULL
   services_draft <- if (payload_preview) section_draft_payload(db, plan_id, "services") else NULL
+  risks_draft <- if (payload_preview) section_draft_payload(db, plan_id, "risks") else NULL
   overview <- db$performance_overview_vision[db$performance_overview_vision$plan_id == plan_id, , drop = FALSE]
   goals <- db$performance_agency_goal[db$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
   goals <- goals[order(goals$sort_order), , drop = FALSE]
@@ -4887,6 +4933,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   service_rows <- service_rows[service_rows$service_id %in% allowed_service_ids, , drop = FALSE]
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
+  risks <- risks_with_draft_overlay(risks, plan_id, risks_draft)
   notes_summary <- review_notes_summary(review_bits)
   current_fy <- max(db$planning_agency_plan$fiscal_year, na.rm = TRUE)
   overview_text <- if (nrow(overview)) overview$overview[[1]] else ""
@@ -6385,6 +6432,8 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_s
 page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
   plan <- current_plan(db, agency_id)
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
   risk_criteria <- plan_review_criteria("plan_risks")
   risk_rubric_row <- function(row) {
     tags$tr(
@@ -6447,7 +6496,13 @@ page_risks <- function(db, agency_id, can_edit_plan = TRUE) {
 
 risk_modal_ui <- function(db, agency_id, risk_id = NULL) {
   plan <- current_plan(db, agency_id)
-  risk <- if (is.null(risk_id)) data.frame() else db$performance_service_risk[db$performance_service_risk$risk_id == risk_id & db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan$plan_id, , drop = FALSE]
+  risks_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "risks") else NULL
+  risks <- risks_with_draft_overlay(risks, plan$plan_id[[1]], risks_draft)
+  # risk_id may be a temp "new-<epoch>" id for a not-yet-promoted add --
+  # risks_with_draft_overlay() makes risk_id character throughout, so this
+  # must compare as character, not the numeric == this used before.
+  risk <- if (is.null(risk_id)) data.frame() else risks[risks$risk_id == as.character(risk_id), , drop = FALSE]
   is_new <- nrow(risk) == 0
   value <- function(name, default = "") {
     if (is_new || !name %in% names(risk) || is.na(risk[[name]][1])) default else risk[[name]][1]
@@ -10529,12 +10584,21 @@ server <- function(input, output, session) {
     }
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
+    if (!plan_is_editable(plan)) {
+      showNotification("This plan is locked and cannot be edited.", type = "error", duration = 8)
+      return()
+    }
     risk_id <- current_risk_id()
-    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
+    # NULL only for the literal "new" sentinel (a brand-new risk, no draft
+    # entry yet). A "new-<epoch>" temp id (re-editing an unsaved add before
+    # it's ever promoted) must pass through as-is so
+    # save_risks_draft_upsert() reuses that same draft entry instead of
+    # minting a second one.
+    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NULL else risk_id
     result <- tryCatch(
-      save_service_risk(
-        database, risk_id, plan$plan_id[[1]], input$risk_type, input$risk_description,
-        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      save_risks_draft_upsert(
+        database, plan$plan_id[[1]], risk_id, input$risk_type, input$risk_description,
+        updated_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
       ),
       error = function(error) error
     )
@@ -10555,12 +10619,16 @@ server <- function(input, output, session) {
     }
     data <- app_data()
     plan <- current_plan(data, current_submitter_value())
+    if (!plan_is_editable(plan)) {
+      showNotification("This plan is locked and cannot be edited.", type = "error", duration = 8)
+      return()
+    }
     risk_id <- current_risk_id()
-    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NA_integer_ else as.integer(risk_id)
+    risk_id <- if (is.null(risk_id) || identical(risk_id, "new")) NULL else risk_id
     result <- tryCatch(
-      delete_service_risk(
-        database, risk_id, plan$plan_id[[1]],
-        changed_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
+      save_risks_draft_delete(
+        database, plan$plan_id[[1]], risk_id,
+        updated_by = suppressWarnings(as.integer(current_role_preview_user_id() %||% input$role_preview_user_id %||% NA_integer_))
       ),
       error = function(error) error
     )
@@ -11640,7 +11708,10 @@ server <- function(input, output, session) {
   output$risk_modal <- renderUI({
     risk_id <- current_risk_id()
     if (is.null(risk_id)) return(NULL)
-    risk_modal_ui(ensure_app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else as.integer(risk_id))
+    # Passed through as character, not coerced to integer -- a "new-<epoch>"
+    # temp id (reopening an unsaved add) must reach risk_modal_ui() intact
+    # so it can prefill from the draft overlay instead of showing blank.
+    risk_modal_ui(ensure_app_data(), current_submitter_value(), if (identical(risk_id, "new")) NULL else risk_id)
   })
   output$team_role_modal <- renderUI({
     access_id <- current_team_access_id()
