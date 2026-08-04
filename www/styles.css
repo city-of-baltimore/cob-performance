@@ -4534,6 +4534,25 @@ textarea.cls-over-limit,
 
 .measure-editor-modal {
   width: min(1120px, calc(100vw - 2rem));
+  /* A fixed height (not just a cap) turns this into a real header/
+     scrolling-body/footer layout, via the flex rules below, so the action
+     bar is always anchored at the true bottom of the modal -- not just
+     wherever the form content happens to end. */
+  height: min(56rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 1.25rem 1.25rem 0;
+}
+
+.measure-editor-modal .custom-modal-header {
+  flex-shrink: 0;
+}
+
+.measure-editor-modal .measure-form-stack {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .measure-modal-title-block {
@@ -4547,7 +4566,23 @@ textarea.cls-over-limit,
 
 .measure-form-stack {
   display: grid;
-  gap: 1rem;
+  gap: 0.75rem;
+}
+
+/* Tightens the section cards and fiscal-year rows specifically for the
+   measure modal -- .modal-section-block/.measure-year-row are shared with
+   other, shorter modals that don't need this. */
+.measure-editor-modal .modal-section-block {
+  gap: 0.6rem;
+  padding: 0.85rem;
+}
+
+.measure-editor-modal .measure-year-list {
+  gap: 0.5rem;
+}
+
+.measure-editor-modal .measure-year-row {
+  padding: 0.55rem 0.75rem;
 }
 
 .measure-form-section h3 {
@@ -4770,6 +4805,19 @@ textarea.cls-over-limit,
   border-top: 1px solid var(--lp-border-default);
 }
 
+/* The measure edit modal's form can run long enough to need scrolling
+   (Definition + up to 7 fiscal years of actuals/targets), which pushed
+   Save/Submit below the fold. .measure-editor-modal above turns this
+   modal into a fixed header/scrolling-body/footer layout, so this bar is
+   a real (non-scrolling) flex child always anchored at the bottom --
+   scoped to .measure-editor-modal only, since .measure-modal-actions is
+   shared with the shorter team-role and risk modals that don't need this. */
+.measure-editor-modal .measure-modal-actions {
+  flex-shrink: 0;
+  padding-top: 1rem;
+  padding-bottom: 1.25rem;
+}
+
 .measure-modal-actions > div {
   display: flex;
   gap: 0.65rem;
@@ -4784,6 +4832,7 @@ textarea.cls-over-limit,
 .measure-submit-group > div {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 0.65rem;
 }
 

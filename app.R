@@ -2867,6 +2867,53 @@ plan_team_service_ids <- function(db, plan) {
   unique(links$service_id[!is.na(links$service_id) & nzchar(trimws(links$service_id))])
 }
 
+# Reported 2026-08-03: the plan review/scoring page rendered whatever
+# happened to be in performance.plan_service for a plan with no regard for
+# whether that service actually belongs to the plan's entity, and Mayoral
+# Offices -- which are exempt from having any services at all
+# (submitter_is_mayoral_service()) -- showed a service anyway. Used to scope
+# plan_service/service_rows in the review page to only the services this
+# specific plan is actually allowed to have.
+plan_review_allowed_service_ids <- function(db, plan, all_service_ids) {
+  if (submitter_is_mayoral_service(db, submitter_value_for_plan(plan))) return(character(0))
+  if (!plan_is_entity_submitter(plan)) return(all_service_ids)
+  entity_service_ids <- plan_team_service_ids(db, plan)
+  all_service_ids[all_service_ids %in% entity_service_ids]
+}
+
+# Reported 2026-08-04: a plan's row in the review queue/publishing/approval
+# list pages showed overall_score exactly as of the last full
+# refresh_app_data() -- scoring a plan and navigating back to a list still
+# showed the pre-save score. review_snapshot_cache holds a fresher
+# per-plan snapshot written on every autosave (see the comment on
+# plan_review_save_request in server()), but list pages read
+# review_plan_review directly with no single plan_id to key off of, so
+# every outstanding snapshot needs merging in, not just the one plan
+# actively open in the detail view. Takes `cache` as a plain argument
+# (rather than closing over review_snapshot_cache) so this is testable
+# outside of a live Shiny session.
+merge_cached_review_snapshots <- function(data, cache) {
+  keys <- ls(cache)
+  if (!length(keys) || !"review_plan_review" %in% names(data)) return(data)
+  for (key in keys) {
+    plan_id <- suppressWarnings(as.integer(key))
+    if (is.na(plan_id)) next
+    snapshot <- get(key, envir = cache, inherits = FALSE)
+    old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
+    data$review_plan_review <- rbind(
+      data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
+      snapshot$review
+    )
+    if ("review_section_score" %in% names(data)) {
+      data$review_section_score <- rbind(
+        data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
+        snapshot$scores
+      )
+    }
+  }
+  data
+}
+
 # A "shared" service is used by more than one active entity that submits
 # its own plan (reference.plan_entity_service) -- e.g. a single grant
 # program (Art and Culture Grants) funding several peer quasi-agency
@@ -3407,7 +3454,7 @@ plan_selected_measure_ids <- function(db, plan, goals, services) {
 # FY26 actual while FY27 is executing) or the upcoming budget year's
 # target (e.g. FY28). Both are required to publish the *plan* -- neither
 # is required to save or submit an individual measure for approval (see
-# validate_measure_submit_requirements()). Measures marked "New" this
+# measure_missing_required_fields()). Measures marked "New" this
 # cycle are exempt -- they weren't tracked yet, so there's nothing to report.
 plan_measures_missing_required_fiscal_data <- function(db, plan, goals, services) {
   empty <- db$performance_performance_measure[0, , drop = FALSE]
@@ -4784,6 +4831,9 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   goals <- goals[order(goals$sort_order), , drop = FALSE]
   services <- db$performance_plan_service[db$performance_plan_service$plan_id == plan_id, , drop = FALSE]
   service_rows <- db$reference_service[db$reference_service$service_id %in% services$service_id, , drop = FALSE]
+  allowed_service_ids <- plan_review_allowed_service_ids(db, plan, service_rows$service_id)
+  services <- services[services$service_id %in% allowed_service_ids, , drop = FALSE]
+  service_rows <- service_rows[service_rows$service_id %in% allowed_service_ids, , drop = FALSE]
   review_bits <- if (isTRUE(include_review)) review_summary_for_plan(db, plan_id) else list(review = NULL, scores = data.frame(), feedback = data.frame())
   risks <- db$performance_service_risk[db$performance_service_risk$plan_id == plan_id, , drop = FALSE]
   notes_summary <- review_notes_summary(review_bits)
@@ -5216,7 +5266,7 @@ disable_input_tag <- function(tag, disabled = TRUE) {
 
 measure_note_input <- function(input_id, label, value = "", locked = FALSE) {
   note_value <- if (is.null(value) || length(value) == 0 || is.na(value)) "" else as.character(value)
-  textarea_attrs <- list(id = input_id, class = "form-control", rows = 3, maxlength = 200, note_value)
+  textarea_attrs <- list(id = input_id, class = "form-control", rows = 2, maxlength = 200, note_value)
   if (locked) textarea_attrs$disabled <- "disabled"
   div(
     class = paste("form-group shiny-input-container", if (locked) "measure-note-locked"),
@@ -5290,15 +5340,21 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
   pillar_choices <- c("Not linked" = "", setNames(db$reference_pillar$pillar_id, db$reference_pillar$pillar_name))
   pillar_goal_choices <- c("Not linked" = "", setNames(db$reference_pillar_goal$pillar_goal_id, paste(db$reference_pillar_goal$goal_code, db$reference_pillar_goal$goal_title)))
   status <- value("approval_status", "Draft")
-  # Once a measure is Validated, everything about it locks to SystemAdmin
-  # only, except the current fiscal year's actual (still being actively
-  # reported) and the following fiscal year's target (still being
-  # actively planned) -- see measure_actual_is_locked()/
-  # measure_target_is_locked()/measure_definition_is_locked() in
-  # R/database.R for the shared, date-driven rule, enforced again
-  # server-side in collect_measure_form()/collect_measure_years() and
+  # Once a measure is Validated, its definition locks to SystemAdmin only --
+  # but unlocks again if it's later forced back to Draft (e.g. a required
+  # field going missing), so the submitter can fix it. Historic fiscal-year
+  # data is different: it locks once the measure has EVER been validated
+  # and stays locked even through a later Draft downgrade, plus the current
+  # fiscal year's actual (still being actively reported) and the following
+  # fiscal year's target (still being actively planned) always stay open.
+  # See measure_actual_is_locked()/measure_target_is_locked()/
+  # measure_definition_is_locked() in R/database.R for the shared,
+  # date-driven rule, enforced again server-side in
+  # collect_measure_form()/collect_measure_years() and
   # save_measure_record() regardless of what this UI renders.
   is_measure_validated <- identical(status, "Validated")
+  measure_ever_validated_flag <- is_measure_validated || measure_ever_validated(value("ever_validated_at", NA))
+  missing_required_fields <- if (is_new) character(0) else measure_missing_required_fields(as.list(measure))
   # can_edit_form being FALSE (e.g. a shared-service measure not owned by
   # the current viewer -- see current_user_can_edit_measure()) used to only
   # set a data-can-edit="false" attribute for client-side JS to disable,
@@ -5370,6 +5426,16 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             )
           )
         },
+        if (!is_new && identical(status, "Draft") && length(missing_required_fields)) {
+          div(
+            class = "measure-validated-lock-note measure-draft-incomplete-note",
+            icon("triangle-exclamation"),
+            paste0(
+              "Draft: missing required fields -- ", paste(missing_required_fields, collapse = ", "), ". ",
+              if (measure_ever_validated_flag) "Historic fiscal-year data from before this measure's last validation stays locked in the meantime." else "Complete these fields before submitting for approval."
+            )
+          )
+        },
         if (nrow(latest_review) && nzchar(trimws(latest_review$feedback[[1]] %||% ""))) {
           tags$section(
             class = "modal-section-block measure-review-feedback",
@@ -5437,7 +5503,7 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
             },
             div(class = "measure-field", disable_input_tag(textInput("measure_disaggregation", measure_label("Disaggregation", "List available breakdowns, such as geography, demographic group, program, facility, district, or service type."), value = value("disaggregation")), definition_locked)),
             div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_how_used", measure_label("How the data is used", "Explain how the agency uses this measure for management, budgeting, service improvement, or public accountability.", TRUE), rows = 2, value = value("how_data_used")), definition_locked)),
-            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance.", TRUE), rows = 2, value = value("why_meaningful")), definition_locked)),
+            div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_why_meaningful", measure_label("Why this measure is meaningful", "Explain why this measure is a useful signal of resident outcomes, service quality, efficiency, or operational performance."), rows = 2, value = value("why_meaningful")), definition_locked)),
             div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_proxy", measure_label("Proxy measure or limitations", "Describe whether this is a proxy for a harder-to-measure outcome and name important limitations."), rows = 2, value = value("proxy_measure")), definition_locked)),
             div(class = "measure-field full-width", disable_input_tag(textAreaInput("measure_improvement_notes", measure_label("Improvement notes", "Identify needed improvements to data quality, frequency, definition, validation, or reporting."), rows = 2, value = value("improvement_notes")), definition_locked)),
             if (effective_can_edit_scope) {
@@ -5479,11 +5545,12 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           class = "modal-section-block measure-form-section",
           h3("Fiscal Year Actuals & Targets"),
           p("Enter annual actuals and targets. Notes should explain revisions, data quality issues, or target rationale."),
-          if (is_measure_validated && !can_edit_locked_data) {
+          if (measure_ever_validated_flag && !can_edit_locked_data) {
             p(
               class = "field-inline-help",
               paste0(
-                "This measure is validated: only the ", fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
+                if (is_measure_validated) "This measure is validated: only the " else "This measure was previously validated, and its historic data stays locked even while it's back in Draft: only the ",
+                fy_label(current_fiscal_year() - 1L), " and ", fy_label(current_fiscal_year()),
                 " actuals and the ", fy_label(current_fiscal_year() + 1L), " target can still be edited. Everything else is locked to system admins."
               )
             )
@@ -5491,10 +5558,10 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
           div(
             class = "measure-year-list",
             lapply(measure_entry_years(), function(year) {
-              actual_locked <- (measure_actual_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
-              target_locked <- (measure_target_is_locked(year, is_measure_validated) && !can_edit_locked_data) || form_locked
-              actual_admin_override <- measure_actual_is_locked(year, is_measure_validated) && can_edit_locked_data
-              target_admin_override <- measure_target_is_locked(year, is_measure_validated) && can_edit_locked_data
+              actual_locked <- (measure_actual_is_locked(year, measure_ever_validated_flag) && !can_edit_locked_data) || form_locked
+              target_locked <- (measure_target_is_locked(year, measure_ever_validated_flag) && !can_edit_locked_data) || form_locked
+              actual_admin_override <- measure_actual_is_locked(year, measure_ever_validated_flag) && can_edit_locked_data
+              target_admin_override <- measure_target_is_locked(year, measure_ever_validated_flag) && can_edit_locked_data
               is_recent_actual_year <- year == fiscal_measure_snapshot_years()$actual_fy
               is_next_target_year <- year == target_fy
               div(
@@ -5541,8 +5608,15 @@ measure_modal_ui <- function(db, agency_id, measure_id = NULL, can_edit_scope = 
         ),
         div(
           class = "measure-submit-group",
-          p(class = "approval-workflow-note", if (form_locked) "This measure is locked -- Save and Submit are disabled." else "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated."),
+          if (form_locked) p(class = "approval-workflow-note", "This measure is locked -- Save and Submit are disabled."),
           div(
+            if (!form_locked) tags$span(
+              class = "field-help-icon",
+              tabindex = "0",
+              title = "Saving allows the measure to be added to a goal or service. Submit for approval marks this measure pending while a system admin reviews and validates your measure once you submit. All measures in Agency Performance Plans must be validated.",
+              `aria-label` = "Save and submit guidance",
+              "?"
+            ),
             tags$button(id = "save_measure", type = "button", class = "civic-button secondary", disabled = if (form_locked) "disabled", "Save"),
             tags$button(id = "submit_measure", type = "button", class = "civic-button primary", disabled = if (form_locked) "disabled", "Submit for approval")
           )
@@ -8712,25 +8786,11 @@ server <- function(input, output, session) {
     review_snapshot_cache[[as.character(as.integer(plan_id))]] <- snapshot
     invisible(TRUE)
   }
-  data_with_cached_review_snapshot <- function(data, plan_id) {
-    key <- as.character(as.integer(plan_id))
-    if (!exists(key, envir = review_snapshot_cache, inherits = FALSE)) return(data)
-    snapshot <- get(key, envir = review_snapshot_cache, inherits = FALSE)
-    plan_id <- as.integer(plan_id)
-    if ("review_plan_review" %in% names(data)) {
-      old_review_ids <- data$review_plan_review$review_id[data$review_plan_review$plan_id == plan_id]
-      data$review_plan_review <- rbind(
-        data$review_plan_review[data$review_plan_review$plan_id != plan_id, , drop = FALSE],
-        snapshot$review
-      )
-      if ("review_section_score" %in% names(data)) {
-        data$review_section_score <- rbind(
-          data$review_section_score[!data$review_section_score$review_id %in% old_review_ids, , drop = FALSE],
-          snapshot$scores
-        )
-      }
-    }
-    data
+  # See merge_cached_review_snapshots() for what this does and why -- kept
+  # as a thin wrapper here so callers in server() don't need to pass
+  # review_snapshot_cache explicitly.
+  data_with_cached_review_snapshot <- function(data) {
+    merge_cached_review_snapshots(data, review_snapshot_cache)
   }
   current_submitter_value <- function() {
     selected <- input$selected_agency %||% input$selected_agency_nav %||% input$selected_agency_mobile
@@ -9236,33 +9296,6 @@ server <- function(input, output, session) {
     })
     invisible(TRUE)
   }
-  is_blank_value <- function(value) {
-    is.null(value) || length(value) == 0 || is.na(value) || !nzchar(trimws(as.character(value)))
-  }
-  # The next fiscal year's target and the most recently completed year's
-  # actual are required to publish the *plan* (see
-  # plan_measures_missing_required_fiscal_data()), not to save or submit an
-  # individual measure -- a measure can be fully defined and submitted for
-  # approval before that data exists.
-  validate_measure_submit_requirements <- function(values) {
-    required_fields <- c(
-      title = "Measure name",
-      description = "Definition",
-      measure_type = "Measure type",
-      desired_direction = "Desired direction",
-      format_type = "Format",
-      data_source = "Data source",
-      data_owner = "Data owner",
-      data_owner_role = "Data owner role",
-      update_frequency = "Update frequency",
-      formula = "Formula or calculation",
-      data_location = "Data location",
-      collection_method = "Collection method",
-      how_data_used = "How the data is used",
-      why_meaningful = "Why this measure is meaningful"
-    )
-    unname(required_fields[vapply(names(required_fields), function(name) is_blank_value(values[[name]]), logical(1))])
-  }
   collect_measure_form <- function() {
     data <- app_data()
     agency_id <- current_agency_id()
@@ -9338,7 +9371,10 @@ server <- function(input, output, session) {
     } else {
       data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(existing_id), , drop = FALSE]
     }
-    is_validated <- nrow(existing_measure) > 0 && identical(existing_measure$approval_status[[1]], "Validated")
+    ever_validated <- nrow(existing_measure) > 0 && (
+      identical(existing_measure$approval_status[[1]], "Validated") ||
+        measure_ever_validated(existing_measure$ever_validated_at[[1]])
+    )
     existing_actuals <- if (is.null(existing_id) || identical(existing_id, "new")) {
       data.frame()
     } else {
@@ -9357,8 +9393,8 @@ server <- function(input, output, session) {
       submitted_target <- nullable_number(input[[paste0("measure_target_", year)]])
       submitted_target_notes <- limit_note(input[[paste0("measure_target_notes_", year)]])
 
-      actual_locked <- measure_actual_is_locked(year, is_validated)
-      target_locked <- measure_target_is_locked(year, is_validated)
+      actual_locked <- measure_actual_is_locked(year, ever_validated)
+      target_locked <- measure_target_is_locked(year, ever_validated)
 
       # Disabling the input already stops a non-admin from changing a locked
       # field in the UI, but a locked field's stored value is what's kept
@@ -9399,6 +9435,12 @@ server <- function(input, output, session) {
       }
     }
     values <- collect_measure_form()
+    # Computed against what the user actually entered, before the
+    # placeholder-text fallback below papers over blank required fields for
+    # storage purposes -- otherwise a brand new measure would never show as
+    # "missing fields" since every required field would already read
+    # "Draft ... pending." by the time this ran.
+    missing_fields <- measure_missing_required_fields(values)
     yearly_values <- collect_measure_years()
     locked_changes_missing_note <- Filter(
       function(row) isTRUE(row$actual_locked_change_needs_note) || isTRUE(row$target_locked_change_needs_note),
@@ -9424,7 +9466,6 @@ server <- function(input, output, session) {
         showNotification("No active planning cycle was found for this agency or entity. Please select a valid agency/entity before submitting the measure.", type = "error", duration = 8)
         return()
       }
-      missing_fields <- validate_measure_submit_requirements(values)
       if (length(missing_fields)) {
         showNotification(paste("Complete required fields before submitting:", paste(missing_fields, collapse = ", ")), type = "error", duration = 10)
         return()
@@ -9453,7 +9494,14 @@ server <- function(input, output, session) {
       return()
     }
     reported_by <- if (nrow(user_rows)) user_rows$user_id[[1]] else data$access_user_agency_access$user_id[[1]]
-    result <- tryCatch(save_measure_record(database, values, yearly_values, reported_by, submit, is_admin = current_user_can_edit_locked_measure_data()), error = function(error) error)
+    result <- tryCatch(
+      save_measure_record(
+        database, values, yearly_values, reported_by, submit,
+        is_admin = current_user_can_edit_locked_measure_data(),
+        required_fields_complete = !length(missing_fields)
+      ),
+      error = function(error) error
+    )
     if (inherits(result, "error")) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
@@ -11417,12 +11465,7 @@ server <- function(input, output, session) {
         page_data <- data_with_cached_section_draft(page_data, plan$plan_id[[1]], current_page())
       }
     }
-    if (identical(current_page(), "plan_review_detail")) {
-      review_plan_id <- suppressWarnings(as.integer(current_history_plan_id() %||% NA_integer_))
-      if (!is.na(review_plan_id)) {
-        page_data <- data_with_cached_review_snapshot(page_data, review_plan_id)
-      }
-    }
+    page_data <- data_with_cached_review_snapshot(page_data)
     page_ui(
       current_page(),
       page_data,
