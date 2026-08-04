@@ -45,6 +45,10 @@ COPY scripts/build_plan_export.py scripts/
 COPY scripts/build_cls_pdf.py scripts/
 COPY scripts/import_entity_role_assignments.R scripts/
 COPY scripts/apply_user_entity_access_cleanup.R scripts/
+# The spend-category loader has to be in the image so it can be re-run after a
+# deploy. Only the script ships; the codes themselves are city budget data and
+# are never committed (see .gitignore), so the CSV is copied in at load time.
+COPY scripts/load_spend_categories.R scripts/
 COPY database/seed/entity_role_assignments.csv database/seed/entity_role_assignments.csv
 COPY database/seed/user_entity_access_seed.csv database/seed/user_entity_access_seed.csv
 COPY database/seed/agency_budget_analyst_seed.csv database/seed/agency_budget_analyst_seed.csv
