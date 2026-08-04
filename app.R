@@ -2566,15 +2566,7 @@ feedback_admin_card <- function(row, admin_choices) {
   )
 }
 
-page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
-  feedback <- db$application_feedback_request
-  admin_choices <- feedback_system_admin_choices(db)
-  status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
-  feedback_status_count <- function(status) {
-    if (!length(status_counts) || !status %in% names(status_counts)) return(0L)
-    as.integer(status_counts[[status]])
-  }
-  filtered_feedback <- feedback
+feedback_normalize_filters <- function(search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
   search <- if (is.null(search) || length(search) == 0 || is.na(search[[1]])) "" else as.character(search[[1]])
   search <- tolower(trimws(search))
   category_filter <- if (is.null(category_filter) || length(category_filter) == 0) character(0) else as.character(category_filter)
@@ -2584,20 +2576,17 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
   priority_filter <- priority_filter[nzchar(priority_filter)]
   status_filter <- status_filter[nzchar(status_filter)]
   # An empty selection means "no filter" (show every status), exactly like
-  # category/priority above -- it must NOT get silently rewritten to
-  # default_feedback_status_filter here. That used to happen on every
-  # render, which set the rendered selectInput's `selected =` to a value
-  # that didn't match what feedback_status_filter_value() actually held;
-  # Shiny re-syncing that mismatch (the freshly-rendered widget reporting
-  # its "selected" values back as a new input) could re-trigger a full
-  # page re-render, which could reproduce the same mismatch again --
-  # reported 2026-08-03 as the Bug/Fix page reloading in a loop when
-  # toggling the status filter. The default now only applies at
-  # initialization/sign-in (see feedback_status_filter_value's declaration
-  # and complete_sign_in()), where the reactive value and the rendered
-  # selection start out equal, so there's nothing to resync.
+  # category/priority. It must never get silently rewritten to
+  # default_feedback_status_filter here -- see feedback_list_ui()'s comment
+  # for why.
   status_filter <- status_filter[status_filter %in% feedback_status_choices]
-  if (nrow(filtered_feedback) && nzchar(search)) {
+  list(search = search, category_filter = category_filter, priority_filter = priority_filter, status_filter = status_filter)
+}
+
+feedback_filtered_rows <- function(feedback, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  filters <- feedback_normalize_filters(search, category_filter, priority_filter, status_filter)
+  filtered_feedback <- feedback
+  if (nrow(filtered_feedback) && nzchar(filters$search)) {
     haystack <- tolower(paste(
       filtered_feedback$user_email,
       filtered_feedback$comment,
@@ -2606,17 +2595,45 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
       filtered_feedback$assigned_admin_name,
       sep = " "
     ))
-    filtered_feedback <- filtered_feedback[grepl(search, haystack, fixed = TRUE), , drop = FALSE]
+    filtered_feedback <- filtered_feedback[grepl(filters$search, haystack, fixed = TRUE), , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(category_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$category %in% category_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$category_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$category %in% filters$category_filter, , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(priority_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$priority %in% priority_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$priority_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$priority %in% filters$priority_filter, , drop = FALSE]
   }
-  if (nrow(filtered_feedback) && length(status_filter)) {
-    filtered_feedback <- filtered_feedback[filtered_feedback$status %in% status_filter, , drop = FALSE]
+  if (nrow(filtered_feedback) && length(filters$status_filter)) {
+    filtered_feedback <- filtered_feedback[filtered_feedback$status %in% filters$status_filter, , drop = FALSE]
   }
+  filtered_feedback
+}
+
+# Rendered by its own uiOutput("feedback_admin_list") (see server()), kept
+# separate from page_bug_fix()'s filter controls on purpose -- see the
+# comment on that uiOutput call for why the two must not share a render
+# cycle.
+feedback_list_ui <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  feedback <- db$application_feedback_request
+  admin_choices <- feedback_system_admin_choices(db)
+  filtered_feedback <- feedback_filtered_rows(feedback, search, category_filter, priority_filter, status_filter)
+  if (!nrow(feedback)) {
+    div(class = "empty-state", h3("No feedback yet"), p("Submitted feedback will appear here for System Admin review."))
+  } else if (!nrow(filtered_feedback)) {
+    div(class = "empty-state", h3("No matching feedback"), p("Clear or adjust the filters to see more requests."))
+  } else {
+    div(class = "feedback-admin-list", lapply(seq_len(nrow(filtered_feedback)), function(i) feedback_admin_card(filtered_feedback[i, , drop = FALSE], admin_choices)))
+  }
+}
+
+page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+  feedback <- db$application_feedback_request
+  status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
+  feedback_status_count <- function(status) {
+    if (!length(status_counts) || !status %in% names(status_counts)) return(0L)
+    as.integer(status_counts[[status]])
+  }
+  filters <- feedback_normalize_filters(search, category_filter, priority_filter, status_filter)
   tagList(
     div(
       class = "briefing-header compact",
@@ -2640,18 +2657,12 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
       "Filter, categorize, prioritize, archive, delete, or mark requests complete.",
       div(
         class = "feedback-filter-grid",
-        div(class = "measure-field", textInput("feedback_search", "Search", value = search, placeholder = "Search email, page, or comment")),
-        div(class = "measure-field", selectInput("feedback_category_filter", "Category", choices = feedback_category_choices, selected = category_filter, multiple = TRUE)),
-        div(class = "measure-field", selectInput("feedback_priority_filter", "Priority", choices = feedback_priority_choices, selected = priority_filter, multiple = TRUE)),
-        div(class = "measure-field", selectInput("feedback_status_filter", "Status", choices = feedback_status_choices, selected = status_filter, multiple = TRUE))
+        div(class = "measure-field", textInput("feedback_search", "Search", value = filters$search, placeholder = "Search email, page, or comment")),
+        div(class = "measure-field", selectInput("feedback_category_filter", "Category", choices = feedback_category_choices, selected = filters$category_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_priority_filter", "Priority", choices = feedback_priority_choices, selected = filters$priority_filter, multiple = TRUE)),
+        div(class = "measure-field", selectInput("feedback_status_filter", "Status", choices = feedback_status_choices, selected = filters$status_filter, multiple = TRUE))
       ),
-      if (!nrow(feedback)) {
-        div(class = "empty-state", h3("No feedback yet"), p("Submitted feedback will appear here for System Admin review."))
-      } else if (!nrow(filtered_feedback)) {
-        div(class = "empty-state", h3("No matching feedback"), p("Clear or adjust the filters to see more requests."))
-      } else {
-        div(class = "feedback-admin-list", lapply(seq_len(nrow(filtered_feedback)), function(i) feedback_admin_card(filtered_feedback[i, , drop = FALSE], admin_choices)))
-      }
+      uiOutput("feedback_admin_list")
     )
   )
 }
@@ -11468,6 +11479,32 @@ server <- function(input, output, session) {
   observeEvent(input$feedback_status_filter, feedback_status_filter_value(input$feedback_status_filter %||% character(0)), ignoreInit = TRUE, ignoreNULL = FALSE)
   observeEvent(input$measure_status_filter, measure_status_filter_value(input$measure_status_filter %||% "All except deprecated"), ignoreInit = TRUE, ignoreNULL = FALSE)
 
+  # Rendered separately from output$page on purpose. page_bug_fix()'s filter
+  # selectInputs used to be recreated from scratch every time any of these
+  # reactiveVals changed, since output$page's one giant renderUI depended on
+  # them too. A freshly (re)initialized selectize widget echoes its own
+  # "selected" back to the server as if the person had just changed it --
+  # normally a harmless no-op, since reactiveVal ignores an identical value.
+  # But recreating the widget while a removal is still in flight could echo
+  # back the *previous* (pre-removal) selection, flipping the reactiveVal
+  # back, re-rendering again, echoing the *new* one, flipping back again --
+  # reported 2026-08-04 as the Bug/Fix status filter getting "caught in a
+  # loop" when removing a single status (confirmed via server-side logging:
+  # the value oscillated between the pre- and post-removal selection).
+  # Keeping the filter controls out of output$page's dependency graph (see
+  # isolate() around feedback_filters below) means changing a filter no
+  # longer touches their DOM at all -- only this list output re-renders.
+  output$feedback_admin_list <- renderUI({
+    req(identical(current_page(), "bug_fix"))
+    feedback_list_ui(
+      ensure_app_data(),
+      feedback_search_value(),
+      feedback_category_filter_value(),
+      feedback_priority_filter_value(),
+      feedback_status_filter_value()
+    )
+  })
+
   output$page <- renderUI({
     if (is.null(current_user()) || identical(current_page(), "login")) {
       state <- auth_state()
@@ -11494,12 +11531,20 @@ server <- function(input, output, session) {
       current_role_preview_user_id() %||% input$role_preview_user_id %||% "",
       current_history_plan_id() %||% NA_integer_,
       current_history_include_review(),
-      feedback_filters = list(
+      # isolate()'d so this only supplies the filter controls' initial
+      # `selected =`/`value =` whenever output$page redraws for some OTHER
+      # reason (e.g. navigating to the page). Reading these reactively here
+      # would recreate the controls on every filter change -- see the
+      # comment on output$feedback_admin_list above for why that's the bug.
+      # The controls stay live via observeEvent(input$feedback_status_filter,
+      # ...) above and feed the actual filtering through that separate
+      # output instead.
+      feedback_filters = isolate(list(
         search = feedback_search_value(),
         category = feedback_category_filter_value(),
         priority = feedback_priority_filter_value(),
         status = feedback_status_filter_value()
-      ),
+      )),
       selected_cls_id = current_cls_id(),
       cls_detail_origin = cls_detail_origin(),
       editing_line_id = cls_editing_line(),
