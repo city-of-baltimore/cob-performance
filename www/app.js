@@ -1502,6 +1502,15 @@
     }
   });
 
+  // The measure modal renders in its own uiOutput, outside #page, so the
+  // #page MutationObserver that normally calls updateMeasureNumberFormat()
+  // on render never sees it -- without this, opening an existing measure
+  // whose stored value already looks like an unconverted fraction wouldn't
+  // show the warning until the person touched an input themselves.
+  document.addEventListener("shiny:value", function () {
+    if (document.querySelector(".measure-editor-modal")) updateMeasureNumberFormat();
+  });
+
   document.addEventListener("shiny:bound", function (event) {
     if (event.target && ["feedback_category_filter", "feedback_priority_filter", "feedback_status_filter"].includes(event.target.id)) {
       bindFeedbackFilterControls();
@@ -1959,22 +1968,20 @@
     if (!input || input.value === "") return;
     var value = input.value;
     if (format === "Percent") {
+      // Percent allows up to 2 decimal places now, same as Currency/Count
+      // (2026-08-04) -- it no longer force-rounds to a whole number, and
+      // it no longer silently rewrites a fraction like "0.75" into "75".
+      // Silently rewriting it fought the whole point of loosening this:
+      // the app should warn that a value looks like an unconverted
+      // fraction and let the person decide, not guess and rewrite their
+      // input without asking (see checkMeasureFractionWarning() below).
       var raw = value.replace(/[^\d.]/g, "");
       var percent = Number(raw);
       if (Number.isNaN(percent)) {
         input.value = "";
         return;
       }
-      // A value like "0.75" is a leftover habit from when percents were
-      // stored as decimal fractions -- convert to 75 instead of silently
-      // truncating everything after the decimal point (the previous
-      // behavior turned "0.75" into "0" with no warning). A bare whole
-      // number like "1" (no decimal point) is left as 1, since that's a
-      // legitimate "1%" under the current whole-number convention.
-      if (percent > 0 && percent <= 1 && raw.indexOf(".") !== -1) {
-        percent = percent * 100;
-      }
-      input.value = String(Math.max(0, Math.min(100, Math.round(percent))));
+      input.value = String(Math.max(0, Math.min(100, Math.round(percent * 100) / 100)));
       return;
     }
     value = value.replace(/[^\d.-]/g, "");
@@ -1983,6 +1990,24 @@
       value = value.slice(0, decimalIndex + 1) + value.slice(decimalIndex + 1).replace(/\./g, "").slice(0, 2);
     }
     input.value = value;
+  }
+
+  // Louder than the corner save notification on purpose (Melanie
+  // 2026-08-04: that toast wasn't noticeable enough for this audience) --
+  // an inline banner directly under the specific field the person is
+  // looking at, updated on every keystroke so it's visible before they
+  // even click away, not just after a round-trip to the server.
+  function checkMeasureFractionWarning(input) {
+    var wrapper = input.closest(".measure-number-field");
+    var warning = wrapper && wrapper.querySelector(".measure-fraction-warning");
+    if (!warning) return;
+    var percent = Number(input.value);
+    var suspicious = input.value !== "" && !Number.isNaN(percent) && percent > 0 && percent < 1;
+    warning.classList.toggle("measure-fraction-warning-hidden", !suspicious);
+    if (suspicious) {
+      warning.querySelector("span").textContent =
+        "That's " + input.value + "%. If you meant " + Math.round(percent * 100) + "%, enter " + Math.round(percent * 100) + " instead of " + input.value + ".";
+    }
   }
 
   function updateMeasureNumberFormat() {
@@ -1999,13 +2024,13 @@
       if (format === "Percent") {
         input.min = "0";
         input.max = "100";
-        input.step = "1";
       } else {
         input.removeAttribute("min");
         input.removeAttribute("max");
-        input.step = "0.01";
       }
+      input.step = "0.01";
       normalizeMeasureNumberInput(input, format);
+      if (format === "Percent") checkMeasureFractionWarning(input);
     });
   }
 
@@ -2013,7 +2038,9 @@
     if (event.target && event.target.id === "measure_format") updateMeasureNumberFormat();
     if (event.target && event.target.matches(".measure-value-input")) {
       var formatSelect = document.getElementById("measure_format");
-      normalizeMeasureNumberInput(event.target, formatSelect ? formatSelect.value : "Count");
+      var format = formatSelect ? formatSelect.value : "Count";
+      normalizeMeasureNumberInput(event.target, format);
+      if (format === "Percent") checkMeasureFractionWarning(event.target);
     }
     if (event.target && event.target.id && event.target.id.indexOf("review_score__") === 0) {
       var reviewContainer = event.target.closest(".history-modal-panel");
@@ -2031,12 +2058,13 @@
     if (!event.target.matches(".measure-value-input")) return;
     var formatSelect = document.getElementById("measure_format");
     var format = formatSelect ? formatSelect.value : "Count";
-    // Percent only normalizes on change (blur), not on every keystroke --
-    // normalizing mid-typing mangled a decimal like "0.75" before the
-    // user finished typing it (the "0." got stripped after just two
-    // characters). Letting the full value land first, then converting
-    // fractions like 0.75 -> 75 on blur, is what actually fixes it.
-    if (format === "Percent") return;
+    if (format === "Percent") {
+      // Only the warning banner updates on every keystroke; the value
+      // itself still only normalizes on blur (see normalizeMeasureNumberInput)
+      // so mid-typing a decimal like "0.75" never gets mangled.
+      checkMeasureFractionWarning(event.target);
+      return;
+    }
     normalizeMeasureNumberInput(event.target, format);
   });
 
