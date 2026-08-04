@@ -13,6 +13,9 @@ down into line items (object categories) and position requests.
 > BBMR's 14 analysts on 2026-08-03. **Agencies still cannot reach any of this**, and that
 > stays true until the real spend-category list lands; see
 > [Open items](#notes-and-open-items).
+>
+> Reviewers get **both** pages, and may **edit** requests on the three test agencies at any
+> status — see [Test agencies](#test-agencies). On a real agency they remain read-only.
 
 ## The workflow
 
@@ -68,9 +71,10 @@ Access is by app role, checked both server-side (page gate) and in the nav:
   approval*.
 - **AgencySubmitter** — the same, plus *Send to BBMR* per request, with a named
   attestation. Holds final sign-off for the agency.
-- **BBMRReviewer** — sees the **CLS Review** page and records the decision. Opens
-  requests **read-only**; the decision belongs on the review page, not in the agency's
-  submission. Their back link returns to CLS Review.
+- **BBMRReviewer** — sees **both** Budget Planning pages and records the decision on CLS
+  Review. Opens a real agency's request **read-only** — the decision belongs on the review
+  page, not in the agency's submission — but may edit freely on a test agency. Their agency
+  switcher offers only the test agencies, so no real agency's list is put in front of them.
 - **SystemAdmin** — full access, for support and testing.
 - Everyone else (OPIReviewer, DeputyMayor, CAOffice) — nav items hidden, pages redirect.
 
@@ -324,3 +328,37 @@ Anything in JS reading these fields must use `clsNumberValue(el)`, not `parseFlo
   cycle when that date is available.
 - **Object list** uses `Minor Equipment (<$5k)` / `Major Equipment (>$5k)` (the source
   document had these reversed; corrected on review).
+
+## Test agencies
+
+Three purpose-built agencies exist for rehearsing the workflow end to end without touching
+real data — one of each entity type, so the entity/agency grouping gets exercised too:
+
+| agency_id | Name | Type |
+|---|---|---|
+| `TST9001` | TEST Agency of Sparkly Sidewalks | Agency |
+| `TST9002` | TEST Quasi Bureau of Waffle Forecasting | QuasiAgency |
+| `TST9003` | TEST Mayor's Office of Tiny Triumphs | MayoraltyOffice |
+
+There is **no `is_test` column** on `reference.agency`. Membership is derived from the naming
+convention — a `TST`-prefixed `agency_id`, or a name starting `TEST` — in
+`cls_test_agency_ids()`. Both forms are checked so neither alone can silently drop one, and
+`tests/testthat/test-cls-test-agencies.R` pins the behaviour down with deliberate near-misses
+("Office of Protest and Testimony", "Contested Elections Board") because a false positive
+would hand reviewers edit rights over a real agency's submissions. **If this should become
+data-driven, add a boolean to `reference.agency` and change only that one function.**
+
+What the carve-out does:
+
+- `cls_test_selector_choices()` collects every selector entry rolling up to a test agency —
+  the agency itself and any of its entities.
+- `cls_add_test_choices_for_reviewers()` adds those to a BBMR reviewer's agency switcher.
+  Without it reviewers had **no** entries at all: `user_submitter_choices()` keys off
+  agency/entity grants and `BBMRReviewer` rows carry none, so the switcher came up empty and
+  `current_submitter_value()` returned `""`.
+- `page_cls_request_detail()` skips the read-only reason entirely on a test agency for a
+  reviewer or SystemAdmin, so a request can be edited at any status — including one already
+  sent to BBMR. A dashed amber banner marks the page as a sandbox.
+
+Nothing about a real agency's behaviour changed: writers and submitters still lose editing
+once a request reaches BBMR, and reviewers are still read-only there.
