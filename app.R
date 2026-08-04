@@ -5224,8 +5224,8 @@ measure_value_input <- function(input_id, label, value = NA, format_type = "Coun
     class = "form-control measure-value-input",
     type = "number",
     value = input_value,
-    step = if (identical(format_type, "Percent")) "1" else "0.01",
-    inputmode = if (identical(format_type, "Percent")) "numeric" else "decimal",
+    step = "0.01",
+    inputmode = "decimal",
     `data-value-role` = if (grepl("_target_", input_id, fixed = TRUE)) "target" else "actual"
   )
   if (identical(format_type, "Percent")) {
@@ -9059,28 +9059,6 @@ server <- function(input, output, session) {
     if (is.na(a) || is.na(b)) return(TRUE)
     !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
   }
-  has_two_or_fewer_decimals <- function(value) {
-    is.na(value) || abs(value * 100 - round(value * 100)) < 0.000001
-  }
-  has_whole_number <- function(value) {
-    is.na(value) || abs(value - round(value)) < 0.000001
-  }
-  validate_measure_values <- function(format_type, yearly_values) {
-    values <- unlist(lapply(yearly_values, function(row) c(row$annual_actual, row$target_value)), use.names = FALSE)
-    values <- values[!is.na(values)]
-    if (!length(values)) return(NULL)
-    if (identical(format_type, "Percent")) {
-      if (any(values < 0 | values > 100) || any(!vapply(values, has_whole_number, logical(1)))) {
-        return("For percent measures, actuals and targets must be whole numbers from 0 to 100.")
-      }
-    }
-    if (format_type %in% c("Currency", "Count")) {
-      if (any(!vapply(values, has_two_or_fewer_decimals, logical(1)))) {
-        return(paste(format_type, "actuals and targets can use no more than two decimal places."))
-      }
-    }
-    NULL
-  }
   ensure_measure_current_entity_link <- function(measure_id, data, plan) {
     if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
     entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
@@ -9344,6 +9322,17 @@ server <- function(input, output, session) {
     if (!is.null(value_error)) {
       showNotification(value_error, type = "error", duration = 8)
       return()
+    }
+    suspicious_fractions <- measure_values_with_suspicious_fraction(values$format_type, yearly_values)
+    if (length(suspicious_fractions)) {
+      showNotification(
+        paste0(
+          "Heads up: ", paste(suspicious_fractions, collapse = ", "),
+          " ", if (length(suspicious_fractions) > 1) "are" else "is",
+          " below 1 for a percent measure -- if you meant e.g. 97%, enter 97, not 0.97. Saved as entered."
+        ),
+        type = "warning", duration = 10
+      )
     }
     data <- app_data()
     user_rows <- data$access_user_agency_access[data$access_user_agency_access$agency_id == values$agency_id, , drop = FALSE]
