@@ -323,3 +323,70 @@ silently hand reviewers edit rights over a real agency's submissions.
   role-branching logic; the former now calls the latter, so the resolved value can never be
   something the visible dropdown does not offer.
 - `reviewer_view` was deleted — it had had no readers since round 9.
+
+## Round 14 — real spend categories, reviewer scope walked back
+
+| # | Note | Status |
+|---|------|--------|
+| 152 | Load the real chart-of-accounts spend categories | ✅ **not in git** — see below |
+| 153 | Strip the Budget Planning section: no blurb, no Open buttons, no test-agency block | ✅ just the two page names |
+| 154 | Remove anything restricting BBMR reviewers to test agencies | ✅ reviewers see **every** agency |
+| 155 | Go back to reviewers not being able to edit when opening from CLS Review | ✅ read-only uniformly, for every agency and status |
+| 156 | Analyst recommendation on bulk approval, view-only | ✅ text, not a control |
+| 157 | Analyst options → Recommended / Partial - Rec / Not Recommended | ✅ split from the BBMR vocabulary |
+| 158 | Rewrite the CLS Requests subtext as clear instruction | ✅ five numbered steps, Submitter and Budget Analyst still named |
+| 159 | Tell agencies to collaborate with their budget analyst | ✅ step 4, naming the analyst |
+| 160 | Modify → **View** once a request is submitted | ✅ it was promising an edit it could not deliver |
+| 161 | Rename the CLS Requests chart to "Requests by Service" | ✅ |
+
+### The spend categories are deliberately not in this repository
+
+**This repo is public.** The 113 chart-of-accounts codes are city budget data, so they
+are **not** committed — not in the code, not in a seed file, not in documentation, and not
+in any commit message or PR body.
+
+How it works instead:
+
+- `reference.spend_category` (code, label, sort_order, active) holds them. Only the **empty
+  table structure** is in `target_schema.sql` and `ensure_review_schema()`.
+- `scripts/load_spend_categories.R` loads them from a CSV given by `--file`, defaulting to
+  `database/seed/spend_category_seed.csv`, which is **gitignored**. The script contains no
+  codes. It is idempotent, has `--dry-run`, and `--prune` only *deactivates* absent codes
+  rather than deleting them, since a request line may already point at one.
+- The app reads the **table**, never the file — `spend_category_labels(db)` and
+  `cls_spend_category_options(db)`. This matters: the CSV is not in the Docker image, so
+  anything reading it at runtime would find nothing. That is exactly how the budget-analyst
+  seed silently never ran (round 12).
+- **An empty catalogue is a supported state.** A fresh database and CI have no codes; the
+  dropdown then offers only whatever categories existing requests already reference.
+  Verified against a database built from `target_schema.sql` alone: 41 tables load, the
+  dropdown resolves to length 0, and no placeholder is invented.
+- `www/_*.html` is also gitignored — the render harnesses used for browser verification
+  contain the fully rendered dropdown.
+
+Two things in the source list needed a decision. **Codes `413` and `500` each appeared
+twice** with different meanings; one of each was kept, chosen by numeric block (4xx is
+Materials and Supplies, 5xx is Minor Equipment), leaving 113 of 115. Three probable typos
+were **left exactly as supplied**, on the grounds that they may match the official chart:
+`316 Maintanance`, `701 Organziations`, and `370 Judgements`.
+
+### Analyst recommendation is now its own vocabulary
+
+`cls_analyst_recommendation_choices` (Recommended / Partial - Rec / Not Recommended) is
+separate from `cls_bbmr_approval_choices` (Approved / Partial / Denied). One shared list had
+made the advisory field look as binding as the decision.
+
+**A schema-drift trap worth recording:** `target_schema.sql` declared a CHECK on
+`analyst_approval` that the migration path never created, so a fresh CI database had the
+constraint and every existing database did not. New values would have worked in production
+and failed CI. Both sides were changed together, plus a data migration mapping the old
+values, plus `save_cls_review()` translating a stale `"Partial"` to `"Partial - Rec"` rather
+than silently nulling it.
+
+### Reviewer scope, reversed
+
+Round 13 gave reviewers the test agencies and edit rights on them. Round 14 removes all of
+it: `cls_test_agency_ids()`, `cls_is_test_agency()`, `cls_test_selector_choices()`,
+`cls_add_test_choices_for_reviewers()`, the sandbox banner, its CSS, and the 39-assertion
+test file are gone. Reviewers now get the **full** agency selector (added to the branch that
+already served SystemAdmin and OPIReviewer) and are read-only on every request.

@@ -873,6 +873,24 @@ ensure_review_schema <- function(connection) {
   # modified_by holds the user id; the display name is resolved from
   # access.user.full_name at render time rather than copied in here.
   retype_modified_by_to_user_id(connection, "budget", "cls_request", "modified_by")
+  # Spend categories live in a reference table rather than in the code, because
+  # the codes are city budget data and this repository is public. An empty table
+  # is a valid state; see cls_spend_category_options().
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS reference.spend_category (",
+      "code varchar(20) PRIMARY KEY,",
+      "label varchar(300) NOT NULL,",
+      "sort_order integer NOT NULL DEFAULT 0,",
+      "active boolean NOT NULL DEFAULT true,",
+      "created_at timestamptz NOT NULL DEFAULT now(),",
+      "updated_at timestamptz NOT NULL DEFAULT now(),",
+      "modified_by integer",
+      ")"
+    )
+  )
+  DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_spend_category_sort ON reference.spend_category(sort_order, code)")
   # created_by pairs with created_at so the exports can name who opened a request
   # as well as who touched it last. Rows that predate the column inherit
   # modified_by, which for an untouched request is the creator anyway.
@@ -923,6 +941,35 @@ ensure_review_schema <- function(connection) {
       "reviewed_by integer REFERENCES access.user(user_id),",
       "updated_at timestamptz NOT NULL DEFAULT now()",
       ")"
+    )
+  )
+  # 2026-08-04: the analyst's advisory field was reworded from the BBMR decision's
+  # Approved/Partial/Denied to Recommended/Partial - Rec/Not Recommended. Migrate
+  # stored values, then align the CHECK.
+  #
+  # NOTE: target_schema.sql declares a CHECK on analyst_approval that this
+  # migration path never created, so a fresh (CI) database has the constraint and
+  # an existing one does not. Both have to end up allowing the new values - the
+  # column is widened first because "Not Recommended" is 15 characters and the
+  # original varchar(20) is fine, but a future longer value would not be.
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review ALTER COLUMN analyst_approval TYPE varchar(30)")
+  DBI::dbExecute(connection, "ALTER TABLE budget.cls_review DROP CONSTRAINT IF EXISTS cls_review_analyst_approval_check")
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE budget.cls_review SET analyst_approval = CASE analyst_approval",
+      "WHEN 'Approved' THEN 'Recommended'",
+      "WHEN 'Partial' THEN 'Partial - Rec'",
+      "WHEN 'Denied' THEN 'Not Recommended'",
+      "ELSE analyst_approval END",
+      "WHERE analyst_approval IN ('Approved', 'Partial', 'Denied')"
+    )
+  )
+  DBI::dbExecute(
+    connection,
+    paste(
+      "ALTER TABLE budget.cls_review ADD CONSTRAINT cls_review_analyst_approval_check",
+      "CHECK (analyst_approval IS NULL OR analyst_approval IN ('Recommended', 'Partial - Rec', 'Not Recommended'))"
     )
   )
   # Analyst feedback round 1: what BBMR actually approved, which can differ from
@@ -1006,6 +1053,9 @@ load_app_data <- function(connection) {
   data <- list(
     reference_agency = query(
       "SELECT agency_id, agency_name, public_name, deputy_mayor_pillar, submit_plan, budget_analyst FROM reference.agency WHERE active ORDER BY COALESCE(public_name, agency_name), agency_name"
+    ),
+    reference_spend_category = query(
+      "SELECT code, label, sort_order, active FROM reference.spend_category ORDER BY sort_order, code"
     ),
     reference_pillar = query(
       "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"
@@ -1415,20 +1465,39 @@ delete_feedback_request <- function(connection, feedback_id) {
 
 # ---- CLS (Current Level of Service) budget requests -------------------------
 
-# PLACEHOLDER DATA. Spend categories are a chart-of-accounts concept (the SC6xxx
-# codes in the budget system). These stand-ins let the field be used and tested;
-# replace them with the real COA spend-category list when it is available.
-cls_spend_category_choices <- c(
-  "SC6001 - Professional Services",
-  "SC6002 - Consultants",
-  "SC6003 - Non-Operating Costs (NOC)",
-  "SC6004 - Subcontractors",
-  "SC6005 - Software and Subscriptions",
-  "SC6006 - Fuel and Lubricants",
-  "SC6007 - Building Maintenance",
-  "SC6008 - Fleet Parts and Repairs",
-  "SC6009 - Training and Travel",
-  "SC6010 - Office Supplies"
+# Spend categories are NOT defined here. They are Baltimore's chart-of-accounts
+# codes, and this repository is public, so they live in reference.spend_category
+# and are loaded by scripts/load_spend_categories.R from a file kept out of
+# version control. Read them with spend_category_labels(db) / the app's
+# cls_spend_category_options(db).
+#
+# An empty table is a supported state: a fresh database, and CI, have no codes,
+# and the CLS form then offers only whatever categories existing requests already
+# reference. Nothing errors and no placeholder data is invented.
+spend_category_labels <- function(db) {
+  rows <- db$reference_spend_category
+  if (is.null(rows) || !nrow(rows)) return(character(0))
+  rows <- rows[!is.na(rows$active) & rows$active, , drop = FALSE]
+  if (!nrow(rows)) return(character(0))
+  rows <- rows[order(rows$sort_order, rows$code), , drop = FALSE]
+  labels <- paste(rows$code, "-", rows$label)
+  labels[!is.na(labels) & nzchar(trimws(labels))]
+}
+
+# The analyst's advisory recommendation. Deliberately worded differently from the
+# BBMR decision below it: an analyst *recommends*, BBMR *approves*, and the old
+# shared Approved/Partial/Denied wording made the advisory field look like it
+# carried the same weight.
+cls_analyst_recommendation_choices <- c("Recommended", "Partial - Rec", "Not Recommended")
+
+# What BBMR records, which does drive the request's status. Unchanged.
+cls_bbmr_approval_choices <- c("Approved", "Partial", "Denied")
+
+# Values written before the 2026-08-04 rename, mapped onto the new wording.
+cls_analyst_recommendation_legacy <- c(
+  "Approved" = "Recommended",
+  "Partial" = "Partial - Rec",
+  "Denied" = "Not Recommended"
 )
 
 cls_object_choices <- c(
@@ -1617,9 +1686,14 @@ save_cls_review <- function(connection, cls_id, analyst_notes = NULL,
   cls_id <- as.integer(cls_id)
   if (is.na(cls_id)) stop("Choose a valid request.")
   bbmr_approval <- as.character(bbmr_approval %||% "")
-  if (!bbmr_approval %in% c("Approved", "Partial", "Denied")) bbmr_approval <- NA_character_
+  if (!bbmr_approval %in% cls_bbmr_approval_choices) bbmr_approval <- NA_character_
   analyst_approval <- as.character(analyst_approval %||% "")
-  if (!analyst_approval %in% c("Approved", "Partial", "Denied")) analyst_approval <- NA_character_
+  # Accept the pre-rename wording and store the new form, so a stale open page
+  # posting "Approved" records "Recommended" rather than silently nulling.
+  if (analyst_approval %in% names(cls_analyst_recommendation_legacy)) {
+    analyst_approval <- unname(cls_analyst_recommendation_legacy[[analyst_approval]])
+  }
+  if (!analyst_approval %in% cls_analyst_recommendation_choices) analyst_approval <- NA_character_
   DBI::dbExecute(
     connection,
     paste(
