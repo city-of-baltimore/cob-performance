@@ -504,8 +504,9 @@ ensure_review_schema <- function(connection) {
     )
   }
 
-  # save_service_risk()'s UPDATE has always set updated_at; the live
-  # database already carries this column (and several others -- risk_id,
+  # Editing a risk has always set updated_at (now via
+  # apply_plan_drafts_to_records()'s risks block); the live database
+  # already carries this column (and several others -- risk_id,
   # created_at, modified_by, plan_service_id -- that target_schema.sql
   # doesn't declare at all, confirming the schema has drifted further
   # from that file than documented). Declared here too so a fresh install
@@ -3198,50 +3199,6 @@ risk_type_values <- c(
   "technology", "environmental", "staffing", "legislation", "cross-agency inputs", "other"
 )
 
-save_service_risk <- function(connection, risk_id, plan_id, risk_type, description, changed_by = NULL) {
-  if (is.null(risk_type) || length(risk_type) == 0 || is.na(risk_type)) risk_type <- ""
-  risk_type <- trimws(tolower(as.character(risk_type)))
-  if (!nzchar(risk_type) || !risk_type %in% risk_type_values) stop("Risk type is required")
-  if (is.null(description) || length(description) == 0 || is.na(description)) description <- ""
-  description <- trimws(as.character(description))
-  if (!nzchar(description)) stop("Risk description is required")
-  if (is.null(risk_id) || is.na(risk_id)) {
-    row <- DBI::dbGetQuery(
-      connection,
-      "INSERT INTO performance.service_risk (plan_id, risk_type, description) VALUES ($1, $2, $3) RETURNING risk_id",
-      params = list(as.integer(plan_id), risk_type, description)
-    )
-    return(row$risk_id[[1]])
-  }
-  result <- DBI::dbWithTransaction(connection, {
-    set_audit_actor(connection, changed_by)
-    changed <- DBI::dbExecute(
-      connection,
-      "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
-      params = list(as.integer(risk_id), as.integer(plan_id), risk_type, description)
-    )
-    if (changed != 1) stop("Risk not found for this plan")
-    as.integer(risk_id)
-  })
-  result
-}
-
-delete_service_risk <- function(connection, risk_id, plan_id, changed_by = NULL) {
-  risk_id <- suppressWarnings(as.integer(risk_id))
-  plan_id <- suppressWarnings(as.integer(plan_id))
-  if (is.na(risk_id) || is.na(plan_id)) stop("Risk not found.")
-  DBI::dbWithTransaction(connection, {
-    set_audit_actor(connection, changed_by)
-    changed <- DBI::dbExecute(
-      connection,
-      "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
-      params = list(risk_id, plan_id)
-    )
-    if (changed != 1) stop("Risk not found for this plan.")
-  })
-  invisible(TRUE)
-}
-
 get_section_draft <- function(connection, plan_id, section_key) {
   rows <- DBI::dbGetQuery(
     connection,
@@ -3391,6 +3348,79 @@ merge_services_draft_payload <- function(existing, incoming) {
   merged$values <- merge_named_list(existing$values, incoming$values)
   merged$serviceMetrics <- merge_named_list(existing$serviceMetrics, incoming$serviceMetrics)
   merged
+}
+
+# Risks has no page-snapshot collector the way Goals/Services do -- it's a
+# per-row modal with explicit Save/Delete, one risk at a time. So instead of
+# a full-snapshot merge, the risks draft payload is a diff: `edits` (real
+# risk_id -> fields), `adds` (temp id -> fields, for a risk not yet promoted
+# to a real row), and `deletes` (real risk_ids to remove on publish). Temp
+# ids look like "new-<epoch_ms>" and are minted server-side in
+# save_risks_draft_upsert() below, not client-side like Goals' "draft-<n>"
+# (Goals mints client-side because it can add several editors before any
+# save; Risks only ever adds one at a time from the modal). Every mutation
+# below targets a single id, so unlike Goals' merge there's no "stale tab
+# resurrects a teammate's deletion" failure mode to trade off against --
+# nothing ever resends a full authoritative set.
+merge_risks_draft_payload <- function(existing, incoming_op) {
+  base <- if (is.null(existing) || !is.list(existing)) {
+    list(savedAt = incoming_op$savedAt, edits = list(), adds = list(), deletes = list())
+  } else {
+    existing
+  }
+  op <- incoming_op$op
+  id <- as.character(incoming_op$id)
+  base$savedAt <- incoming_op$savedAt
+  if (identical(op, "upsert")) {
+    base$deletes <- base$deletes[vapply(base$deletes, function(x) !identical(as.character(x), id), logical(1))]
+    fields <- list(risk_type = incoming_op$risk_type, description = incoming_op$description)
+    if (grepl("^new-", id)) base$adds[[id]] <- fields else base$edits[[id]] <- fields
+  } else if (identical(op, "delete")) {
+    base$edits[[id]] <- NULL
+    if (grepl("^new-", id)) {
+      base$adds[[id]] <- NULL
+    } else {
+      base$deletes <- union(base$deletes, list(id))
+    }
+  }
+  base
+}
+
+# Validates and stages one risk add/edit into the plan's risks draft.
+# risk_id NULL means "new risk, not yet drafted" -- a temp id is minted here
+# and returned so the caller (the risk_save_request observer) can track it
+# for this modal session; passing that same temp id back in on a later call
+# (editing an unsaved add again before it's ever promoted) updates the same
+# `adds` entry instead of creating a second one.
+save_risks_draft_upsert <- function(connection, plan_id, risk_id, risk_type, description, updated_by = NULL) {
+  if (is.null(risk_type) || length(risk_type) == 0 || is.na(risk_type)) risk_type <- ""
+  risk_type <- trimws(tolower(as.character(risk_type)))
+  if (!nzchar(risk_type) || !risk_type %in% risk_type_values) stop("Risk type is required")
+  if (is.null(description) || length(description) == 0 || is.na(description)) description <- ""
+  description <- trimws(as.character(description))
+  if (!nzchar(description)) stop("Risk description is required")
+  id <- if (is.null(risk_id) || is.na(risk_id)) {
+    paste0("new-", as.character(round(as.numeric(Sys.time()) * 1000)))
+  } else {
+    as.character(risk_id)
+  }
+  with_section_draft_lock(connection, plan_id, "risks", function(existing) {
+    merge_risks_draft_payload(existing, list(
+      op = "upsert", id = id, risk_type = risk_type, description = description,
+      savedAt = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
+    ))
+  }, updated_by)
+  id
+}
+
+save_risks_draft_delete <- function(connection, plan_id, risk_id, updated_by = NULL) {
+  if (is.null(risk_id) || is.na(risk_id)) stop("Risk not found.")
+  with_section_draft_lock(connection, plan_id, "risks", function(existing) {
+    merge_risks_draft_payload(existing, list(
+      op = "delete", id = as.character(risk_id),
+      savedAt = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ")
+    ))
+  }, updated_by)
 }
 
 # Runs `mutate` against the current section-draft payload under a row
@@ -3727,6 +3757,45 @@ apply_plan_drafts_to_records <- function(connection, plan_id) {
           }
         }
       }
+    }
+  }
+
+  # Risks (diff-based draft -- see merge_risks_draft_payload()'s comment):
+  # promote each staged edit/add into a real service_risk row and remove
+  # any real row the draft says was deleted. Raw dbExecute rather than the
+  # old save_service_risk()/delete_service_risk() on purpose -- both of
+  # those opened their own dbWithTransaction, which can't safely nest
+  # inside this function's caller (approve_agency_plan()/
+  # publish_agency_plan() already wrap the whole promotion in one
+  # transaction with set_audit_actor() already called, so a plain
+  # parametrized UPDATE/DELETE/INSERT here attributes correctly through
+  # trg_audit_service_risk without any of that).
+  risks <- payloads$risks
+  if (!is.null(risks)) {
+    for (id in names(risks$edits %||% list())) {
+      fields <- risks$edits[[id]]
+      DBI::dbExecute(
+        connection,
+        "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
+        params = list(as.integer(id), plan_id, fields$risk_type, fields$description)
+      )
+    }
+    for (id in names(risks$adds %||% list())) {
+      fields <- risks$adds[[id]]
+      DBI::dbExecute(
+        connection,
+        "INSERT INTO performance.service_risk (plan_id, risk_type, description) VALUES ($1, $2, $3)",
+        params = list(plan_id, fields$risk_type, fields$description)
+      )
+    }
+    delete_ids <- unique(suppressWarnings(as.integer(unlist(risks$deletes %||% list()))))
+    delete_ids <- delete_ids[!is.na(delete_ids)]
+    for (id in delete_ids) {
+      DBI::dbExecute(
+        connection,
+        "DELETE FROM performance.service_risk WHERE risk_id=$1 AND plan_id=$2",
+        params = list(id, plan_id)
+      )
     }
   }
 

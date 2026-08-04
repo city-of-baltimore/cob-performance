@@ -76,13 +76,18 @@ test_that("updating reference.service logs the prior description and the acting 
   })
 })
 
-test_that("save_service_risk attributes an edit to the acting user via changed_by", {
+test_that("apply_plan_drafts_to_records attributes a risk edit to the acting user via the audit trigger", {
   skip_if_no_test_database()
   connection <- connect_app_database()
   ensure_review_schema(connection)
 
-  # save_service_risk() manages its own transaction (that's the fix from
-  # earlier this session for the same nested-transaction issue), so this
+  # Risks moved to the draft-then-publish pattern 2026-08-04
+  # (save_service_risk()/delete_service_risk() are gone -- see
+  # merge_risks_draft_payload()'s comment in R/database.R). The real write
+  # path is now apply_plan_drafts_to_records()'s risks block, called inside
+  # a transaction its caller already opened with set_audit_actor() set --
+  # replicate that here directly rather than through save_service_risk().
+  # Manages its own transaction wrapping below (dbWithTransaction), so this
   # can't be wrapped in with_rollback() -- clean up manually instead. Both
   # the cleanup queries and the disconnect must be in one on.exit (not two
   # separate calls) -- on.exit(add = TRUE) runs in registration order, so a
@@ -92,7 +97,8 @@ test_that("save_service_risk attributes an edit to the acting user via changed_b
   # (trg_audit_service_risk fires BEFORE DELETE too), so cleaning up
   # audit_log first just leaves that deletion's own new row behind.
   actor_id <- DBI::dbGetQuery(connection, 'SELECT user_id FROM access."user" LIMIT 1')$user_id[[1]]
-  risk_id <- DBI::dbGetQuery(connection, "INSERT INTO performance.service_risk (plan_id, risk_type, description) VALUES (1, 'technology', 'Original description for the audit-log regression test.') RETURNING risk_id")$risk_id[[1]]
+  plan_id <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan LIMIT 1")$plan_id[[1]]
+  risk_id <- DBI::dbGetQuery(connection, "INSERT INTO performance.service_risk (plan_id, risk_type, description) VALUES ($1, 'technology', 'Original description for the audit-log regression test.') RETURNING risk_id", params = list(plan_id))$risk_id[[1]]
   on.exit(
     {
       DBI::dbExecute(connection, "DELETE FROM performance.service_risk WHERE risk_id = $1", params = list(risk_id))
@@ -102,7 +108,14 @@ test_that("save_service_risk attributes an edit to the acting user via changed_b
     add = TRUE
   )
 
-  save_service_risk(connection, risk_id, 1L, "technology", "Updated description for the audit-log regression test.", changed_by = actor_id)
+  DBI::dbWithTransaction(connection, {
+    set_audit_actor(connection, actor_id)
+    DBI::dbExecute(
+      connection,
+      "UPDATE performance.service_risk SET risk_type=$3, description=$4, updated_at=now() WHERE risk_id=$1 AND plan_id=$2",
+      params = list(risk_id, plan_id, "technology", "Updated description for the audit-log regression test.")
+    )
+  })
 
   logged <- DBI::dbGetQuery(
     connection,
