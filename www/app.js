@@ -2798,11 +2798,25 @@
     chip.classList.toggle("tone-error", tone === "error");
   }
 
+  function goalMinimumCount(page) {
+    var minimumGoals = parseInt(page.getAttribute("data-min-goals") || "3", 10);
+    return !Number.isFinite(minimumGoals) || minimumGoals < 1 ? 3 : minimumGoals;
+  }
+
   function updateGoalControls(page) {
     var editors = Array.from(page.querySelectorAll(".goal-editor"));
     var goalCount = editors.length;
     var maximumGoals = parseInt(page.getAttribute("data-max-goals") || "5", 10);
     if (!Number.isFinite(maximumGoals) || maximumGoals < 1) maximumGoals = 5;
+    // Any goal can be removed, including the first, as long as the plan's
+    // actual minimum (data-min-goals, e.g. 2 for an entity submitter, 3
+    // otherwise -- see goal_minimum_count() in app.R) still holds afterward.
+    // Previously the first goal specifically could never be removed; that
+    // singled-out rule didn't match the real per-plan minimum enforced
+    // everywhere else (goal_minimum_count()/goal_maximum_count()), so a
+    // plan whose minimum is 1 goal below its current count still couldn't
+    // remove goal #1 even though removing any *other* goal was fine.
+    var minimumGoals = goalMinimumCount(page);
     var addButton = page.querySelector("#add_goal");
     if (addButton) addButton.disabled = goalCount >= maximumGoals;
     editors.forEach(function (editor, index) {
@@ -2810,8 +2824,10 @@
       var removeButton = editor.querySelector(".remove-goal-button");
       if (number) number.textContent = "Goal " + (index + 1);
       if (removeButton) {
-        removeButton.disabled = index === 0 || goalCount <= 1;
-        removeButton.title = index === 0 ? "The first goal is required to create additional goals" : (goalCount <= 1 ? "At least one goal must remain while editing" : "Remove goal");
+        removeButton.disabled = goalCount <= minimumGoals;
+        removeButton.title = goalCount <= minimumGoals
+          ? "At least " + minimumGoals + " goal" + (minimumGoals === 1 ? "" : "s") + " must remain while editing"
+          : "Remove goal";
       }
     });
   }
@@ -3364,8 +3380,7 @@
     event.preventDefault();
     var page = removeButton.closest(".goals-page");
     var editor = removeButton.closest(".goal-editor");
-    if (!page || !editor || page.querySelectorAll(".goal-editor").length <= 1) return;
-    if (Array.from(page.querySelectorAll(".goal-editor")).indexOf(editor) === 0) return;
+    if (!page || !editor || page.querySelectorAll(".goal-editor").length <= goalMinimumCount(page)) return;
     pendingGoalDeletion = { page: page, editor: editor };
     var dialog = document.getElementById("delete_goal_dialog");
     if (dialog && dialog.showModal) dialog.showModal();
@@ -3381,7 +3396,7 @@
     var page = pendingGoalDeletion.page;
     var editor = pendingGoalDeletion.editor;
     dismissGoalDeleteDialog();
-    if (!page.isConnected || !editor.isConnected || page.querySelectorAll(".goal-editor").length <= 1) return;
+    if (!page.isConnected || !editor.isConnected || page.querySelectorAll(".goal-editor").length <= goalMinimumCount(page)) return;
     if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(editor);
     editor.remove();
     updateAllKpiAvailability(page);

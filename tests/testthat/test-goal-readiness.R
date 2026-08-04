@@ -81,3 +81,48 @@ test_that("an already-published goal (post-approval) is still counted from the r
   expect_equal(result$complete_count, 1)
   expect_equal(result$aligned_count, 1)
 })
+
+# Reported 2026-08-05: a Returned plan's "Plan readiness" checklist flagged
+# a goal as over the 5-KPI limit that the agency had already trimmed to 5
+# or fewer in their current draft -- plan_goal_measure_counts() only ever
+# counted the live performance_pm_goal_link rows (last written whenever
+# that goal was previously Approved/Published), with no awareness of the
+# in-progress draft the person is actually looking at.
+test_that("plan_goal_measure_counts reads the current draft's KPI list, not the stale published one, for a Returned plan", {
+  returned_plan <- data.frame(plan_id = 1L, plan_status = "Returned", stringsAsFactors = FALSE)
+  goals <- data.frame(agency_goal_id = 501L, stringsAsFactors = FALSE)
+  db <- list(
+    planning_plan_section_draft = data.frame(
+      plan_id = 1L, section_key = "goals",
+      payload = '{"kpis": {"501": ["1", "2", "3"]}}',
+      stringsAsFactors = FALSE
+    ),
+    # The live table still has the old, over-the-limit set from before this
+    # goal was last published/returned.
+    performance_pm_goal_link = data.frame(agency_goal_id = rep(501L, 7), measure_id = 1:7)
+  )
+  counts <- plan_goal_measure_counts(db, returned_plan, goals)
+  expect_equal(counts$measure_count[[1]], 3)
+})
+
+test_that("plan_goal_measure_counts falls back to the live table for a goal the draft doesn't mention", {
+  returned_plan <- data.frame(plan_id = 1L, plan_status = "Returned", stringsAsFactors = FALSE)
+  goals <- data.frame(agency_goal_id = 501L, stringsAsFactors = FALSE)
+  db <- list(
+    planning_plan_section_draft = data.frame(plan_id = 1L, section_key = "goals", payload = '{"kpis": {}}', stringsAsFactors = FALSE),
+    performance_pm_goal_link = data.frame(agency_goal_id = 501L, measure_id = 900L)
+  )
+  counts <- plan_goal_measure_counts(db, returned_plan, goals)
+  expect_equal(counts$measure_count[[1]], 1)
+})
+
+test_that("plan_goal_measure_counts uses the live table for an Approved/Published plan, ignoring any leftover draft", {
+  published_plan <- data.frame(plan_id = 1L, plan_status = "Published", stringsAsFactors = FALSE)
+  goals <- data.frame(agency_goal_id = 501L, stringsAsFactors = FALSE)
+  db <- list(
+    planning_plan_section_draft = data.frame(plan_id = 1L, section_key = "goals", payload = '{"kpis": {"501": ["1"]}}', stringsAsFactors = FALSE),
+    performance_pm_goal_link = data.frame(agency_goal_id = 501L, measure_id = c(1L, 2L))
+  )
+  counts <- plan_goal_measure_counts(db, published_plan, goals)
+  expect_equal(counts$measure_count[[1]], 2)
+})
