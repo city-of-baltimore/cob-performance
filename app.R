@@ -5475,7 +5475,7 @@ disable_input_tag <- function(tag, disabled = TRUE) {
 
 measure_note_input <- function(input_id, label, value = "", locked = FALSE) {
   note_value <- if (is.null(value) || length(value) == 0 || is.na(value)) "" else as.character(value)
-  textarea_attrs <- list(id = input_id, class = "form-control", rows = 2, maxlength = 200, note_value)
+  textarea_attrs <- list(id = input_id, class = "form-control", rows = 2, maxlength = 340, note_value)
   if (locked) textarea_attrs$disabled <- "disabled"
   div(
     class = paste("form-group shiny-input-container", if (locked) "measure-note-locked"),
