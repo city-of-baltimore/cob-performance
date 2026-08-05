@@ -9427,13 +9427,22 @@ server <- function(input, output, session) {
   # reassignment, not just a display relabel.
   reassign_measure_owner <- function(measure_id, submitter_value) {
     measure_id <- as.integer(measure_id)
-    new_agency_id <- resolve_owning_agency_id(app_data(), submitter_value)
+    data <- app_data()
+    new_agency_id <- resolve_owning_agency_id(data, submitter_value)
     if (is.na(new_agency_id) || !nzchar(new_agency_id)) return(invisible(FALSE))
     DBI::dbExecute(database, "UPDATE performance.performance_measure SET agency_id = $2 WHERE measure_id = $1", params = list(measure_id, new_agency_id))
     DBI::dbExecute(database, "DELETE FROM performance.measure_entity_link WHERE measure_id = $1", params = list(measure_id))
+    # Create the link synchronously, before refresh_app_data() below, using
+    # `data` patched with the just-updated agency_id -- see the identical
+    # fix (and its full explanation) in persist_measure() above. Creating
+    # it inside refresh_app_data()'s `after` instead would set app_data()
+    # from a snapshot taken before this new link exists, hiding it from the
+    # current session until some later, unrelated refresh happened.
+    if ("performance_performance_measure" %in% names(data)) {
+      data$performance_performance_measure$agency_id[data$performance_performance_measure$measure_id == measure_id] <- new_agency_id
+    }
+    ensure_measure_current_entity_link(database, measure_id, data, current_plan(data, submitter_value))
     refresh_app_data(after = function() {
-      fresh_data <- app_data()
-      ensure_measure_current_entity_link(database, measure_id, fresh_data, current_plan(fresh_data, submitter_value))
       showNotification("Measure owner updated.", type = "message")
     })
     invisible(TRUE)
@@ -9660,21 +9669,37 @@ server <- function(input, output, session) {
       return()
     }
     link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
-    # Reported 2026-08-05: for a brand-new measure, `data` here is the
-    # app_data() snapshot fetched BEFORE this save -- it has no row yet for
-    # the measure_id `save_measure_record()` just created, so
-    # ensure_measure_current_entity_link()'s own measure_row lookup always
-    # came up empty and it silently bailed out (matches
-    # reassign_measure_owner()'s existing fresh_data pattern below).
+    # Reported 2026-08-05: even after fixing ensure_measure_current_entity_link()
+    # itself, a new measure only showed up in its entity's library after a
+    # full page reload, not in the current session. Cause: the link was
+    # created inside refresh_app_data()'s `after` callback, which runs
+    # AFTER app_data() has already been set from a snapshot taken before
+    # the link existed -- so the link a user just created stayed invisible
+    # in their own live session until some LATER, unrelated refresh
+    # happened to run. Only a fresh page load (a brand new session,
+    # app_data() starting over from NULL) picked it up. Fixed by creating
+    # the link synchronously, BEFORE refresh_app_data() runs, using a
+    # single freshly-fetched row for just the new measure_id (not a full
+    # app_data reload) patched into `data` so
+    # ensure_measure_current_entity_link()'s own measure_row lookup
+    # succeeds -- see the identical fix in reassign_measure_owner() above.
+    new_measure_row <- DBI::dbGetQuery(database, "SELECT measure_id, agency_id FROM performance.performance_measure WHERE measure_id = $1", params = list(as.integer(result)))
+    data_with_new_measure <- data
+    if (nrow(new_measure_row) && "performance_performance_measure" %in% names(data)) {
+      existing_rows <- data$performance_performance_measure[data$performance_performance_measure$measure_id != as.integer(result), , drop = FALSE]
+      synthetic_row <- existing_rows[0, , drop = FALSE]
+      synthetic_row[1, "measure_id"] <- new_measure_row$measure_id[[1]]
+      synthetic_row[1, "agency_id"] <- new_measure_row$agency_id[[1]]
+      data_with_new_measure$performance_performance_measure <- rbind(existing_rows, synthetic_row)
+    }
+    link_result <- tryCatch(
+      ensure_measure_current_entity_link(database, result, data_with_new_measure, current_plan(data_with_new_measure, link_submitter_value)),
+      error = function(error) error
+    )
+    if (inherits(link_result, "error")) {
+      showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
+    }
     refresh_app_data(after = function() {
-      fresh_data <- app_data()
-      link_result <- tryCatch(
-        ensure_measure_current_entity_link(database, result, fresh_data, current_plan(fresh_data, link_submitter_value)),
-        error = function(error) error
-      )
-      if (inherits(link_result, "error")) {
-        showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
-      }
       current_measure_id(NULL)
       showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
     })
