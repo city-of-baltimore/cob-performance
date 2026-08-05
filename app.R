@@ -9660,11 +9660,21 @@ server <- function(input, output, session) {
       return()
     }
     link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
-    link_result <- tryCatch(ensure_measure_current_entity_link(database, result, data, current_plan(data, link_submitter_value)), error = function(error) error)
-    if (inherits(link_result, "error")) {
-      showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
-    }
+    # Reported 2026-08-05: for a brand-new measure, `data` here is the
+    # app_data() snapshot fetched BEFORE this save -- it has no row yet for
+    # the measure_id `save_measure_record()` just created, so
+    # ensure_measure_current_entity_link()'s own measure_row lookup always
+    # came up empty and it silently bailed out (matches
+    # reassign_measure_owner()'s existing fresh_data pattern below).
     refresh_app_data(after = function() {
+      fresh_data <- app_data()
+      link_result <- tryCatch(
+        ensure_measure_current_entity_link(database, result, fresh_data, current_plan(fresh_data, link_submitter_value)),
+        error = function(error) error
+      )
+      if (inherits(link_result, "error")) {
+        showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
+      }
       current_measure_id(NULL)
       showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
     })
