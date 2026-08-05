@@ -1009,7 +1009,21 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   # after ensure_measure_current_entity_link() successfully linked it. Only
   # the bare-agency (else) branch below actually needs `services` to mean
   # anything.
-  measure_ids <- if (nrow(services)) legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible) else integer(0)
+  # Reported 2026-08-05: a QuasiAgency sharing a service with sibling
+  # grantees (e.g. Civic Promotion Grants -- Baltimore Heritage Area,
+  # Baltimore Public Markets, Lexington Market) saw every sibling's
+  # measures on its own Measures page, not just its own. Without
+  # entity_scoped_only, legacy_service_measure_ids() treats a shared
+  # service's whole measure catalog as valid for every grantee via the
+  # bare agency_id match (all grantees share their parent agency's
+  # agency_id) -- previously relied on as a fallback so a brand-new
+  # grantee with no measures yet had *something* to pick from. That
+  # fallback is no longer needed: any entity can always create its own
+  # brand-new measure (ensure_measure_current_entity_link() correctly
+  # attaches it), so showing siblings' measures here was pure leakage,
+  # not a safety net. service_metric_ids() already passes
+  # entity_scoped_only = TRUE for the same reason.
+  measure_ids <- if (nrow(services)) legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible, entity_scoped_only = TRUE) else integer(0)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link
     if (!is.na(plan$entity_id[[1]])) {
