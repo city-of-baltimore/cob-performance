@@ -13,16 +13,20 @@
 # now writes those per-entity links instead of blanket-overwriting
 # reference.service/pm_service_link.
 #
-# legacy_service_measure_ids() feeds two different call sites with two
-# different correct answers for a shared service, hence the
-# entity_scoped_only parameter: service_metric_ids() (what's currently
-# selected -- must be entity-scoped, entity_scoped_only = TRUE) vs.
-# plan_measure_rows()/measure_library_rows() (the CANDIDATE pool a grantee
-# can pick from -- every grantee legitimately shares the same program
-# catalog, entity_scoped_only = FALSE, the default). Filtering the
-# candidate pool the same way as the selected set would leave a brand-new
-# shared service with zero pickable options for every grantee until an
-# admin manually links one -- a dead end. Also fixed a related, previously
+# legacy_service_measure_ids() takes an entity_scoped_only parameter for
+# this. service_metric_ids() (what's currently selected) always needed
+# entity_scoped_only = TRUE. plan_measure_rows()/measure_library_rows()
+# (backing the Measures page/library) originally left it FALSE, on the
+# theory that every grantee legitimately shares the same program catalog
+# as CANDIDATES to pick from, and a brand-new grantee with zero measures
+# yet would otherwise have nothing to pick. Reported 2026-08-05: this
+# meant a QuasiAgency's own Measures page showed every sibling grantee's
+# measures, not just its own -- real leakage, not a useful safety net,
+# since any entity can always create a brand-new measure of its own
+# (ensure_measure_current_entity_link() attaches it correctly regardless
+# of services). Fixed by passing entity_scoped_only = TRUE here too, so
+# plan_measure_rows()/measure_library_rows() now match
+# service_metric_ids()'s exclusivity. Also fixed a related, previously
 # masked bug in measure_library_rows(): its top-level guard required
 # performance.measure_entity_link to have rows SOMEWHERE (a global check,
 # not scoped to this plan/service), so on a fresh install with zero entity
@@ -192,9 +196,10 @@ test_that("legacy_service_measure_ids excludes a shared-service measure from the
   expect_true(measure_id %in% service_metric_ids(db, plan1, service_id))
   expect_false(measure_id %in% service_metric_ids(db, plan2, service_id))
 
-  # The CANDIDATE pool (the measure library a grantee picks new metrics
-  # from) is a different question -- every grantee on this shared program
-  # legitimately sees the same catalog, entity link or not, so it must NOT
-  # collapse to empty just because entity2 has no link yet.
-  expect_true(measure_id %in% measure_library_rows(db, plan2, include_ineligible = TRUE)$measure_id)
+  # measure_library_rows()/plan_measure_rows() now match
+  # service_metric_ids()'s exclusivity -- entity2 must NOT see entity1's
+  # shared-service measure in its own Measures page/library, entity link
+  # or not.
+  expect_true(measure_id %in% measure_library_rows(db, plan1, include_ineligible = TRUE)$measure_id)
+  expect_false(measure_id %in% measure_library_rows(db, plan2, include_ineligible = TRUE)$measure_id)
 })
