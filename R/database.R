@@ -540,6 +540,18 @@ ensure_review_schema <- function(connection) {
     connection,
     "UPDATE reference.agency SET submit_plan = true WHERE agency_id = 'AGC4317'"
   )
+  # Reported 2026-08-06: saving a new measure for a Mayoral Office with
+  # zero services (Mayoral Offices are exempt from having any -- see
+  # submitter_is_mayoral_service()) silently never linked it into that
+  # entity's measure library. measure_entity_link.service_id was NOT NULL
+  # for every entity_type, but its own CHECK constraint below only
+  # constrains entity_type/entity_id together -- it never actually required
+  # service_id to be non-null for a 'mayoral service'/'quasi agency' link,
+  # which is entity-scoped, not service-scoped, the same way a 'service'
+  # link's entity_id is already nullable. The NOT NULL column attribute was
+  # the only real blocker, so dropping it is the whole fix; the FK to
+  # reference.service already tolerates NULL on its own.
+  DBI::dbExecute(connection, "ALTER TABLE performance.measure_entity_link ALTER COLUMN service_id DROP NOT NULL")
   DBI::dbExecute(connection, "ALTER TABLE reference.plan_entity DROP CONSTRAINT IF EXISTS plan_entity_entity_type_check")
   DBI::dbExecute(
     connection,

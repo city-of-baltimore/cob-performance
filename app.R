@@ -724,6 +724,101 @@ scorable_service_rows <- function(service_rows) {
   service_rows[!is_administration_service(service_rows), , drop = FALSE]
 }
 
+ensure_measure_current_entity_link <- function(connection, measure_id, data, plan) {
+  if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
+  entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
+  if (!nrow(entity)) return(invisible(FALSE))
+  # A measure must never link to an entity outside its own owning agency
+  # -- e.g. saving an EXISTING DGS measure while the current viewer
+  # happens to be acting as OPI's plan (a common admin/testing scenario)
+  # must not silently relabel it as an OPI-owned measure. Reported
+  # 2026-07-31: "Average Age of Fleet" (agency_id AGC2600/DGS) picked up
+  # a stray link to OPI's entity this way, and the Action Plan Measures
+  # list -- which shows the linked entity's name over the bare agency
+  # name -- started displaying it as owned by OPI instead of DGS.
+  measure_row <- data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(measure_id), , drop = FALSE]
+  if (!nrow(measure_row)) return(invisible(FALSE))
+  if (!identical(as.character(measure_row$agency_id[[1]]), as.character(plan_accounting_agency_id(data, plan)))) return(invisible(FALSE))
+  services <- plan_service_rows(data, plan)
+  services <- services[!is_administration_service(services), , drop = FALSE]
+  if (!nrow(services)) services <- plan_service_rows(data, plan)
+  # Reported 2026-08-06: a Mayoral Office with zero services (by design --
+  # see submitter_is_mayoral_service()) could never get a measure linked
+  # into its library at all -- this used to return FALSE here with no
+  # error, so the Save button appeared to do nothing even though the
+  # measure itself saved correctly. A 'mayoral service'/'quasi agency'
+  # link is entity-scoped, not service-scoped (measure_entity_link.
+  # service_id is nullable for exactly this reason), so falling back to
+  # NA_character_ instead of bailing out is the fix.
+  primary_service_id <- if (nrow(services)) {
+    candidate <- services$service_id[[1]]
+    if ("is_primary" %in% names(services)) {
+      primary <- services[!is.na(services$is_primary) & services$is_primary, , drop = FALSE]
+      if (nrow(primary)) candidate <- primary$service_id[[1]]
+    }
+    candidate
+  } else {
+    NA_character_
+  }
+  link_entity_type <- switch(
+    as.character(entity$entity_type[[1]]),
+    MayoraltyOffice = "mayoral service",
+    `mayoral service` = "mayoral service",
+    QuasiAgency = "quasi agency",
+    `quasi agency` = "quasi agency",
+    Other = "quasi agency",
+    "quasi agency"
+  )
+  agency_id <- plan_accounting_agency_id(data, plan)
+  entity_id <- as.integer(entity$entity_id[[1]])
+  public_name <- as.character(entity$public_name[[1]])
+  if (is.na(primary_service_id)) {
+    # Postgres treats NULL as distinct from NULL under a UNIQUE
+    # constraint, so ON CONFLICT (..., service_id, ...) can never detect
+    # an existing NULL-service_id row as a duplicate -- every save would
+    # otherwise INSERT a fresh row instead of updating the one already
+    # there. Check-then-act manually for this one case instead.
+    existing <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT link_id FROM performance.measure_entity_link",
+        "WHERE measure_id = $1 AND agency_id = $2 AND service_id IS NULL AND entity_type = $3 AND entity_id = $4"
+      ),
+      params = list(as.integer(measure_id), agency_id, link_entity_type, entity_id)
+    )
+    if (nrow(existing)) {
+      DBI::dbExecute(
+        connection,
+        "UPDATE performance.measure_entity_link SET public_name = $2, updated_at = now() WHERE link_id = $1",
+        params = list(existing$link_id[[1]], public_name)
+      )
+    } else {
+      DBI::dbExecute(
+        connection,
+        paste(
+          "INSERT INTO performance.measure_entity_link",
+          "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
+          "VALUES ($1, $2, NULL, $3, $4, $5)"
+        ),
+        params = list(as.integer(measure_id), agency_id, link_entity_type, entity_id, public_name)
+      )
+    }
+  } else {
+    DBI::dbExecute(
+      connection,
+      paste(
+        "INSERT INTO performance.measure_entity_link",
+        "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        "ON CONFLICT (measure_id, agency_id, service_id, entity_type, entity_id)",
+        "DO UPDATE SET public_name = EXCLUDED.public_name, updated_at = now()"
+      ),
+      params = list(as.integer(measure_id), agency_id, primary_service_id, link_entity_type, entity_id, public_name)
+    )
+  }
+  invisible(TRUE)
+}
+
 measure_preview_years <- function(current_fy = current_fiscal_year()) {
   # Matches the budget book: the four most recently completed actual years,
   # then this year's target and next year's -- we're always planning one
@@ -906,8 +1001,15 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
   if (is.null(plan) || !nrow(plan)) return(db$performance_performance_measure[0, , drop = FALSE])
   if (is.na(plan$plan_id[[1]])) return(db$performance_performance_measure[0, , drop = FALSE])
   services <- plan_service_rows(db, plan)
-  if (!nrow(services)) return(db$performance_performance_measure[0, , drop = FALSE])
-  measure_ids <- legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible)
+  # Reported 2026-08-06: bailing out here whenever a plan has zero services
+  # also hid every measure reachable ONLY through the entity_id-based
+  # match in performance_measure_entity_link below, which doesn't depend on
+  # services at all for an entity submitter -- a Mayoral Office with zero
+  # services (by design) could never see a measure in its own library even
+  # after ensure_measure_current_entity_link() successfully linked it. Only
+  # the bare-agency (else) branch below actually needs `services` to mean
+  # anything.
+  measure_ids <- if (nrow(services)) legacy_service_measure_ids(db, plan, services$service_id, include_ineligible = include_ineligible) else integer(0)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
     entity_links <- db$performance_measure_entity_link
     if (!is.na(plan$entity_id[[1]])) {
@@ -924,6 +1026,7 @@ plan_measure_rows <- function(db, plan, include_ineligible = FALSE) {
     measure_ids <- unique(c(measure_ids, entity_links$measure_id))
   }
   measure_ids <- measure_ids[!is.na(measure_ids)]
+  if (!length(measure_ids)) return(db$performance_performance_measure[0, , drop = FALSE])
   rows <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% measure_ids, , drop = FALSE]
   if (!include_ineligible && nrow(rows)) {
     approval_status <- ifelse(is.na(rows$approval_status), "", rows$approval_status)
@@ -9315,59 +9418,6 @@ server <- function(input, output, session) {
     if (is.na(a) || is.na(b)) return(TRUE)
     !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
   }
-  ensure_measure_current_entity_link <- function(measure_id, data, plan) {
-    if (is.null(plan) || !nrow(plan) || is.na(plan$entity_id[[1]])) return(invisible(FALSE))
-    entity <- data$reference_plan_entity[data$reference_plan_entity$entity_id == plan$entity_id[[1]], , drop = FALSE]
-    if (!nrow(entity)) return(invisible(FALSE))
-    # A measure must never link to an entity outside its own owning agency
-    # -- e.g. saving an EXISTING DGS measure while the current viewer
-    # happens to be acting as OPI's plan (a common admin/testing scenario)
-    # must not silently relabel it as an OPI-owned measure. Reported
-    # 2026-07-31: "Average Age of Fleet" (agency_id AGC2600/DGS) picked up
-    # a stray link to OPI's entity this way, and the Action Plan Measures
-    # list -- which shows the linked entity's name over the bare agency
-    # name -- started displaying it as owned by OPI instead of DGS.
-    measure_row <- data$performance_performance_measure[data$performance_performance_measure$measure_id == as.integer(measure_id), , drop = FALSE]
-    if (!nrow(measure_row)) return(invisible(FALSE))
-    if (!identical(as.character(measure_row$agency_id[[1]]), as.character(plan_accounting_agency_id(data, plan)))) return(invisible(FALSE))
-    services <- plan_service_rows(data, plan)
-    services <- services[!is_administration_service(services), , drop = FALSE]
-    if (!nrow(services)) services <- plan_service_rows(data, plan)
-    if (!nrow(services)) return(invisible(FALSE))
-    primary_service_id <- services$service_id[[1]]
-    if ("is_primary" %in% names(services)) {
-      primary <- services[!is.na(services$is_primary) & services$is_primary, , drop = FALSE]
-      if (nrow(primary)) primary_service_id <- primary$service_id[[1]]
-    }
-    link_entity_type <- switch(
-      as.character(entity$entity_type[[1]]),
-      MayoraltyOffice = "mayoral service",
-      `mayoral service` = "mayoral service",
-      QuasiAgency = "quasi agency",
-      `quasi agency` = "quasi agency",
-      Other = "quasi agency",
-      "quasi agency"
-    )
-    DBI::dbExecute(
-      database,
-      paste(
-        "INSERT INTO performance.measure_entity_link",
-        "(measure_id, agency_id, service_id, entity_type, entity_id, public_name)",
-        "VALUES ($1, $2, $3, $4, $5, $6)",
-        "ON CONFLICT (measure_id, agency_id, service_id, entity_type, entity_id)",
-        "DO UPDATE SET public_name = EXCLUDED.public_name, updated_at = now()"
-      ),
-      params = list(
-        as.integer(measure_id),
-        plan_accounting_agency_id(data, plan),
-        primary_service_id,
-        link_entity_type,
-        as.integer(entity$entity_id[[1]]),
-        as.character(entity$public_name[[1]])
-      )
-    )
-    invisible(TRUE)
-  }
   # Reassigning a measure's owner from the Action Plan Measures list
   # (action_plan_measure_owner_select) moves the measure to the new
   # owner's accounting agency and replaces its entity link -- consistent
@@ -9383,7 +9433,7 @@ server <- function(input, output, session) {
     DBI::dbExecute(database, "DELETE FROM performance.measure_entity_link WHERE measure_id = $1", params = list(measure_id))
     refresh_app_data(after = function() {
       fresh_data <- app_data()
-      ensure_measure_current_entity_link(measure_id, fresh_data, current_plan(fresh_data, submitter_value))
+      ensure_measure_current_entity_link(database, measure_id, fresh_data, current_plan(fresh_data, submitter_value))
       showNotification("Measure owner updated.", type = "message")
     })
     invisible(TRUE)
@@ -9610,7 +9660,7 @@ server <- function(input, output, session) {
       return()
     }
     link_submitter_value <- resolve_link_submitter_value(existing_measure_id, input$measure_owning_entity, current_submitter_value())
-    link_result <- tryCatch(ensure_measure_current_entity_link(result, data, current_plan(data, link_submitter_value)), error = function(error) error)
+    link_result <- tryCatch(ensure_measure_current_entity_link(database, result, data, current_plan(data, link_submitter_value)), error = function(error) error)
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
