@@ -3636,8 +3636,31 @@ plan_service_measure_counts <- function(db, plan, services) {
 }
 
 plan_selected_measure_ids <- function(db, plan, goals, services) {
-  goal_ids <- if (is.null(goals) || !nrow(goals)) integer(0) else goals$agency_goal_id
-  goal_measure_ids <- unique(db$performance_pm_goal_link$measure_id[db$performance_pm_goal_link$agency_goal_id %in% goal_ids])
+  # Reported 2026-08-05: Overdose Response's readiness checklist said
+  # "missing at least one plan measure" despite 4 KPIs genuinely picked on
+  # its (still-Drafting) goals. A goal only becomes a
+  # performance.agency_goal row once the plan is Approved
+  # (apply_plan_drafts_to_records() promotes the draft then) -- see
+  # goal_draft_readiness()'s comment -- so for every Draft/Submitted/
+  # UnderReview/Returned plan, goals and their KPI picks live only in the
+  # goals draft payload. This read only the live agency_goal/pm_goal_link
+  # tables, same class of bug plan_goal_measure_counts() was already fixed
+  # for (the "over 5 KPIs" flag) -- but that fix was never applied here.
+  goals_draft <- if (!is.null(plan) && nrow(plan) && plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "goals") else NULL
+  published_goal_ids <- if (is.null(goals) || !nrow(goals)) character(0) else as.character(goals$agency_goal_id)
+  draft_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) as.character(unlist(goals_draft$goalIds)) else character(0)
+  goal_ids <- union(published_goal_ids, draft_goal_ids)
+  goal_measure_ids <- unique(unlist(lapply(goal_ids, function(goal_id) {
+    draft_values <- if (!is.null(goals_draft) && !is.null(goals_draft$kpis[[goal_id]])) {
+      suppressWarnings(as.integer(unlist(goals_draft$kpis[[goal_id]])))
+    } else {
+      NULL
+    }
+    if (!is.null(draft_values)) {
+      return(draft_values[!is.na(draft_values)])
+    }
+    db$performance_pm_goal_link$measure_id[as.character(db$performance_pm_goal_link$agency_goal_id) == goal_id]
+  }), use.names = FALSE))
   scorable_services <- scorable_service_rows(services)
   services_draft <- if (!is.null(plan) && nrow(plan) && plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
   service_measure_ids <- if (is.null(scorable_services) || !nrow(scorable_services)) {

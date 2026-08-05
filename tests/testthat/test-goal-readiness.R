@@ -126,3 +126,51 @@ test_that("plan_goal_measure_counts uses the live table for an Approved/Publishe
   counts <- plan_goal_measure_counts(db, published_plan, goals)
   expect_equal(counts$measure_count[[1]], 2)
 })
+
+# Reported 2026-08-05 (Overdose Response): the "Plan readiness" checklist
+# said "missing at least one plan measure" despite 4 KPIs genuinely picked
+# across two draft-only goals. plan_selected_measure_ids() only ever read
+# the live performance_agency_goal/pm_goal_link tables for its goal-linked
+# half -- same root cause as plan_goal_measure_counts() above (goals only
+# become published rows on Approval), but that function's draft-awareness
+# fix was never applied here. The service-linked half already had its own
+# services-draft handling; only goals were missing it.
+test_that("plan_selected_measure_ids counts draft-only goals' KPI picks for a still-Drafting plan", {
+  draft_plan <- data.frame(plan_id = 1L, plan_status = "Draft", stringsAsFactors = FALSE)
+  no_published_goals <- data.frame(agency_goal_id = integer(0), title = character(0), stringsAsFactors = FALSE)
+  no_services <- data.frame(plan_service_id = integer(0), plan_id = integer(0), service_id = character(0))
+  db <- list(
+    planning_plan_section_draft = data.frame(
+      plan_id = 1L, section_key = "goals",
+      payload = '{"goalIds": ["draft-1", "draft-2"], "kpis": {"draft-1": ["884", "883"], "draft-2": ["882", "894"]}}',
+      stringsAsFactors = FALSE
+    ),
+    performance_pm_goal_link = data.frame(agency_goal_id = integer(0), measure_id = integer(0))
+  )
+  result <- plan_selected_measure_ids(db, draft_plan, no_published_goals, no_services)
+  expect_setequal(result, c(884L, 883L, 882L, 894L))
+})
+
+test_that("plan_selected_measure_ids falls back to the live table for a published goal with no draft KPI entry", {
+  returned_plan <- data.frame(plan_id = 1L, plan_status = "Returned", stringsAsFactors = FALSE)
+  published_goals <- data.frame(agency_goal_id = 501L, stringsAsFactors = FALSE)
+  no_services <- data.frame(plan_service_id = integer(0), plan_id = integer(0), service_id = character(0))
+  db <- list(
+    planning_plan_section_draft = data.frame(plan_id = 1L, section_key = "goals", payload = '{"kpis": {}}', stringsAsFactors = FALSE),
+    performance_pm_goal_link = data.frame(agency_goal_id = 501L, measure_id = 900L)
+  )
+  result <- plan_selected_measure_ids(db, returned_plan, published_goals, no_services)
+  expect_setequal(result, 900L)
+})
+
+test_that("plan_selected_measure_ids uses the live table for an Approved/Published plan, ignoring any leftover draft", {
+  published_plan <- data.frame(plan_id = 1L, plan_status = "Published", stringsAsFactors = FALSE)
+  published_goals <- data.frame(agency_goal_id = 501L, stringsAsFactors = FALSE)
+  no_services <- data.frame(plan_service_id = integer(0), plan_id = integer(0), service_id = character(0))
+  db <- list(
+    planning_plan_section_draft = data.frame(plan_id = 1L, section_key = "goals", payload = '{"kpis": {"501": ["1"]}}', stringsAsFactors = FALSE),
+    performance_pm_goal_link = data.frame(agency_goal_id = 501L, measure_id = 900L)
+  )
+  result <- plan_selected_measure_ids(db, published_plan, published_goals, no_services)
+  expect_setequal(result, 900L)
+})
