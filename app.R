@@ -4185,7 +4185,7 @@ route_target_label <- function(role, person) {
 }
 
 plan_review_route_choices <- function(db = NULL, plan = NULL) {
-  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  submitter_label <- "Entity"
   deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
   ca_label <- if (!is.null(db) && !is.null(plan)) route_target_label("CA Office", plan_ca_office_label(db, plan)) else "CA Office"
   c(
@@ -4197,7 +4197,7 @@ plan_review_route_choices <- function(db = NULL, plan = NULL) {
 }
 
 admin_plan_review_route_choices <- function(db = NULL, plan = NULL) {
-  submitter_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Submitter", plan_submitter_label(db, plan)) else "Submitter"
+  submitter_label <- "Entity"
   reviewer_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Reviewer", plan_reviewer_label(db, plan)) else "Reviewer"
   deputy_label <- if (!is.null(db) && !is.null(plan)) route_target_label("Deputy Mayor", plan_deputy_mayor_label(db, plan)) else "Deputy Mayor"
   ca_label <- if (!is.null(db) && !is.null(plan)) route_target_label("CA Office", plan_ca_office_label(db, plan)) else "CA Office"
@@ -4783,7 +4783,6 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
     agency_name = plan_display_name(db, plan),
     status = agency_plan_status(plan$plan_status[[1]]),
     version = plan$version[[1]],
-    submitter = plan_submitter_label(db, plan),
     budget_analyst = plan_budget_analyst_label(db, plan),
     performance_analyst = plan_reviewer_label(db, plan),
     deputy_mayor = plan_deputy_mayor_label(db, plan),
@@ -4882,7 +4881,6 @@ history_plan_card <- function(db, plan, current_plan_id, submitter_value, can_su
     ),
     div(
       class = "history-modal-contact-stack history-card-contacts",
-      p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Budget Analyst: "), plan_budget_analyst_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
       p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
@@ -5207,7 +5205,6 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
           div(class = "chip-row", status_chip(agency_plan_status(plan$plan_status[[1]]), status_tone(plan$plan_status[[1]])), status_chip(paste("Version", plan$version[[1]]), "primary")),
           div(
             class = "history-modal-contact-stack",
-            p(class = "history-modal-contact", tags$strong("Submitter: "), plan_submitter_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Performance Analyst: "), plan_reviewer_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("Deputy Mayor: "), plan_deputy_mayor_label(db, plan)),
             p(class = "history-modal-contact", tags$strong("CA Office Approver: "), plan_ca_office_label(db, plan))
