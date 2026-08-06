@@ -558,16 +558,13 @@ ensure_review_schema <- function(connection) {
     "ALTER TABLE reference.plan_entity ADD CONSTRAINT plan_entity_entity_type_check CHECK (entity_type IN ('Agency', 'MayoraltyOffice', 'QuasiAgency', 'Other'))"
   )
   DBI::dbExecute(connection, "SELECT setval(pg_get_serial_sequence('reference.plan_entity', 'entity_id'), COALESCE((SELECT MAX(entity_id) FROM reference.plan_entity), 1), (SELECT COUNT(*) > 0 FROM reference.plan_entity))")
-  DBI::dbExecute(
-    connection,
-    paste(
-      "INSERT INTO reference.plan_entity (parent_agency_id, public_name, entity_type, has_own_plan, active)",
-      "SELECT agency_id, COALESCE(NULLIF(public_name, ''), agency_name), 'Agency', true, COALESCE(active, true)",
-      "FROM reference.agency",
-      "WHERE COALESCE(active, true) AND COALESCE(submit_plan, true)",
-      "ON CONFLICT (parent_agency_id, public_name) DO NOTHING"
-    )
-  )
+  # This one only reactivates a row by exact name match, which is safe
+  # on its own for the common case (one row per agency) but could, in
+  # principle, resurrect an inactive duplicate left behind by the exact
+  # bug fixed below -- if an agency were ever renamed back to a name
+  # matching a known-dead duplicate's stale public_name. The NOT EXISTS
+  # guard limits it to firing only when there's truly just one Agency-type
+  # row for that parent (no duplicate to accidentally wake back up).
   DBI::dbExecute(
     connection,
     paste(
@@ -578,7 +575,87 @@ ensure_review_schema <- function(connection) {
       "AND pe.entity_type = 'Agency'",
       "AND pe.public_name = COALESCE(NULLIF(a.public_name, ''), a.agency_name)",
       "AND COALESCE(a.active, true)",
-      "AND COALESCE(a.submit_plan, true)"
+      "AND COALESCE(a.submit_plan, true)",
+      "AND NOT EXISTS (",
+      "  SELECT 1 FROM reference.plan_entity pe2",
+      "  WHERE pe2.parent_agency_id = pe.parent_agency_id",
+      "  AND pe2.entity_type = 'Agency'",
+      "  AND pe2.entity_id <> pe.entity_id",
+      ")"
+    )
+  )
+  # Reported 2026-08-06: renaming an agency (updating reference.agency.
+  # public_name directly) silently emptied its Team & Roles page on the
+  # next deploy. Root cause: the INSERT below used to target
+  # ON CONFLICT (parent_agency_id, public_name) -- treating the *pair* of
+  # agency+name as an entity's identity, not the agency alone. A rename
+  # doesn't match any existing (parent_agency_id, public_name) pair, so
+  # instead of updating the existing row, it silently inserted a second,
+  # brand-new plan_entity row under the new name -- leaving the old row
+  # (and everything keyed to its entity_id, e.g. every row in
+  # access.user_entity_access) orphaned and still marked active. Two
+  # agencies hit this in production before it was caught (one from a
+  # rename in this same session, one from an unrelated rename three weeks
+  # earlier that had gone unnoticed).
+  #
+  # Fixed in two parts: this UPDATE now syncs public_name onto whichever
+  # row is *currently active* for the agency, regardless of whether the
+  # name already matches -- so a rename actually propagates onto the
+  # live row instead of leaving it stale. Matching on pe.active (not
+  # public_name) is deliberately narrower than the reactivate-on-toggle
+  # UPDATE above: it only ever touches the one row already marked
+  # active, so it can never resurrect an inactive duplicate left behind
+  # by this exact bug prior to this fix.
+  # The NOT EXISTS guard here handles the one remaining coincidence: a
+  # dead duplicate from before this fix existed under some OLD name that
+  # coincidentally equals the agency's CURRENT name (e.g. the agency was
+  # renamed away and then back). Without it, this would try to rename
+  # the live row onto text a dead sibling already holds, hitting the
+  # same (parent_agency_id, public_name) constraint discussed above --
+  # skipping the sync in that rare case is a much better failure mode
+  # than erroring on every future deploy.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "UPDATE reference.plan_entity pe",
+      "SET public_name = COALESCE(NULLIF(a.public_name, ''), a.agency_name), has_own_plan = true, updated_at = now()",
+      "FROM reference.agency a",
+      "WHERE pe.parent_agency_id = a.agency_id",
+      "AND pe.entity_type = 'Agency'",
+      "AND pe.active",
+      "AND COALESCE(a.active, true)",
+      "AND COALESCE(a.submit_plan, true)",
+      "AND NOT EXISTS (",
+      "  SELECT 1 FROM reference.plan_entity pe3",
+      "  WHERE pe3.parent_agency_id = pe.parent_agency_id",
+      "  AND pe3.entity_id <> pe.entity_id",
+      "  AND pe3.public_name = COALESCE(NULLIF(a.public_name, ''), a.agency_name)",
+      ")"
+    )
+  )
+  # The INSERT's own identity check now matches the same way: parent_agency_id
+  # + entity_type alone (never public_name), via NOT EXISTS -- so an
+  # agency that already has an Agency-type row never gets a second one,
+  # no matter how many times its name changes. ON CONFLICT DO NOTHING
+  # stays on as a backstop: the table's unique constraint is still on
+  # (parent_agency_id, public_name) alone, and at least one agency
+  # (AGC4301) legitimately has a second, differently-typed row (see the
+  # hardcoded "Mayor's Office"/'Other' insert below) that happens to
+  # share the same text -- without this, that pre-existing, harmless
+  # coincidence turns into a hard constraint-violation error instead of
+  # its original silent no-op.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "INSERT INTO reference.plan_entity (parent_agency_id, public_name, entity_type, has_own_plan, active)",
+      "SELECT agency_id, COALESCE(NULLIF(public_name, ''), agency_name), 'Agency', true, COALESCE(active, true)",
+      "FROM reference.agency a",
+      "WHERE COALESCE(active, true) AND COALESCE(submit_plan, true)",
+      "AND NOT EXISTS (",
+      "  SELECT 1 FROM reference.plan_entity pe",
+      "  WHERE pe.parent_agency_id = a.agency_id AND pe.entity_type = 'Agency'",
+      ")",
+      "ON CONFLICT (parent_agency_id, public_name) DO NOTHING"
     )
   )
   DBI::dbExecute(
