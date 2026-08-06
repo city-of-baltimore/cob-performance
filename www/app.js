@@ -2801,7 +2801,16 @@
     var goalIds = Array.from(page.querySelectorAll(".goal-editor")).map(function (editor) {
       return editor.getAttribute("data-goal-id");
     });
-    return { savedAt: new Date().toISOString(), values: values, kpis: kpis, initiatives: initiatives, goalIds: goalIds };
+    // Reported 2026-08-06: a deleted goal kept reappearing. The server-side
+    // merge (merge_goals_draft_payload) can't tell "my browser never knew
+    // about this goal" apart from "I just deleted it" -- both just look
+    // like a missing id -- so it unions this save's goalIds against
+    // whatever's already stored, which always still has the goal that was
+    // just removed. Sending the deleted id explicitly lets the merge
+    // subtract it instead of only ever adding.
+    var deletedGoalIds = [];
+    try { deletedGoalIds = JSON.parse(page.dataset.deletedGoalIds || "[]"); } catch (error) { deletedGoalIds = []; }
+    return { savedAt: new Date().toISOString(), values: values, kpis: kpis, initiatives: initiatives, goalIds: goalIds, deletedGoalIds: deletedGoalIds };
   }
 
   function setRequirementChip(chip, label, tone) {
@@ -3457,6 +3466,13 @@
     var editor = pendingGoalDeletion.editor;
     dismissGoalDeleteDialog();
     if (!page.isConnected || !editor.isConnected || page.querySelectorAll(".goal-editor").length <= goalMinimumCount(page)) return;
+    var deletedGoalId = editor.getAttribute("data-goal-id");
+    if (deletedGoalId) {
+      var deletedGoalIds = [];
+      try { deletedGoalIds = JSON.parse(page.dataset.deletedGoalIds || "[]"); } catch (error) { deletedGoalIds = []; }
+      if (deletedGoalIds.indexOf(deletedGoalId) === -1) deletedGoalIds.push(deletedGoalId);
+      page.dataset.deletedGoalIds = JSON.stringify(deletedGoalIds);
+    }
     if (window.Shiny && window.Shiny.unbindAll) window.Shiny.unbindAll(editor);
     editor.remove();
     updateAllKpiAvailability(page);
