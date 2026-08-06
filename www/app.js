@@ -750,7 +750,7 @@
     prefillLoginEmail();
   }
 
-  function clearAuthSession() {
+  function clearAuthSession(message) {
     try { window.localStorage.removeItem("beaconAuthToken"); } catch (error) {}
     if (authIdleTimer) {
       window.clearTimeout(authIdleTimer);
@@ -3214,15 +3214,15 @@
     });
   }
 
-  function handleMeasureSaveResult() {
+  function handleMeasureSaveResult(message) {
     reenableButtonsForSaveResult(["save_measure", "submit_measure"]);
   }
 
-  function handleRiskSaveResult() {
+  function handleRiskSaveResult(message) {
     reenableButtonsForSaveResult(["save_risk"]);
   }
 
-  function handleTeamRoleSaveResult() {
+  function handleTeamRoleSaveResult(message) {
     reenableButtonsForSaveResult(["save_team_role"]);
   }
 
