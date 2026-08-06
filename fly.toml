@@ -21,8 +21,8 @@ primary_region = "iad"
   min_machines_running = 1
 
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "2gb"
+  size = "shared-cpu-4x"
+  memory = "4gb"
 
 [checks]
   [checks.http]
