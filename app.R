@@ -5371,7 +5371,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
         div(
           class = "review-summary-card",
           span("Action Plan alignment"),
-          strong(if (action_plan_alignment_met) "Met" else "7 point penalty")
+          strong(id = "review_alignment_value", if (action_plan_alignment_met) "Met" else "7 point penalty")
         )
       ),
       div(
@@ -11048,10 +11048,23 @@ server <- function(input, output, session) {
     # (see output$page) without ever touching app_data().
     snapshot <- tryCatch(plan_review_snapshot_for_plan(database, plan_id), error = function(error) NULL)
     if (!is.null(snapshot)) update_cached_review_snapshot(plan_id, snapshot)
+    # Reported 2026-08-06: the "Action Plan alignment" summary chip kept
+    # showing a stale "7 point penalty" even after scoring the Pillar Goal
+    # Alignment criterion, confirmed 4/4 on every goal in the database --
+    # a reload fixed it. Root cause: this chip is baked into the page at
+    # the last full render, same as every other static part of
+    # history_plan_modal(), but unlike the overall score number just
+    # above, nothing ever re-sent it after an autosave (which
+    # deliberately skips a full re-render -- see the comment above this
+    # observer). Send it here the same way, computed from the same fresh
+    # snapshot the overall score itself came from.
+    alignment_met <- !is.null(snapshot) && nrow(snapshot$scores) > 0 &&
+      any(snapshot$scores$criterion_code == "PILLAR" & !is.na(snapshot$scores$score), na.rm = TRUE)
     session$sendCustomMessage("plan-review-save-result", list(
       ok = TRUE,
       source = source,
       score = round(result),
+      alignmentMet = isTRUE(alignment_met),
       savedAt = format(Sys.time(), "%H:%M:%S")
     ))
     if (!identical(source, "auto")) {
