@@ -3395,13 +3395,18 @@ merge_named_list <- function(existing_list, incoming_list) {
 # next autosave landed. Merging means a save that doesn't mention a given
 # field or goal id leaves the existing value alone.
 #
-# Trade-off: this can't distinguish "my browser never knew this goal
+# Originally this could not distinguish "my browser never knew this goal
 # existed" from "I just deleted this goal" -- both look identical (the
-# payload just doesn't mention that goal id). A goal deleted by one team
-# member could reappear if another team member's already-stale tab saves
-# afterward. Accepted as a much narrower, more visible failure mode than
-# the one being fixed (any conflicting save silently dropping *all* of
-# another user's unsynced additions, every time -- reported 2026-07-24).
+# payload just doesn't mention that goal id) -- so a goalIds merge that
+# only ever unions meant a deletion never actually stuck: the very save
+# that removed a goal got unioned right back against whatever was already
+# stored, which of course still had it. Reported 2026-08-06 as "every time
+# I delete a goal, it comes back" -- reproduced on every single delete,
+# not just the stale-multi-tab case this was originally scoped for. Fixed
+# by having the client send which goal ids it explicitly deleted
+# (collectGoalsDraft() in app.js), tracked cumulatively here (like
+# `existing`'s other fields) so a still-stale tab's later save can't
+# resurrect it either.
 merge_goals_draft_payload <- function(existing, incoming) {
   if (is.null(existing) || !is.list(existing)) return(incoming)
   merged <- incoming
@@ -3410,7 +3415,11 @@ merge_goals_draft_payload <- function(existing, incoming) {
   merged$initiatives <- merge_named_list(existing$initiatives, incoming$initiatives)
   existing_goal_ids <- if (is.null(existing$goalIds)) character(0) else vapply(existing$goalIds, as.character, character(1))
   incoming_goal_ids <- if (is.null(incoming$goalIds)) character(0) else vapply(incoming$goalIds, as.character, character(1))
-  merged$goalIds <- as.list(union(existing_goal_ids, incoming_goal_ids))
+  existing_deleted_ids <- if (is.null(existing$deletedGoalIds)) character(0) else vapply(existing$deletedGoalIds, as.character, character(1))
+  incoming_deleted_ids <- if (is.null(incoming$deletedGoalIds)) character(0) else vapply(incoming$deletedGoalIds, as.character, character(1))
+  deleted_ids <- union(existing_deleted_ids, incoming_deleted_ids)
+  merged$deletedGoalIds <- as.list(deleted_ids)
+  merged$goalIds <- as.list(setdiff(union(existing_goal_ids, incoming_goal_ids), deleted_ids))
   merged
 }
 

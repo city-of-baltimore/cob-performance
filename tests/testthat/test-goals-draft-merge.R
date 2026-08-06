@@ -29,6 +29,77 @@ test_that("merge_goals_draft_payload keeps a goal the incoming payload doesn't m
   expect_setequal(unlist(merged$goalIds), c("1", "2"))
 })
 
+# Regression guard for the 2026-08-06 bug report: "every time I delete a
+# goal, it comes back." A plain union of goalIds can never shrink -- the
+# very save that deletes a goal gets unioned right back against whatever
+# was already stored, which still has it. Fixed by sending which ids were
+# explicitly deleted and subtracting them after the union.
+test_that("merge_goals_draft_payload lets an explicit deletion actually remove a goal", {
+  existing <- list(
+    values = list(goal_statement_1 = "Goal 1", goal_statement_2 = "Goal 2"),
+    kpis = list(), initiatives = list(),
+    goalIds = list("1", "2")
+  )
+  incoming <- list(
+    savedAt = "2026-08-06T12:00:00Z",
+    values = list(),
+    kpis = list(), initiatives = list(),
+    goalIds = list("1"),
+    deletedGoalIds = list("2")
+  )
+
+  merged <- merge_goals_draft_payload(existing, incoming)
+
+  expect_setequal(unlist(merged$goalIds), "1")
+  expect_setequal(unlist(merged$deletedGoalIds), "2")
+})
+
+test_that("a stale tab that still lists a previously-deleted goal cannot resurrect it", {
+  existing <- list(
+    values = list(goal_statement_1 = "Goal 1"),
+    kpis = list(), initiatives = list(),
+    goalIds = list("1"),
+    deletedGoalIds = list("2")
+  )
+  # A stale tab's own DOM never learned about the deletion, so its next
+  # autosave still lists goal 2 -- but it didn't delete anything itself.
+  incoming <- list(
+    savedAt = "2026-08-06T12:05:00Z",
+    values = list(goal_statement_1 = "Goal 1 edited"),
+    kpis = list(), initiatives = list(),
+    goalIds = list("1", "2")
+  )
+
+  merged <- merge_goals_draft_payload(existing, incoming)
+
+  expect_setequal(unlist(merged$goalIds), "1")
+})
+
+test_that("save_goals_draft_merged persists a goal deletion instead of unioning it back", {
+  skip_if_no_test_database()
+  connection <- connect_app_database()
+  plan_id <- DBI::dbGetQuery(connection, "SELECT plan_id FROM planning.agency_plan LIMIT 1")$plan_id[[1]]
+  on.exit(
+    {
+      DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'goals'", params = list(plan_id))
+      DBI::dbExecute(connection, "DELETE FROM application.audit_log WHERE table_name = 'planning.plan_section_draft'")
+      DBI::dbDisconnect(connection)
+    },
+    add = TRUE
+  )
+  DBI::dbExecute(connection, "DELETE FROM planning.plan_section_draft WHERE plan_id = $1 AND section_key = 'goals'", params = list(plan_id))
+
+  payload_a <- jsonlite::toJSON(list(savedAt = "t1", values = list(goal_statement_1 = "Goal one", goal_statement_2 = "Goal two"), kpis = list(), initiatives = list(), goalIds = list("1", "2")), auto_unbox = TRUE)
+  save_goals_draft_merged(connection, plan_id, payload_a)
+
+  # Delete goal 2 -- the exact save the bug report described.
+  payload_delete <- jsonlite::toJSON(list(savedAt = "t2", values = list(), kpis = list(), initiatives = list(), goalIds = list("1"), deletedGoalIds = list("2")), auto_unbox = TRUE)
+  save_goals_draft_merged(connection, plan_id, payload_delete)
+
+  final_payload <- jsonlite::fromJSON(get_section_draft(connection, plan_id, "goals")$payload[[1]])
+  expect_setequal(final_payload$goalIds, "1")
+})
+
 test_that("save_goals_draft_merged preserves a concurrent teammate's addition on a stale re-save", {
   skip_if_no_test_database()
   connection <- connect_app_database()
