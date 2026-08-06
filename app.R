@@ -8931,18 +8931,59 @@ server <- function(input, output, session) {
     data
   }
 
-  # Reloads the entire database (~36 queries) in a background worker instead
-  # of blocking the shared single-threaded Shiny process. `after` runs once
-  # the fresh data has landed in app_data() -- put cleanup/notification code
-  # there instead of directly after the call, since this returns immediately.
-  refresh_app_data <- function(after = NULL, on_error = NULL) {
+  # Reloads app data in a background worker instead of blocking the shared
+  # single-threaded Shiny process. `after` runs once the fresh data has
+  # landed in app_data() -- put cleanup/notification code there instead of
+  # directly after the call, since this returns immediately.
+  #
+  # domains: NULL (default) reloads the ENTIRE database (~31 queries) --
+  # the safe, always-correct choice for anything not migrated below. Pass
+  # a character vector naming entries in refresh_domain_loaders (e.g.
+  # domains = "cls") to reload only that domain's own queries instead,
+  # merging just those keys into the CURRENT app_data() (re-read fresh at
+  # merge time, not the stale snapshot from before this call started, so
+  # a concurrent unrelated refresh can't get clobbered).
+  #
+  # *** Adding a new save flow (CLS or otherwise)? Read this. ***
+  # Every refresh_app_data() call defaults to reloading all ~31 queries,
+  # which is the app's #1 capacity problem (see backlog) -- concurrent
+  # saves anywhere in the app compete for the same background workers and
+  # CPU. Before wiring up refresh_app_data() for a new save, check: does
+  # this save write ONLY to tables no other page reads or joins against?
+  # If yes, add a `load_<name>_domain_data(connection)` function in
+  # R/database.R (load_cls_domain_data() above load_app_data() is the
+  # reference example -- load_app_data() itself calls it too, so both
+  # paths always run identical SQL), register it below, and pass
+  # `domains = "<name>"` at every call site for that save instead of
+  # leaving domains unset. If the save touches anything shared (a column
+  # another page's query joins against), leave domains unset -- reloading
+  # too much is merely wasteful, reloading too little means some OTHER
+  # page silently shows stale data, which is the worse failure mode.
+  refresh_domain_loaders <- list(
+    cls = load_cls_domain_data
+  )
+
+  refresh_app_data <- function(after = NULL, on_error = NULL, domains = NULL) {
     promises::future_promise({
       connection <- connect_app_database()
       on.exit(DBI::dbDisconnect(connection), add = TRUE)
-      load_app_data(connection)
-    }, seed = TRUE) %...>% (function(data) {
-      app_data(data)
-      register_service_body_outputs(data)
+      if (is.null(domains)) {
+        load_app_data(connection)
+      } else {
+        loaders <- refresh_domain_loaders[domains]
+        unknown <- domains[vapply(loaders, is.null, logical(1))]
+        if (length(unknown)) stop(paste("Unknown refresh domain(s):", paste(unknown, collapse = ", ")))
+        do.call(c, unname(lapply(loaders, function(loader) loader(connection))))
+      }
+    }, seed = TRUE) %...>% (function(loaded) {
+      if (is.null(domains)) {
+        app_data(loaded)
+      } else {
+        current <- app_data()
+        current[names(loaded)] <- loaded
+        app_data(current)
+      }
+      register_service_body_outputs(app_data())
       if (!is.null(after)) after()
     }) %...!% (function(error) {
       showNotification(paste("Couldn't refresh plan data:", conditionMessage(error)), type = "error", duration = 8)
@@ -9980,7 +10021,7 @@ server <- function(input, output, session) {
       current_cls_id(as.integer(created))
       cls_last_save(list(at = Sys.time(), by = cls_user_label()))
       # Re-render once so the details and positions sections unlock.
-      refresh_app_data()
+      refresh_app_data(domains = "cls")
       return()
     }
     result <- tryCatch(
@@ -10033,7 +10074,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(created), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     current_cls_id(as.integer(created))
     # Remember it outside the reactive graph too, so the session-ended handler
     # can clean it up if the user simply closes the browser.
@@ -10129,7 +10170,7 @@ server <- function(input, output, session) {
       return()
     }
     cls_pending_submit(NULL)
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     # Email notification to the Agency Submitter is intentionally disabled for now.
     # When enabled, send here via the app's mail helper (see R/auth.R send_mail usage).
     notify_agency_submitter_of_cls <- FALSE
@@ -10213,7 +10254,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification(
       paste0("“", name, "” was sent back to the agency and is unlocked for editing."),
       type = "message", duration = 7
@@ -10247,7 +10288,7 @@ server <- function(input, output, session) {
       if (inherits(result, "error")) failed <- c(failed, rows$request_name[[i]]) else saved <- saved + 1L
     }
     cls_bulk_mode(FALSE)
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     if (length(failed)) {
       showNotification(paste0("Saved ", saved, ". Could not save: ", paste(failed, collapse = ", "), "."),
                        type = "error", duration = 10)
@@ -10279,7 +10320,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Review saved.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_send_bbmr_one, {
@@ -10313,7 +10354,7 @@ server <- function(input, output, session) {
       return()
     }
     cls_pending_submit(NULL)
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Request marked complete and sent for BBMR review.", type = "message", duration = 7)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_open_detail, {
@@ -10348,7 +10389,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("CLS request saved.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   # Analyst feedback: nothing lands in the table until every field is filled.
@@ -10388,7 +10429,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Line item added.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_submit_position, {
@@ -10418,7 +10459,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Position request added.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_edit_line, {
@@ -10462,7 +10503,7 @@ server <- function(input, output, session) {
       return()
     }
     cls_editing_line(NA_integer_)
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Object updated.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_position_edit_save, {
@@ -10492,7 +10533,7 @@ server <- function(input, output, session) {
       return()
     }
     cls_editing_position(NA_integer_)
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Position updated.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_delete, {
@@ -10509,7 +10550,7 @@ server <- function(input, output, session) {
       current_page("cls_requests")
       session$sendCustomMessage("set-page", "cls_requests")
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("CLS request deleted.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_delete_line, {
@@ -10521,7 +10562,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Line item removed.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$cls_delete_position, {
@@ -10533,7 +10574,7 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data()
+    refresh_app_data(domains = "cls")
     showNotification("Position request removed.", type = "message", duration = 5)
   }, ignoreInit = TRUE)
   observeEvent(input$submit_feedback_request, {
@@ -11671,7 +11712,7 @@ server <- function(input, output, session) {
     # then pick up autosaved changes for the list view.
     if (identical(current_page(), "cls_request_detail") && !identical(input$current_page, "cls_request_detail")) {
       cls_discard_draft(current_cls_id())
-      refresh_app_data()
+      refresh_app_data(domains = "cls")
     }
     current_page(input$current_page)
   }, ignoreInit = TRUE)

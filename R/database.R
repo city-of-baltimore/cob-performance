@@ -1060,6 +1060,63 @@ ensure_review_schema <- function(connection) {
   invisible(TRUE)
 }
 
+# The CLS/budget-request domain: every save under Services > CLS Requests
+# (create/update/delete a request, add/update/delete a line or position,
+# analyst/BBMR review decisions, status transitions) writes exclusively to
+# budget.cls_request/cls_request_line/cls_request_position/cls_review --
+# confirmed by reading every *cls* mutation function in this file -- so
+# these 4 queries are safe to reload on their own instead of the full
+# ~31-query load_app_data() reload. Factored out here (load_app_data()
+# below calls this too) so both the full reload and a domains = "cls"
+# partial refresh (see refresh_domain_loaders in app.R) run identical SQL.
+# Reference example for adding a new domain -- see the comment on
+# refresh_domain_loaders in app.R before doing this for anything else;
+# the self-containment check is the part that actually takes care.
+load_cls_domain_data <- function(connection) {
+  query <- function(sql) DBI::dbGetQuery(connection, sql)
+  list(
+    budget_cls_request = query(
+      paste(
+        "SELECT cr.cls_id, cr.plan_service_id, cr.request_name, cr.request_type, cr.request_amount,",
+        "cr.one_time, cr.overall_summary, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
+        "cr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
+        "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at,",
+        "cr.modified_by, modifier.full_name AS modified_by_name, modifier.email AS modified_by_email,",
+        "cr.created_by, creator.full_name AS created_by_name, creator.email AS created_by_email,",
+        "ps.plan_id, ps.service_id, agp.agency_id",
+        "FROM budget.cls_request cr",
+        "JOIN performance.plan_service ps ON ps.plan_service_id = cr.plan_service_id",
+        "LEFT JOIN planning.agency_plan agp ON agp.plan_id = ps.plan_id",
+        "LEFT JOIN access.\"user\" modifier ON modifier.user_id = cr.modified_by",
+        "LEFT JOIN access.\"user\" creator ON creator.user_id = cr.created_by",
+        "ORDER BY cr.created_at DESC, cr.cls_id DESC"
+      )
+    ),
+    budget_cls_request_line = query(
+      paste(
+        "SELECT line_id, cls_id, object_category, spend_category, amount, justification, sort_order",
+        "FROM budget.cls_request_line ORDER BY cls_id, sort_order, line_id"
+      )
+    ),
+    budget_cls_request_position = query(
+      paste(
+        "SELECT pos_id, cls_id, classification, position_count, estimated_salary, justification, explanation",
+        "FROM budget.cls_request_position ORDER BY cls_id, pos_id"
+      )
+    ),
+    budget_cls_review = query(
+      paste(
+        "SELECT rv.review_id, rv.cls_id, rv.analyst_notes, rv.analyst_approval, rv.bbmr_approval,",
+        "rv.approved_amount, rv.approved_positions,",
+        "rv.reviewed_by, reviewer.full_name AS reviewed_by_name,",
+        "rv.updated_at AT TIME ZONE 'America/New_York' AS updated_at",
+        "FROM budget.cls_review rv",
+        "LEFT JOIN access.\"user\" reviewer ON reviewer.user_id = rv.reviewed_by"
+      )
+    )
+  )
+}
+
 load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
@@ -1284,47 +1341,9 @@ load_app_data <- function(connection) {
         "LEFT JOIN access.\"user\" assigned_admin ON assigned_admin.user_id = fr.assigned_admin_id",
         "ORDER BY fr.created_at DESC, fr.feedback_id DESC"
       )
-    ),
-    budget_cls_request = query(
-      paste(
-        "SELECT cr.cls_id, cr.plan_service_id, cr.request_name, cr.request_type, cr.request_amount,",
-        "cr.one_time, cr.overall_summary, cr.status, cr.amount_next_fy, cr.amount_2next_fy,",
-        "cr.created_at AT TIME ZONE 'America/New_York' AS created_at,",
-        "cr.updated_at AT TIME ZONE 'America/New_York' AS updated_at,",
-        "cr.modified_by, modifier.full_name AS modified_by_name, modifier.email AS modified_by_email,",
-        "cr.created_by, creator.full_name AS created_by_name, creator.email AS created_by_email,",
-        "ps.plan_id, ps.service_id, agp.agency_id",
-        "FROM budget.cls_request cr",
-        "JOIN performance.plan_service ps ON ps.plan_service_id = cr.plan_service_id",
-        "LEFT JOIN planning.agency_plan agp ON agp.plan_id = ps.plan_id",
-        "LEFT JOIN access.\"user\" modifier ON modifier.user_id = cr.modified_by",
-        "LEFT JOIN access.\"user\" creator ON creator.user_id = cr.created_by",
-        "ORDER BY cr.created_at DESC, cr.cls_id DESC"
-      )
-    ),
-    budget_cls_request_line = query(
-      paste(
-        "SELECT line_id, cls_id, object_category, spend_category, amount, justification, sort_order",
-        "FROM budget.cls_request_line ORDER BY cls_id, sort_order, line_id"
-      )
-    ),
-    budget_cls_request_position = query(
-      paste(
-        "SELECT pos_id, cls_id, classification, position_count, estimated_salary, justification, explanation",
-        "FROM budget.cls_request_position ORDER BY cls_id, pos_id"
-      )
-    ),
-    budget_cls_review = query(
-      paste(
-        "SELECT rv.review_id, rv.cls_id, rv.analyst_notes, rv.analyst_approval, rv.bbmr_approval,",
-        "rv.approved_amount, rv.approved_positions,",
-        "rv.reviewed_by, reviewer.full_name AS reviewed_by_name,",
-        "rv.updated_at AT TIME ZONE 'America/New_York' AS updated_at",
-        "FROM budget.cls_review rv",
-        "LEFT JOIN access.\"user\" reviewer ON reviewer.user_id = rv.reviewed_by"
-      )
     )
   )
+  data <- c(data, load_cls_domain_data(connection))
 
   action_plan_initiatives <- query(
     "SELECT pillar_goal_id, initiative_title, sort_order FROM reference.action_plan_initiative ORDER BY pillar_goal_id, sort_order"
