@@ -8,8 +8,10 @@ library(promises)
 # worker so one user's save/submit/approve doesn't block every other
 # connected session -- Shiny normally runs as a single process/thread, so a
 # synchronous reload here would freeze the whole app for its duration.
-# shared-cpu-2x machine (see fly.toml) -> 2 workers.
-future::plan(future::multisession, workers = 2)
+# shared-cpu-4x machine (see fly.toml, resized 2026-08-05 for capacity) ->
+# 3 workers, leaving 1 core free for the main Shiny process itself so it
+# stays responsive (health checks included) even while every worker is busy.
+future::plan(future::multisession, workers = 3)
 
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
@@ -1547,6 +1549,48 @@ goal_draft_readiness <- function(db, plan, goals) {
   list(complete_count = complete, aligned_count = aligned)
 }
 
+# Reported 2026-08-05: a reviewer's score/notes entered under a goal
+# ("Grow the capacity of our local Minority Business Enterprise and Women
+# Business Enterprise...") silently never saved, even though the autosave
+# indicator said it had. A goal only gets a real, positive agency_goal_id
+# once its plan is Approved (see goal_draft_readiness()'s comment above) --
+# a plan still under active review (Submitted/UnderReview/etc., which is
+# exactly when reviewers are scoring it) has its goals living only in the
+# draft payload, with string ids like "draft-1784904475724".
+# review.section_score.target_id is a real integer column, so a draft-only
+# goal needs a synthetic placeholder -- this assigns one by position
+# (-1, -2, ...) among the plan's current goal list. Must be computed
+# IDENTICALLY wherever a goal's review controls are rendered
+# (history_plan_modal()) and wherever they're collected for saving
+# (collect_plan_review_scores()), or a score/note entered under one goal
+# silently attributes to a different one. The previous code
+# (`suppressWarnings(as.integer(goal_id)) %||% -i`) intended exactly this
+# fallback, but never actually triggered it: base R's own `%||%` (R 4.4+)
+# only substitutes on NULL, not NA, so every draft-only goal's target_id
+# silently stayed NA -- which review_input_id() treats as "plan"-level,
+# collapsing every draft goal's score/notes controls onto the same widget
+# IDs. Separately, collect_plan_review_scores() only ever iterated the
+# live performance.agency_goal table, so for a plan with zero live goal
+# rows (any plan not yet Approved) it never attempted to save ANY
+# goal-level score/note at all, regardless of the ID collision above.
+plan_review_goal_target_ids <- function(db, plan, goals) {
+  if (is.null(plan) || !nrow(plan)) return(data.frame(goal_id = character(0), target_id = integer(0), stringsAsFactors = FALSE))
+  goals_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "goals") else NULL
+  goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) {
+    as.character(unlist(goals_draft$goalIds))
+  } else if (!is.null(goals) && nrow(goals)) {
+    as.character(goals$agency_goal_id)
+  } else {
+    character(0)
+  }
+  goal_ids <- goal_ids[nzchar(goal_ids)]
+  target_ids <- vapply(seq_along(goal_ids), function(i) {
+    numeric_id <- suppressWarnings(as.integer(goal_ids[[i]]))
+    if (is.na(numeric_id)) -i else numeric_id
+  }, integer(1))
+  data.frame(goal_id = goal_ids, target_id = target_ids, stringsAsFactors = FALSE)
+}
+
 selected_context <- function(db, submitter_value) {
   plan <- current_plan(db, submitter_value)
   agency_id <- plan_accounting_agency_id(db, plan)
@@ -2771,7 +2815,7 @@ feedback_list_ui <- function(db, search = "", category_filter = character(0), pr
   }
 }
 
-page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0)) {
+page_bug_fix <- function(db, search = "", category_filter = character(0), priority_filter = character(0), status_filter = character(0), active_sessions = NA_integer_, active_users = NA_integer_) {
   feedback <- db$application_feedback_request
   status_counts <- if (nrow(feedback)) table(feedback$status) else integer(0)
   feedback_status_count <- function(status) {
@@ -2795,7 +2839,13 @@ page_bug_fix <- function(db, search = "", category_filter = character(0), priori
       metric_tile("Open", feedback_status_count("Open"), "Feedback needing triage"),
       metric_tile("In review", feedback_status_count("In Review"), "Being worked"),
       metric_tile("Complete", feedback_status_count("Complete"), "Closed requests", "success"),
-      metric_tile("Archived", feedback_status_count("Archived"), "Stored for reference", "primary")
+      metric_tile("Archived", feedback_status_count("Archived"), "Stored for reference", "primary"),
+      metric_tile(
+        "Active sessions",
+        if (is.na(active_sessions)) "—" else active_sessions,
+        if (is.na(active_users)) "Open tabs, last 10 min" else paste0(active_users, " distinct user", if (active_users == 1) "" else "s", ", last 10 min"),
+        "primary"
+      )
     ),
     surface(
       "Feedback Requests",
@@ -3141,6 +3191,16 @@ service_is_shared <- function(db, service_id) {
 # until each measure is attributed to its own specific entity via
 # measure_entity_link and this can be scoped more narrowly.
 measure_belongs_to_shared_service <- function(db, measure_id) {
+  # measure_id can legitimately be NULL -- current_measure_id() is a
+  # nullable reactiveVal (cleared when the modal closes) -- which as.integer()
+  # turns into a zero-length vector, not NA; is.na(integer(0)) is itself
+  # zero-length, so `if` on it errors "argument is of length zero" rather
+  # than evaluating to FALSE. Reported 2026-08-05 in production, traced to
+  # persist_measure() reading a stale current_measure_id() after a rapid
+  # repeat Save click -- see measure_save_in_progress's reentrancy guard,
+  # which closes off that specific race. This length check just makes the
+  # function itself safe for any NULL/zero-length input regardless.
+  if (!length(measure_id)) return(FALSE)
   measure_id <- suppressWarnings(as.integer(measure_id))
   if (is.na(measure_id)) return(FALSE)
   linked_service_ids <- unique(db$performance_pm_service_link$service_id[db$performance_pm_service_link$measure_id == measure_id])
@@ -4736,17 +4796,13 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
   overview_text <- draft_value(overview_draft, "agency_summary", overview_text)
   vision_text <- draft_value(overview_draft, "agency_vision", vision_text)
   web_address <- draft_value(overview_draft, "agency_website", web_address)
-  saved_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) {
-    as.character(unlist(goals_draft$goalIds))
-  } else {
-    as.character(goals$agency_goal_id)
-  }
-  saved_goal_ids <- saved_goal_ids[nzchar(saved_goal_ids)]
+  goal_targets <- plan_review_goal_target_ids(db, plan, goals)
+  saved_goal_ids <- goal_targets$goal_id
 
   goal_payload <- lapply(seq_along(saved_goal_ids), function(i) {
     goal_key <- saved_goal_ids[[i]]
     goal_row <- goals[as.character(goals$agency_goal_id) == goal_key, , drop = FALSE]
-    goal_id <- if (nrow(goal_row)) goal_row$agency_goal_id[[1]] else suppressWarnings(as.integer(goal_key))
+    goal_id <- goal_targets$target_id[[i]]
     linked_initiatives <- if (nrow(goal_row)) {
       db$performance_agency_goal_initiative_link[db$performance_agency_goal_initiative_link$agency_goal_id == goal_row$agency_goal_id[[1]], , drop = FALSE]
     } else {
@@ -4789,7 +4845,7 @@ plan_export_payload <- function(db, plan_id, include_review = TRUE) {
       initiatives = as.list(initiative_titles),
       kpis = Filter(Negate(is.null), lapply(kpi_ids, function(measure_id) measure_export_entry(db, measure_id, current_fy))),
       alignment = if (nzchar(alignment)) alignment else NULL,
-      review_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("goal"), "goal", goal_id %||% -i) else list()
+      review_scores = if (isTRUE(include_review)) review_score_export_entries(review_bits$scores, plan_review_criteria("goal"), "goal", goal_id) else list()
     )
   })
 
@@ -5077,8 +5133,8 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
   overview_text <- draft_value(overview_draft, "agency_summary", overview_text)
   vision_text <- draft_value(overview_draft, "agency_vision", vision_text)
   web_address <- draft_value(overview_draft, "agency_website", web_address)
-  saved_goal_ids <- if (!is.null(goals_draft) && !is.null(goals_draft$goalIds)) as.character(unlist(goals_draft$goalIds)) else as.character(goals$agency_goal_id)
-  saved_goal_ids <- saved_goal_ids[nzchar(saved_goal_ids)]
+  goal_targets <- plan_review_goal_target_ids(db, plan, goals)
+  saved_goal_ids <- goal_targets$goal_id
   selected_measure_ids <- plan_selected_measure_ids(db, plan, goals, service_rows)
   selected_measures <- db$performance_performance_measure[db$performance_performance_measure$measure_id %in% selected_measure_ids, , drop = FALSE]
   invalid_selected_measures <- selected_measures[is.na(selected_measures$approval_status) | selected_measures$approval_status != "Validated", , drop = FALSE]
@@ -5375,7 +5431,7 @@ history_plan_modal <- function(db, plan_id, can_edit_review = FALSE, can_assign_
               if (isTRUE(include_review)) tags$details(
                 class = "review-score-block",
                 tags$summary("Score this goal"),
-                div(class = "review-score-grid", review_score_controls(review_bits$scores, plan_review_criteria("goal"), "goal", suppressWarnings(as.integer(goal_id)) %||% -i, can_edit_review))
+                div(class = "review-score-grid", review_score_controls(review_bits$scores, plan_review_criteria("goal"), "goal", goal_targets$target_id[[i]], can_edit_review))
               )
             )
           })
@@ -8450,7 +8506,7 @@ page_cls_request_detail <- function(db, cls_id, app_roles = character(0), agency
   )
 }
 
-page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list(), cls_detail_origin = NULL, editing_line_id = NA_integer_, editing_position_id = NA_integer_) {
+page_ui <- function(page, db, agency_id, measure_status_filter = "All except deprecated", can_manage_team = FALSE, can_submit_plan = FALSE, app_roles = c("AgencyViewer"), agency_roles = character(0), selected_user_id = "", selected_review_plan_id = NA_integer_, selected_review_include_review = TRUE, feedback_filters = list(), selected_cls_id = NA_integer_, cls_review_filters = list(), cls_detail_origin = NULL, editing_line_id = NA_integer_, editing_position_id = NA_integer_, active_sessions = NA_integer_, active_users = NA_integer_) {
   if (identical(page, "services") && submitter_is_mayoral_service(db, agency_id)) {
     page <- "metrics"
   }
@@ -8508,7 +8564,9 @@ page_ui <- function(page, db, agency_id, measure_status_filter = "All except dep
         search = if (is.null(feedback_filters$search) || length(feedback_filters$search) == 0) "" else feedback_filters$search[[1]],
         category_filter = if (is.null(feedback_filters$category) || length(feedback_filters$category) == 0) character(0) else feedback_filters$category,
         priority_filter = if (is.null(feedback_filters$priority) || length(feedback_filters$priority) == 0) character(0) else feedback_filters$priority,
-        status_filter = if (is.null(feedback_filters$status) || length(feedback_filters$status) == 0) character(0) else feedback_filters$status
+        status_filter = if (is.null(feedback_filters$status) || length(feedback_filters$status) == 0) character(0) else feedback_filters$status,
+        active_sessions = active_sessions,
+        active_users = active_users
       )
     } else page_landing(db, agency_id, app_roles, agency_roles),
     role_preview = if (can_view_application_admin(app_roles)) page_role_preview(db, app_roles, agency_roles, selected_user_id, agency_id) else page_landing(db, agency_id, app_roles, agency_roles),
@@ -8754,7 +8812,23 @@ server <- function(input, output, session) {
   current_page <- reactiveVal("login")
   current_pillar_modal <- reactiveVal(NULL)
   current_measure_id <- reactiveVal(NULL)
+  # Reported 2026-08-05 (DHR): saving a new measure created several
+  # duplicate copies. persist_measure() kicks off save_measure_record()
+  # synchronously, but the entity-link + app_data() refresh that follows
+  # runs via an async future_promise -- current_measure_id() stays "new"
+  # for the entire gap until that promise resolves and closes the modal.
+  # With no visual feedback that a save is already in flight, a repeat
+  # click on Save during that window re-entered persist_measure() while
+  # existing_measure_id was still "new", inserting another fresh row
+  # instead of recognizing the measure that had just been created.
+  measure_save_in_progress <- reactiveVal(FALSE)
   pending_new_measure_default_city <- reactiveVal(FALSE)
+  # Same reentrancy hazard as measure_save_in_progress above -- a brand-new
+  # risk/team member has no real id yet until refresh_app_data()'s async
+  # gap closes, so a repeat click on Save while that's in flight would
+  # otherwise mint a second one instead of recognizing the first.
+  risk_save_in_progress <- reactiveVal(FALSE)
+  team_role_save_in_progress <- reactiveVal(FALSE)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -9602,6 +9676,23 @@ server <- function(input, output, session) {
     })
   }
   persist_measure <- function(submit = FALSE) {
+    # Reentrancy guard: a repeat Save click while the previous save's async
+    # refresh is still in flight must be ignored outright, not re-run --
+    # see the comment on measure_save_in_progress's declaration above.
+    if (isTRUE(measure_save_in_progress())) return()
+    measure_save_in_progress(TRUE)
+    async_save_kicked_off <- FALSE
+    # Tells the client to re-enable the Save/Submit buttons it disabled on
+    # click. Fires here for every SYNCHRONOUS exit (a validation error
+    # returning before the async refresh ever starts); the async success/
+    # error paths below send their own once refresh_app_data() actually
+    # finishes, since on.exit() runs immediately, well before that.
+    on.exit({
+      if (!async_save_kicked_off) {
+        measure_save_in_progress(FALSE)
+        session$sendCustomMessage("measure-save-result", list(ok = FALSE))
+      }
+    }, add = TRUE)
     if (!submit && !current_user_can_submit_measure() && !current_user_can_review_measures()) {
       showNotification("You do not have permission to edit measures.", type = "error", duration = 8)
       return()
@@ -9733,10 +9824,19 @@ server <- function(input, output, session) {
     if (inherits(link_result, "error")) {
       showNotification(paste("Measure saved, but entity link could not be updated:", conditionMessage(link_result)), type = "warning", duration = 10)
     }
-    refresh_app_data(after = function() {
-      current_measure_id(NULL)
-      showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
-    })
+    async_save_kicked_off <- TRUE
+    refresh_app_data(
+      after = function() {
+        measure_save_in_progress(FALSE)
+        current_measure_id(NULL)
+        showNotification(if (submit) "Measure submitted for approval." else "Measure saved.", type = "message")
+        session$sendCustomMessage("measure-save-result", list(ok = TRUE))
+      },
+      on_error = function(error) {
+        measure_save_in_progress(FALSE)
+        session$sendCustomMessage("measure-save-result", list(ok = FALSE))
+      }
+    )
   }
 
   observeEvent(input$open_measure_id, {
@@ -10572,6 +10672,15 @@ server <- function(input, output, session) {
   observeEvent(input$close_team_role_modal, current_team_access_id(NULL), ignoreInit = TRUE)
   observeEvent(input$close_team_role_modal_footer, current_team_access_id(NULL), ignoreInit = TRUE)
   observeEvent(input$team_role_save_request, {
+    if (isTRUE(team_role_save_in_progress())) return()
+    team_role_save_in_progress(TRUE)
+    async_save_kicked_off <- FALSE
+    on.exit({
+      if (!async_save_kicked_off) {
+        team_role_save_in_progress(FALSE)
+        session$sendCustomMessage("team-role-save-result", list(ok = FALSE))
+      }
+    }, add = TRUE)
     if (!current_user_can_manage_team()) {
       showNotification("You do not have permission to change team roles.", type = "error", duration = 8)
       return()
@@ -10652,10 +10761,19 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data(after = function() {
-      current_team_access_id(NULL)
-      showNotification("Team role updated.", type = "message")
-    })
+    async_save_kicked_off <- TRUE
+    refresh_app_data(
+      after = function() {
+        team_role_save_in_progress(FALSE)
+        current_team_access_id(NULL)
+        showNotification("Team role updated.", type = "message")
+        session$sendCustomMessage("team-role-save-result", list(ok = TRUE))
+      },
+      on_error = function(error) {
+        team_role_save_in_progress(FALSE)
+        session$sendCustomMessage("team-role-save-result", list(ok = FALSE))
+      }
+    )
   }, ignoreInit = FALSE)
   observeEvent(input$team_role_delete_confirmed_request, {
     if (!current_user_can_manage_team()) {
@@ -10689,6 +10807,15 @@ server <- function(input, output, session) {
     })
   }, ignoreInit = TRUE)
   observeEvent(input$risk_save_request, {
+    if (isTRUE(risk_save_in_progress())) return()
+    risk_save_in_progress(TRUE)
+    async_save_kicked_off <- FALSE
+    on.exit({
+      if (!async_save_kicked_off) {
+        risk_save_in_progress(FALSE)
+        session$sendCustomMessage("risk-save-result", list(ok = FALSE))
+      }
+    }, add = TRUE)
     if (!current_user_can_edit_plan()) {
       showNotification("You do not have permission to edit this plan.", type = "error", duration = 8)
       return()
@@ -10717,10 +10844,19 @@ server <- function(input, output, session) {
       showNotification(conditionMessage(result), type = "error", duration = 8)
       return()
     }
-    refresh_app_data(after = function() {
-      current_risk_id(NULL)
-      showNotification("Risk saved.", type = "message")
-    })
+    async_save_kicked_off <- TRUE
+    refresh_app_data(
+      after = function() {
+        risk_save_in_progress(FALSE)
+        current_risk_id(NULL)
+        showNotification("Risk saved.", type = "message")
+        session$sendCustomMessage("risk-save-result", list(ok = TRUE))
+      },
+      on_error = function(error) {
+        risk_save_in_progress(FALSE)
+        session$sendCustomMessage("risk-save-result", list(ok = FALSE))
+      }
+    )
   }, ignoreInit = TRUE)
 
   observeEvent(input$risk_delete_confirmed_request, {
@@ -10817,6 +10953,7 @@ server <- function(input, output, session) {
     if (!nrow(plan)) return(list())
     goals <- data$performance_agency_goal[data$performance_agency_goal$plan_id == plan_id, , drop = FALSE]
     goals <- goals[order(goals$sort_order), , drop = FALSE]
+    goal_targets <- plan_review_goal_target_ids(data, plan, goals)
     services <- plan_review_scorable_services(data, plan)
     rows <- list()
     append_rows <- function(criteria, target_type = "plan", target_id = NA_integer_) {
@@ -10839,9 +10976,9 @@ server <- function(input, output, session) {
     append_rows(plan_review_criteria("plan_measures"))
     append_rows(plan_review_criteria("plan_risks"))
     append_rows(plan_review_criteria("plan_data"))
-    if (nrow(goals)) {
-      for (i in seq_len(nrow(goals))) {
-        append_rows(plan_review_criteria("goal"), "goal", goals$agency_goal_id[[i]])
+    if (nrow(goal_targets)) {
+      for (i in seq_len(nrow(goal_targets))) {
+        append_rows(plan_review_criteria("goal"), "goal", goal_targets$target_id[[i]])
       }
     }
     if (nrow(services)) {
@@ -11735,6 +11872,15 @@ server <- function(input, output, session) {
       }
     }
     page_data <- data_with_cached_review_snapshot(page_data)
+    # Only queried when actually viewing Bug/Fix -- switch() in page_ui()
+    # means this branch, and this query, is skipped for every other page.
+    active_sessions <- NA_integer_
+    active_users <- NA_integer_
+    if (identical(current_page(), "bug_fix") && current_user_can_view_application_admin()) {
+      session_counts <- auth_active_session_count(database)
+      active_sessions <- session_counts$sessions
+      active_users <- session_counts$users
+    }
     page_ui(
       current_page(),
       page_data,
@@ -11771,7 +11917,9 @@ server <- function(input, output, session) {
         agency = cls_applied_agency() %||% character(0),
         service = cls_applied_service() %||% character(0),
         bulk = cls_bulk_mode()
-      )
+      ),
+      active_sessions = active_sessions,
+      active_users = active_users
     )
   })
 

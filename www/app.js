@@ -883,6 +883,9 @@
     window.Shiny.addCustomMessageHandler("services-draft-result", handleServicesDraftResult);
     window.Shiny.addCustomMessageHandler("goals-draft-result", handleGoalsDraftResult);
     window.Shiny.addCustomMessageHandler("plan-review-save-result", handlePlanReviewSaveResult);
+    window.Shiny.addCustomMessageHandler("measure-save-result", handleMeasureSaveResult);
+    window.Shiny.addCustomMessageHandler("risk-save-result", handleRiskSaveResult);
+    window.Shiny.addCustomMessageHandler("team-role-save-result", handleTeamRoleSaveResult);
     window.Shiny.addCustomMessageHandler("trigger-plan-download", triggerPlanDownload);
     window.Shiny.addCustomMessageHandler("set-navigation-scope", setNavigationScope);
     window.Shiny.addCustomMessageHandler("cls-save-status", function (msg) {
@@ -1676,9 +1679,14 @@
   document.addEventListener("click", function (event) {
     var saveButton = event.target.closest("#save_measure");
     var submitButton = event.target.closest("#submit_measure");
-    if ((!saveButton && !submitButton) || !window.Shiny) return;
+    var clickedButton = saveButton || submitButton;
+    if (!clickedButton || !window.Shiny) return;
+    // Ignore a repeat click while the previous one is still in flight --
+    // see disableButtonsForSave()'s comment above for why.
+    if (clickedButton.disabled) return;
     event.preventDefault();
     updateMeasureNumberFormat();
+    disableButtonsForSave(["save_measure", "submit_measure"], clickedButton.id, saveButton ? "Saving..." : "Submitting...");
     window.Shiny.setInputValue(saveButton ? "measure_save_request" : "measure_submit_request", Date.now(), { priority: "event" });
   });
 
@@ -1691,8 +1699,11 @@
   });
 
   document.addEventListener("click", function (event) {
-    if (!event.target.closest("#save_risk") || !window.Shiny) return;
+    var saveButton = event.target.closest("#save_risk");
+    if (!saveButton || !window.Shiny) return;
+    if (saveButton.disabled) return;
     event.preventDefault();
+    disableButtonsForSave(["save_risk"], "save_risk", "Saving...");
     window.Shiny.setInputValue("risk_save_request", Date.now(), { priority: "event" });
   });
 
@@ -1705,8 +1716,11 @@
   });
 
   document.addEventListener("click", function (event) {
-    if (!event.target.closest("#save_team_role") || !window.Shiny) return;
+    var saveButton = event.target.closest("#save_team_role");
+    if (!saveButton || !window.Shiny) return;
+    if (saveButton.disabled) return;
     event.preventDefault();
+    disableButtonsForSave(["save_team_role"], "save_team_role", "Saving...");
     window.Shiny.setInputValue("team_role_save_request", Date.now(), { priority: "event" });
   });
 
@@ -3164,6 +3178,52 @@
     }
     page.dataset.autosaveDirty = "true";
     setGoalsSaveStatus((message && message.message) || "The goals draft could not be saved. Your browser recovery copy is still available.");
+  }
+
+  // Reported 2026-08-05 (DHR): saving a new measure created several
+  // duplicate copies -- the Save button gave no feedback that a save was
+  // already in flight (app_data() refreshes in the background after the
+  // click returns, so "the request was sent" and "the save is done" are
+  // not the same moment), so a repeat click re-entered the save before the
+  // first one had finished. Disabling the button(s) here on click, and
+  // re-enabling only once the server confirms the save has genuinely
+  // finished (success, a validation error, or a failed background
+  // refresh -- see reenableButtonsForSaveResult()'s callers in app.R),
+  // closes that window. Reused for every modal with the same "Save" shape
+  // (measures, risks, team roles).
+  function disableButtonsForSave(ids, activeId, activeLabel) {
+    ids.forEach(function (id) {
+      var button = document.getElementById(id);
+      if (!button) return;
+      if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
+      button.disabled = true;
+    });
+    var activeButton = activeId && document.getElementById(activeId);
+    if (activeButton && activeLabel) activeButton.textContent = activeLabel;
+  }
+
+  function reenableButtonsForSaveResult(ids) {
+    ids.forEach(function (id) {
+      var button = document.getElementById(id);
+      if (!button) return;
+      button.disabled = false;
+      if (button.dataset.originalLabel) {
+        button.textContent = button.dataset.originalLabel;
+        delete button.dataset.originalLabel;
+      }
+    });
+  }
+
+  function handleMeasureSaveResult() {
+    reenableButtonsForSaveResult(["save_measure", "submit_measure"]);
+  }
+
+  function handleRiskSaveResult() {
+    reenableButtonsForSaveResult(["save_risk"]);
+  }
+
+  function handleTeamRoleSaveResult() {
+    reenableButtonsForSaveResult(["save_team_role"]);
   }
 
   function handlePlanReviewSaveResult(message) {

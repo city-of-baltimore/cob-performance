@@ -174,3 +174,56 @@ test_that("plan_selected_measure_ids uses the live table for an Approved/Publish
   result <- plan_selected_measure_ids(db, published_plan, published_goals, no_services)
   expect_setequal(result, 900L)
 })
+
+# Reported 2026-08-05: a reviewer's score/notes entered under a goal
+# silently never saved, even though the autosave indicator said it had --
+# reproduced on a real plan (agency AGC4310, UnderReview) whose 5 goals,
+# including one about growing Minority/Women Business Enterprise
+# participation, all still live only in the goals draft payload (zero rows
+# in performance.agency_goal, since goals aren't promoted until Approval).
+# collect_plan_review_scores() only ever iterated the live table, so it
+# never attempted to save ANY goal-level score for such a plan. Separately,
+# the previous synthetic-id fallback (`suppressWarnings(as.integer(goal_id))
+# %||% -i`) never actually triggered: base R's %||% (R 4.4+) only
+# substitutes on NULL, not NA, so every draft-only goal's target_id stayed
+# NA -- collapsing every draft goal's review controls onto the same widget
+# IDs. plan_review_goal_target_ids() is the shared fix used by both the
+# render side (history_plan_modal()/plan_export_payload()) and the save
+# side (collect_plan_review_scores()).
+test_that("plan_review_goal_target_ids assigns distinct, non-NA synthetic ids to every draft-only goal", {
+  plan <- data.frame(plan_id = 107L, plan_status = "UnderReview", stringsAsFactors = FALSE)
+  no_goals <- data.frame(agency_goal_id = integer(0), sort_order = integer(0), stringsAsFactors = FALSE)
+  db <- list(
+    planning_plan_section_draft = data.frame(
+      plan_id = 107L, section_key = "goals",
+      payload = '{"goalIds": ["draft-1", "draft-1784904475724", "draft-1785177674731", "draft-1785177811325", "draft-1785331311771"]}',
+      stringsAsFactors = FALSE
+    )
+  )
+  result <- plan_review_goal_target_ids(db, plan, no_goals)
+  expect_equal(nrow(result), 5)
+  expect_equal(result$target_id, -(1:5))
+  expect_false(any(is.na(result$target_id)))
+})
+
+test_that("plan_review_goal_target_ids keeps an already-promoted goal's real id and only synthesizes one for a genuinely draft-only goal", {
+  plan <- data.frame(plan_id = 999L, plan_status = "Returned", stringsAsFactors = FALSE)
+  no_goals <- data.frame(agency_goal_id = integer(0), sort_order = integer(0), stringsAsFactors = FALSE)
+  db <- list(
+    planning_plan_section_draft = data.frame(
+      plan_id = 999L, section_key = "goals",
+      payload = '{"goalIds": ["501", "draft-abc"]}',
+      stringsAsFactors = FALSE
+    )
+  )
+  result <- plan_review_goal_target_ids(db, plan, no_goals)
+  expect_equal(result$target_id, c(501L, -2L))
+})
+
+test_that("plan_review_goal_target_ids falls back to the live table when there is no goals draft at all", {
+  plan <- data.frame(plan_id = 501L, plan_status = "Published", stringsAsFactors = FALSE)
+  goals <- data.frame(agency_goal_id = c(10L, 11L), sort_order = c(1L, 2L), stringsAsFactors = FALSE)
+  db <- list(planning_plan_section_draft = data.frame(plan_id = integer(0), section_key = character(0), payload = character(0), stringsAsFactors = FALSE))
+  result <- plan_review_goal_target_ids(db, plan, goals)
+  expect_equal(result$target_id, c(10L, 11L))
+})

@@ -13,6 +13,10 @@ AUTH_SESSION_DAYS <- 7L
 AUTH_SESSION_IDLE_MINUTES <- 60L
 AUTH_MAX_FAILURES <- 5L
 AUTH_LOCKOUT_MINUTES <- 15L
+# Client pings auth_session_activity every 5 min (AUTH_HEARTBEAT_MS in
+# www/app.js) while a tab is open and signed in; a session counts as
+# "currently open" if it's checked in within two heartbeats.
+AUTH_ACTIVE_SESSION_MINUTES <- 10L
 
 if (!exists("%||%", mode = "function")) {
   `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x)) y else x
@@ -130,6 +134,19 @@ auth_touch_login_session <- function(connection, token) {
     params = list(auth_hash_token(token))
   )
   isTRUE(updated > 0)
+}
+
+auth_active_session_count <- function(connection, idle_minutes = AUTH_ACTIVE_SESSION_MINUTES) {
+  row <- DBI::dbGetQuery(
+    connection,
+    paste(
+      "SELECT count(*) AS sessions, count(DISTINCT user_id) AS users",
+      "FROM access.user_login_session",
+      "WHERE revoked_at IS NULL AND expires_at > now()",
+      paste0("AND COALESCE(last_seen_at, created_at) > now() - interval '", idle_minutes, " minutes'")
+    )
+  )
+  list(sessions = as.integer(row$sessions[[1]]), users = as.integer(row$users[[1]]))
 }
 
 auth_revoke_login_session <- function(connection, token) {
