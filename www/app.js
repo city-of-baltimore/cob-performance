@@ -3567,9 +3567,20 @@
   schedulePageInitialization();
   window.addEventListener("resize", initializeScrollProxies);
 
+  // Reported 2026-08-05: highlighting text inside a modal and releasing the
+  // mouse button past its edge closed the modal, discarding unsaved input --
+  // the browser still fires "click" on the backdrop at mouseup even though
+  // the drag started on modal content, and the old check only looked at
+  // the click's own target. Tracking where mousedown happened distinguishes
+  // a genuine outside-click (mousedown AND click both land on the backdrop
+  // itself) from a selection drag that merely ends there.
+  var backdropMouseDownTarget = null;
+  document.addEventListener("mousedown", function (event) {
+    backdropMouseDownTarget = event.target;
+  });
   document.addEventListener("click", function (event) {
     var backdrop = event.target.closest("[data-close-input]");
-    if (!backdrop || event.target !== backdrop || !window.Shiny) return;
+    if (!backdrop || event.target !== backdrop || backdropMouseDownTarget !== backdrop || !window.Shiny) return;
     window.Shiny.setInputValue(backdrop.getAttribute("data-close-input"), Date.now(), { priority: "event" });
   });
 
