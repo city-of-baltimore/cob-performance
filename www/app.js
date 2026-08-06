@@ -3304,9 +3304,19 @@
       window.clearTimeout(autosaveTimer);
       autosaveTimer = null;
     }
+    // Reported 2026-08-06: submitting a plan looked like it wiped out all
+    // of Overview/Goals/Services, rather than just locking it. The
+    // content was never actually gone -- any plan not yet Approved keeps
+    // it ONLY in planning.plan_section_draft, and requestSharedDraft() is
+    // the one thing that fetches and displays it. This used to return
+    // before ever calling it once locked, so the server-rendered page
+    // (built from the live, still-empty tables) was all that ever
+    // showed. Disabling controls and loading the draft are independent --
+    // do both. restoreGoalsDraft()/restoreBuilderDraft() already guard
+    // their input/change events behind data-restoring-draft, so this
+    // can't trigger a spurious autosave on a page the user can't edit.
     if (page.getAttribute("data-plan-locked") === "true") {
       disableLockedBuilderControls(page);
-      return;
     }
     requestSharedDraft(page);
   }
