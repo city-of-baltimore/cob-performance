@@ -3245,6 +3245,14 @@
     // showed on page load while the status line above already moved on.
     var overallScore = document.getElementById("review_overall_score_value");
     if (overallScore) overallScore.textContent = message.score + "/100";
+    // Same staleness as the overall score above, for the Action Plan
+    // alignment chip specifically -- see the comment on this message in
+    // app.R for the 2026-08-06 report ("scored Pillar Goal Alignment,
+    // still showed a penalty until reload").
+    var alignmentValue = document.getElementById("review_alignment_value");
+    if (alignmentValue && typeof message.alignmentMet === "boolean") {
+      alignmentValue.textContent = message.alignmentMet ? "Met" : "7 point penalty";
+    }
   }
 
   function requestSharedDraft(page) {
