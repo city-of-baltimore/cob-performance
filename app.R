@@ -877,7 +877,7 @@ service_body_output_id <- function(service_id) {
   paste0("service_body_", gsub("[^A-Za-z0-9_]", "_", as.character(service_id)))
 }
 
-service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE, can_edit_shared_description = FALSE) {
+service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metric_choices = NULL, locked = FALSE, can_edit_shared_description = FALSE, actuals_by_measure = NULL, entity_links_by_service = NULL) {
   if (is.null(service_row) || !nrow(service_row)) return(NULL)
   service_id <- service_row$service_id[[1]]
   service_is_admin <- is_administration_service(service_row)
@@ -902,11 +902,11 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   } else if (service_is_admin) {
     integer(0)
   } else {
-    service_metric_ids(db, plan, service_id, measures)
+    service_metric_ids(db, plan, service_id, measures, entity_links_by_service = entity_links_by_service)
   }
   selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
   selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
-  other_service_metric_ids <- service_metric_ids_for_other_services(db, plan, service_id)
+  other_service_metric_ids <- service_metric_ids_for_other_services(db, plan, service_id, entity_links_by_service = entity_links_by_service)
   service_metric_select <- function(metric_index, selected_value) {
     selected_value <- as.character(selected_value %||% "")
     select_id <- paste0("service_metric_", service_id, "_", metric_index)
@@ -939,7 +939,11 @@ service_editor_body_ui <- function(db, plan, service_row, measures = NULL, metri
   upcoming_target_fy <- preview_years$target_years[length(preview_years$target_years)]
   metric_previews <- if (service_is_admin) list() else lapply(seq_len(nrow(measures)), function(measure_index) {
     measure <- measures[measure_index, , drop = FALSE]
-    history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
+    history <- if (!is.null(actuals_by_measure)) {
+      actuals_by_measure[[as.character(measure$measure_id)]] %||% db$performance_measure_actuals[0, , drop = FALSE]
+    } else {
+      db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measure$measure_id, , drop = FALSE]
+    }
     actual_values <- vapply(preview_all_years, function(year) {
       row <- history[history$fiscal_year == year, , drop = FALSE]
       value <- if (nrow(row)) row$annual_actual[[1]] else NA_real_
@@ -1191,10 +1195,14 @@ measure_library_rows <- function(db, plan, include_ineligible = FALSE) {
   rows[order(rows$title), , drop = FALSE]
 }
 
-service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE) {
+service_metric_ids <- function(db, plan, service_id, measures = NULL, include_ineligible = FALSE, entity_links_by_service = NULL) {
   linked_ids <- legacy_service_measure_ids(db, plan, service_id, include_ineligible = include_ineligible, entity_scoped_only = TRUE)
   if ("performance_measure_entity_link" %in% names(db) && nrow(db$performance_measure_entity_link)) {
-    entity_links <- db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
+    entity_links <- if (!is.null(entity_links_by_service)) {
+      entity_links_by_service[[as.character(service_id)]] %||% db$performance_measure_entity_link[0, , drop = FALSE]
+    } else {
+      db$performance_measure_entity_link[db$performance_measure_entity_link$service_id == service_id, , drop = FALSE]
+    }
     if (!is.null(plan) && nrow(plan)) {
       if (!is.na(plan$entity_id[[1]])) {
         entity_links <- entity_links[!is.na(entity_links$entity_id) & entity_links$entity_id == plan$entity_id[[1]], , drop = FALSE]
@@ -1216,7 +1224,7 @@ service_metric_ids <- function(db, plan, service_id, measures = NULL, include_in
   linked_ids
 }
 
-service_metric_ids_for_other_services <- function(db, plan, service_id) {
+service_metric_ids_for_other_services <- function(db, plan, service_id, entity_links_by_service = NULL) {
   if (is.null(plan) || !nrow(plan)) return(character(0))
   services <- scorable_service_rows(plan_service_rows(db, plan))
   other_service_ids <- setdiff(as.character(services$service_id), as.character(service_id))
@@ -1226,7 +1234,7 @@ service_metric_ids_for_other_services <- function(db, plan, service_id) {
     draft_values <- if (!is.null(services_draft) && !is.null(services_draft$serviceMetrics[[other_service_id]])) {
       suppressWarnings(as.integer(unlist(services_draft$serviceMetrics[[other_service_id]])))
     } else {
-      service_metric_ids(db, plan, other_service_id, include_ineligible = TRUE)
+      service_metric_ids(db, plan, other_service_id, include_ineligible = TRUE, entity_links_by_service = entity_links_by_service)
     }
     draft_values[!is.na(draft_values)]
   }), use.names = FALSE)
@@ -5984,6 +5992,11 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
     status_labels <- status_labels[status_labels == selected_status]
   }
   snapshot_years <- fiscal_measure_snapshot_years()
+  # Indexed once instead of filtered inside the per-measure loop below --
+  # was a full scan of the citywide actuals table per measure, which is
+  # what made agencies with many measures (e.g. Transportation) feel slow
+  # to open this page.
+  actuals_by_measure <- if ("performance_measure_actuals" %in% names(db)) split(db$performance_measure_actuals, db$performance_measure_actuals$measure_id) else list()
   builder_page(
     performance_plan_title(db, plan, "Measures"),
     "Review, update, and submit agency performance measures for validation.",
@@ -6013,7 +6026,7 @@ page_metrics <- function(db, agency_id, status_filter = "All except deprecated")
           span("Updated")
         ),
         lapply(seq_len(nrow(measures)), function(i) {
-          history <- db$performance_measure_actuals[db$performance_measure_actuals$measure_id == measures$measure_id[i], , drop = FALSE]
+          history <- actuals_by_measure[[as.character(measures$measure_id[i])]] %||% db$performance_measure_actuals[0, , drop = FALSE]
           actual_row <- history[history$fiscal_year == snapshot_years$actual_fy, , drop = FALSE]
           target_row <- history[history$fiscal_year == snapshot_years$target_fy, , drop = FALSE]
           actual <- if (nrow(actual_row)) format_measure_value(actual_row$annual_actual[1], measures$format_type[i], measures$display_unit[i], "Not reported") else "Not reported"
@@ -6533,6 +6546,13 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_s
   measures <- eligible_plan_measures(measure_library_rows(db, plan, include_ineligible = FALSE))
   metric_choices <- setNames(measures$measure_id, measures$title)
   services_draft <- if (plan_uses_draft_payload(plan)) section_draft_payload(db, plan$plan_id[[1]], "services") else NULL
+  # Indexed once per page render instead of filtered inside the per-service
+  # loop below (and again inside every service_editor_body_ui() call) --
+  # both tables are otherwise scanned in full once per service AND once
+  # per measure per service, which is what made agencies with many
+  # services (e.g. Transportation) feel slow to open this page.
+  actuals_by_measure <- if ("performance_measure_actuals" %in% names(db)) split(db$performance_measure_actuals, db$performance_measure_actuals$measure_id) else list()
+  entity_links_by_service <- if ("performance_measure_entity_link" %in% names(db)) split(db$performance_measure_entity_link, db$performance_measure_entity_link$service_id) else list()
   service_rubric_row <- function(criterion, points, score_1, score_2, score_3, score_4) {
     tags$tr(
       tags$th(scope = "row", criterion),
@@ -6581,7 +6601,7 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_s
           } else if (service_is_admin) {
             integer(0)
           } else {
-            service_metric_ids(db, plan, service_id, measures)
+            service_metric_ids(db, plan, service_id, measures, entity_links_by_service = entity_links_by_service)
           }
           selected_metric_ids <- selected_metric_ids[!is.na(selected_metric_ids)]
           selected_metrics <- if (length(selected_metric_ids) > 0) as.character(selected_metric_ids) else ""
@@ -6606,7 +6626,9 @@ page_services <- function(db, agency_id, can_edit_plan = TRUE, can_edit_shared_s
                 measures = measures,
                 metric_choices = metric_choices,
                 locked = !plan_is_editable(plan) || !can_edit_plan,
-                can_edit_shared_description = can_edit_shared_service_description
+                can_edit_shared_description = can_edit_shared_service_description,
+                actuals_by_measure = actuals_by_measure,
+                entity_links_by_service = entity_links_by_service
               )
             )
           )
@@ -8868,6 +8890,25 @@ server <- function(input, output, session) {
   # background load from the first is still in flight (same reentrancy
   # class as measure_save_in_progress above).
   sign_in_in_progress <- reactiveVal(FALSE)
+  # 2026-08-07: NULL means citywide (load every agency's measures,
+  # unchanged) -- a character vector of agency_ids means this session's
+  # own measures-domain data (performance_measure/measure_actuals/
+  # pm_goal_link/pm_service_link/measure_entity_link/review.measure_review)
+  # is scoped to just those agencies. Resolved once at sign-in
+  # (resolve_measures_scope_agency_ids(), R/database.R) from the user's
+  # role/grants, then reused by every subsequent refresh_app_data() call
+  # for this session -- Services/Measures page navigation was scanning
+  # the full citywide measure_actuals table inside a per-item loop, which
+  # is what made large agencies (many services) feel slow to navigate.
+  # city_measures/strategic_plan (the Timeline/Action Plan pages) are
+  # deliberately NEVER scoped by this -- every signed-in user sees the
+  # same citywide Action Plan dashboard regardless of role.
+  measures_scope_agency_ids <- reactiveVal(NULL)
+  # Which user_id the CURRENT app_data()/measures_scope_agency_ids() was
+  # loaded for -- complete_sign_in() checks this before reusing cached
+  # data on a same-tab re-sign-in, since a different user must always get
+  # their own fresh, correctly-scoped load.
+  app_data_loaded_for_user_id <- reactiveVal(NULL)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -9003,17 +9044,35 @@ server <- function(input, output, session) {
     measures = load_measures_domain_data
   )
 
-  refresh_app_data <- function(after = NULL, on_error = NULL, domains = NULL) {
+  # resolve_scope_for_user_id: only passed at sign-in (complete_sign_in()),
+  # when this session's measures_scope_agency_ids() hasn't been determined
+  # yet -- resolves it fresh (off the main thread, inside the worker below,
+  # same reasoning as PR #115: no DB call belongs on the main thread during
+  # login) from that user's role/grants, and reports it back so it's
+  # stored for every later call. Every other call site reuses whatever
+  # this session already resolved by reading measures_scope_agency_ids()
+  # here on the main thread (reactiveVal reads only work in a reactive
+  # context, which the future_promise body below does NOT have -- it runs
+  # on a separate process -- so the current value is captured into a
+  # plain variable now and carried into the worker like `domains` already
+  # is, not re-read from inside the promise).
+  refresh_app_data <- function(after = NULL, on_error = NULL, domains = NULL, resolve_scope_for_user_id = NULL) {
+    current_measures_scope <- measures_scope_agency_ids()
     promises::future_promise({
       connection <- connect_app_database()
       on.exit(DBI::dbDisconnect(connection), add = TRUE)
+      measures_scope <- if (!is.null(resolve_scope_for_user_id)) {
+        resolve_measures_scope_agency_ids(connection, resolve_scope_for_user_id)
+      } else {
+        current_measures_scope
+      }
       loaded <- if (is.null(domains)) {
-        load_app_data(connection)
+        load_app_data(connection, agency_ids = measures_scope)
       } else {
         loaders <- refresh_domain_loaders[domains]
         unknown <- domains[vapply(loaders, is.null, logical(1))]
         if (length(unknown)) stop(paste("Unknown refresh domain(s):", paste(unknown, collapse = ", ")))
-        do.call(c, unname(lapply(loaders, function(loader) loader(connection))))
+        do.call(c, unname(lapply(loaders, function(loader) loader(connection, agency_ids = measures_scope))))
       }
       # Diagnostic trace for the 2026-08-07 OOM crash loop -- logs this
       # worker's own RSS right after the load it just did, tagged with
@@ -9036,13 +9095,15 @@ server <- function(input, output, session) {
       rss_kb <- process_rss_kb()
       if (!is.na(rss_kb)) {
         cat(sprintf(
-          "MEMLOG scope=worker pid=%s domains=%s rss_kb=%s at=%s\n",
+          "MEMLOG scope=worker pid=%s domains=%s agency_scoped=%s rss_kb=%s at=%s\n",
           Sys.getpid(), if (is.null(domains)) "full" else paste(domains, collapse = ","),
-          rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+          !is.null(measures_scope), rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
         ))
       }
-      loaded
-    }, seed = TRUE) %...>% (function(loaded) {
+      list(loaded = loaded, measures_scope = measures_scope, scope_was_resolved = !is.null(resolve_scope_for_user_id))
+    }, seed = TRUE) %...>% (function(result) {
+      loaded <- result$loaded
+      if (isTRUE(result$scope_was_resolved)) measures_scope_agency_ids(result$measures_scope)
       if (is.null(domains)) {
         app_data(loaded)
       } else {
@@ -9147,7 +9208,14 @@ server <- function(input, output, session) {
     current_user(user)
     auth_state(list(view = "login"))
     existing <- app_data()
-    if (!is.null(existing)) {
+    # Only reuse cached app_data() for the SAME user re-signing-in on this
+    # tab (nothing about their scope changed) -- a DIFFERENT user signing
+    # in after a sign-out must always get a fresh, correctly-scoped load.
+    # Before agency-scoped loading, reusing another user's stale app_data()
+    # here was harmless (same citywide data for anyone); now it would
+    # silently show one user's agency-scoped slice to a different user,
+    # or hide data an admin should see.
+    if (!is.null(existing) && identical(app_data_loaded_for_user_id(), user$user_id[[1]])) {
       finish_sign_in(user, existing, issue_session)
       return(invisible(TRUE))
     }
@@ -9157,13 +9225,15 @@ server <- function(input, output, session) {
     refresh_app_data(
       after = function() {
         sign_in_in_progress(FALSE)
+        app_data_loaded_for_user_id(user$user_id[[1]])
         finish_sign_in(user, app_data(), issue_session)
       },
       on_error = function(error) {
         sign_in_in_progress(FALSE)
         current_user(NULL)
         auth_state(list(view = "login", notice = "Something went wrong loading your account. Try signing in again."))
-      }
+      },
+      resolve_scope_for_user_id = user$user_id[[1]]
     )
     invisible(TRUE)
   }

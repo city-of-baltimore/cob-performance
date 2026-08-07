@@ -1178,7 +1178,7 @@ ensure_review_schema <- function(connection) {
 # Reference example for adding a new domain -- see the comment on
 # refresh_domain_loaders in app.R before doing this for anything else;
 # the self-containment check is the part that actually takes care.
-load_cls_domain_data <- function(connection) {
+load_cls_domain_data <- function(connection, ...) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   list(
     budget_cls_request = query(
@@ -1223,6 +1223,73 @@ load_cls_domain_data <- function(connection) {
   )
 }
 
+# RPostgres's params binding treats every element of `params` as a
+# separate scalar placeholder ($1, $2, ...), not as one array value --
+# passing a plain R vector for a single `= ANY($1)` placeholder fails
+# ("malformed array literal") except by coincidence at length 1. Build an
+# explicit "IN ($1,$2,...,$N)" clause sized to the vector instead, paired
+# with `as.list(values)` as params.
+sql_in_clause <- function(values) paste0("(", paste0("$", seq_along(values), collapse = ","), ")")
+
+# Determines which agencies' measures a session's INITIAL load actually
+# needs, so a single-agency user isn't loading (and then, on every
+# Services/Measures navigation, re-scanning) every other agency's
+# citywide measure data. NULL means "citywide, load everything" --
+# returned for SystemAdmin/OPIReviewer/BBMRReviewer/DeputyMayor/CAOffice,
+# who review across agencies (and for Role Preview, itself SystemAdmin-
+# only, so those sessions already get full data regardless), and for any
+# user with no role row at all (fail open to the existing behavior rather
+# than silently showing an ordinary user nothing).
+#
+# For everyone else, the resolved set is deliberately a SUPERSET at the
+# agency level, not a minimal entity-level slice: it's every agency
+# directly granted to the user, plus every entity's own parent agency,
+# PLUS any additional agency a linked service or measure_entity_link row
+# names for that entity (the same entity can legitimately have a
+# service/measure filed under a different agency than its own home
+# agency -- e.g. a shared-grant-program quasi-agency like Family League).
+# Loading the whole agency is the safety net; the existing entity-level
+# display filtering (entity_scoped_only, unchanged) narrows it down to
+# what that entity actually shows. Over-including an agency here is
+# harmless -- display filtering already handles it correctly -- under-
+# including is the one real risk, so every source of agency linkage is
+# unioned in rather than picking just one.
+CITYWIDE_MEASURES_APP_ROLES <- c("SystemAdmin", "OPIReviewer", "BBMRReviewer", "DeputyMayor", "CAOffice")
+
+resolve_measures_scope_agency_ids <- function(connection, user_id) {
+  role_row <- DBI::dbGetQuery(connection, "SELECT app_role FROM access.user_role WHERE user_id = $1", params = list(user_id))
+  if (!nrow(role_row) || role_row$app_role[[1]] %in% CITYWIDE_MEASURES_APP_ROLES) return(NULL)
+
+  direct_agency_ids <- DBI::dbGetQuery(connection, "SELECT DISTINCT agency_id FROM access.user_agency_access WHERE user_id = $1", params = list(user_id))$agency_id
+  entity_ids <- DBI::dbGetQuery(connection, "SELECT DISTINCT entity_id FROM access.user_entity_access WHERE user_id = $1", params = list(user_id))$entity_id
+
+  entity_parent_agency_ids <- character(0)
+  linked_via_service <- character(0)
+  linked_via_measure <- character(0)
+  if (length(entity_ids)) {
+    in_clause <- sql_in_clause(entity_ids)
+    entity_parent_agency_ids <- DBI::dbGetQuery(
+      connection, paste("SELECT DISTINCT parent_agency_id FROM reference.plan_entity WHERE entity_id IN", in_clause), params = as.list(entity_ids)
+    )$parent_agency_id
+    linked_via_service <- DBI::dbGetQuery(
+      connection,
+      paste(
+        "SELECT DISTINCT s.agency_id FROM reference.plan_entity_service pes",
+        "JOIN reference.service s ON s.service_id = pes.service_id",
+        "WHERE pes.entity_id IN", in_clause
+      ),
+      params = as.list(entity_ids)
+    )$agency_id
+    linked_via_measure <- DBI::dbGetQuery(
+      connection, paste("SELECT DISTINCT agency_id FROM performance.measure_entity_link WHERE entity_id IN", in_clause), params = as.list(entity_ids)
+    )$agency_id
+  }
+
+  agency_ids <- unique(c(direct_agency_ids, entity_parent_agency_ids, linked_via_service, linked_via_measure))
+  agency_ids <- agency_ids[!is.na(agency_ids)]
+  if (!length(agency_ids)) NULL else agency_ids
+}
+
 # Measures domain: performance.performance_measure/measure_actuals and
 # everything keyed off a measure_id (pm_goal_link, pm_service_link,
 # measure_entity_link, review.measure_review), plus city_measures/
@@ -1236,8 +1303,29 @@ load_cls_domain_data <- function(connection) {
 # load, so re-querying them fresh (cheap, small tables) without also
 # overwriting app_data()'s existing keys keeps this domain's exported
 # surface to measures-only, matching load_cls_domain_data() above.
-load_measures_domain_data <- function(connection) {
-  query <- function(sql) DBI::dbGetQuery(connection, sql)
+#
+# agency_ids (2026-08-07): NULL (default) loads every agency's measures,
+# unchanged -- needed for SystemAdmin/OPIReviewer/BBMRReviewer/
+# DeputyMayor/CAOffice, who review across agencies, and for any
+# save-triggered refresh on a session that already holds the citywide
+# set. When a caller passes a character vector, the six tables below are
+# filtered to just those agencies (see resolve_measures_scope_agency_ids()
+# for how that set gets resolved for a single-agency session) --
+# everyday Services/Measures page navigation for those sessions was
+# scanning the full citywide performance_measure_actuals table inside a
+# per-service/per-measure loop, which is the real reason large agencies
+# (dozens of services) felt slow to navigate: this fixes the cause
+# (loading less), not just the symptom (the separate indexing fix in
+# app.R's per-item loops). city_measures/strategic_plan are deliberately
+# NEVER filtered by agency_ids -- the Timeline and Action Plan pages show
+# the same citywide dashboard to every signed-in user regardless of role,
+# so those two stay on their own always-unfiltered query below.
+load_measures_domain_data <- function(connection, agency_ids = NULL) {
+  query <- function(sql, params = list()) if (length(params)) DBI::dbGetQuery(connection, sql, params = params) else DBI::dbGetQuery(connection, sql)
+  scoped <- !is.null(agency_ids) && length(agency_ids) > 0
+  agency_in_clause <- if (scoped) sql_in_clause(agency_ids) else ""
+  measure_scope_where <- if (scoped) paste("WHERE measure_id IN (SELECT measure_id FROM performance.performance_measure WHERE agency_id IN", agency_in_clause, ")") else ""
+  measure_scope_params <- if (scoped) as.list(agency_ids) else list()
   data <- list(
     performance_pm_goal_link = query(
       paste(
@@ -1248,8 +1336,10 @@ load_measures_domain_data <- function(connection) {
         "WHERE pc.fiscal_year = 2027",
         "AND m.active",
         "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
-        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')"
-      )
+        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')",
+        if (scoped) paste("AND m.agency_id IN", agency_in_clause) else ""
+      ),
+      params = measure_scope_params
     ),
     performance_pm_service_link = query(
       paste(
@@ -1261,17 +1351,27 @@ load_measures_domain_data <- function(connection) {
         "AND m.active",
         "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
         "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')",
+        if (scoped) paste("AND m.agency_id IN", agency_in_clause) else "",
         "ORDER BY l.service_id, l.measure_id"
-      )
+      ),
+      params = measure_scope_params
     ),
     performance_pm_service_link_all = query(
-      "SELECT service_id, measure_id FROM performance.pm_service_link ORDER BY service_id, measure_id"
+      paste(
+        "SELECT service_id, measure_id FROM performance.pm_service_link",
+        measure_scope_where,
+        "ORDER BY service_id, measure_id"
+      ),
+      params = measure_scope_params
     ),
     performance_measure_entity_link = query(
       paste(
         "SELECT link_id, measure_id, agency_id, service_id, entity_type, entity_id, public_name, source_old_measure_id",
-        "FROM performance.measure_entity_link ORDER BY agency_id, service_id, entity_type, public_name, measure_id"
-      )
+        "FROM performance.measure_entity_link",
+        if (scoped) paste("WHERE agency_id IN", agency_in_clause) else "",
+        "ORDER BY agency_id, service_id, entity_type, public_name, measure_id"
+      ),
+      params = measure_scope_params
     ),
     performance_performance_measure = query(
       paste(
@@ -1282,11 +1382,18 @@ load_measures_domain_data <- function(connection) {
         "ever_validated_at, created_date, last_updated, pc.fiscal_year",
         "FROM performance.performance_measure",
         "JOIN planning.plan_cycle pc ON pc.cycle_id = performance_measure.initial_cycle",
+        if (scoped) paste("WHERE performance_measure.agency_id IN", agency_in_clause) else "",
         "ORDER BY agency_id, title"
-      )
+      ),
+      params = measure_scope_params
     ),
     performance_measure_actuals = query(
-      "SELECT measure_id, fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals ORDER BY measure_id, fiscal_year"
+      paste(
+        "SELECT measure_id, fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals",
+        measure_scope_where,
+        "ORDER BY measure_id, fiscal_year"
+      ),
+      params = measure_scope_params
     ),
     review_measure_review = query(
       paste(
@@ -1294,8 +1401,10 @@ load_measures_domain_data <- function(connection) {
         "mr.decision, mr.feedback, mr.reviewed_at, mr.created_at",
         "FROM review.measure_review mr",
         "LEFT JOIN access.\"user\" u ON u.user_id = mr.reviewer_id",
+        if (scoped) paste("WHERE mr.measure_id IN (SELECT measure_id FROM performance.performance_measure WHERE agency_id IN", agency_in_clause, ")") else "",
         "ORDER BY mr.reviewed_at DESC, mr.measure_review_id DESC"
-      )
+      ),
+      params = measure_scope_params
     )
   )
 
@@ -1394,7 +1503,7 @@ load_measures_domain_data <- function(connection) {
   data
 }
 
-load_app_data <- function(connection) {
+load_app_data <- function(connection, agency_ids = NULL) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
     reference_agency = query(
@@ -1563,7 +1672,7 @@ load_app_data <- function(connection) {
     )
   )
   data <- c(data, load_cls_domain_data(connection))
-  data <- c(data, load_measures_domain_data(connection))
+  data <- c(data, load_measures_domain_data(connection, agency_ids = agency_ids))
   data
 }
 
