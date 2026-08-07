@@ -8858,6 +8858,16 @@ server <- function(input, output, session) {
   # otherwise mint a second one instead of recognizing the first.
   risk_save_in_progress <- reactiveVal(FALSE)
   team_role_save_in_progress <- reactiveVal(FALSE)
+  # 2026-08-07: app_data() is per-session, so every sign-in (fresh login OR
+  # an auto-restored session on page load) starts from NULL and needs its
+  # own full load. That load used to run inline on complete_sign_in()'s
+  # calling thread -- since this is a single-threaded R process, one
+  # person's login blocked every other connected session's requests (even
+  # unrelated ones) for as long as it took, confirmed via load testing to
+  # reach 8-12s at 50 concurrent logins. Guards a second submit while the
+  # background load from the first is still in flight (same reentrancy
+  # class as measure_save_in_progress above).
+  sign_in_in_progress <- reactiveVal(FALSE)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -9045,10 +9055,7 @@ server <- function(input, output, session) {
     list(notice = notice, sent = isTRUE(sent))
   }
 
-  complete_sign_in <- function(user, issue_session = TRUE) {
-    current_user(user)
-    auth_state(list(view = "login"))
-    data <- ensure_app_data()
+  finish_sign_in <- function(user, data, issue_session) {
     email <- tolower(trimws(user$email[[1]] %||% ""))
     user_rows <- data$access_user[tolower(data$access_user$email) == email, , drop = FALSE]
     if (!nrow(user_rows)) {
@@ -9110,6 +9117,41 @@ server <- function(input, output, session) {
     session$sendCustomMessage("set-auth-state", list(signedIn = TRUE, email = user$email[[1]]))
     session$sendCustomMessage("set-page", next_page)
     TRUE
+  }
+
+  # Entry point for both a fresh login (handle_login_attempt()) and an
+  # auto-restored session on page load (input$auth_restore_session below).
+  # app_data() is per-session and starts NULL every time, so this always
+  # needs a load on first sign-in in a given browser session -- doing that
+  # in the background (same future_promise() pattern refresh_app_data()
+  # already uses for saves) keeps one person's login from blocking every
+  # other connected session while it runs. finish_sign_in() -- the actual
+  # sign-in completion logic -- only needs `data` once it's actually
+  # available, whether that's immediately (a second sign-in in the same
+  # tab, data already cached) or once the background load resolves.
+  complete_sign_in <- function(user, issue_session = TRUE) {
+    current_user(user)
+    auth_state(list(view = "login"))
+    existing <- app_data()
+    if (!is.null(existing)) {
+      finish_sign_in(user, existing, issue_session)
+      return(invisible(TRUE))
+    }
+    if (isTRUE(sign_in_in_progress())) return(invisible(FALSE))
+    sign_in_in_progress(TRUE)
+    auth_state(list(view = "login", notice = "Signing in…"))
+    refresh_app_data(
+      after = function() {
+        sign_in_in_progress(FALSE)
+        finish_sign_in(user, app_data(), issue_session)
+      },
+      on_error = function(error) {
+        sign_in_in_progress(FALSE)
+        current_user(NULL)
+        auth_state(list(view = "login", notice = "Something went wrong loading your account. Try signing in again."))
+      }
+    )
+    invisible(TRUE)
   }
 
   handle_login_attempt <- function(email, password) {
