@@ -1,0 +1,41 @@
+# Temporary override for testing horizontal scaling locally (2026-08-07) --
+# NOT part of normal local dev. Runs 3 independent app processes (no shared
+# in-memory state between them, matching production's per-process model)
+# behind an nginx proxy with default round-robin, no sticky sessions, since
+# that's Fly.io's documented default for a new connection. Run alongside
+# the base compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.scale-test.yml up -d
+# Tear down when done:
+#   docker compose -f docker-compose.yml -f docker-compose.scale-test.yml down
+services:
+  app:
+    ports: !reset []
+
+  app2:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/cob_performance
+      AUTH_DEV_LINKS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app3:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/cob_performance
+      AUTH_DEV_LINKS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  scale-test-proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./docker/scale-test-nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - app
+      - app2
+      - app3
