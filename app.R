@@ -8,10 +8,21 @@ library(promises)
 # worker so one user's save/submit/approve doesn't block every other
 # connected session -- Shiny normally runs as a single process/thread, so a
 # synchronous reload here would freeze the whole app for its duration.
-# shared-cpu-4x machine (see fly.toml, resized 2026-08-05 for capacity) ->
-# 3 workers, leaving 1 core free for the main Shiny process itself so it
-# stays responsive (health checks included) even while every worker is busy.
-future::plan(future::multisession, workers = 3)
+#
+# Dropped from 3 workers to 2 on 2026-08-07: the new MEMLOG diagnostic
+# traces (see refresh_app_data()) showed a single full reload settles at
+# ~2.6GB resident on real production data (vs. ~150MB against the local
+# dev seed DB, which is why earlier local stress testing never reproduced
+# this). Long-lived multisession workers never release that once touched,
+# so 3 workers each eventually holding a full reload sums to ~8GB+ on
+# their own, at or over the 8GB machine ceiling with zero margin left for
+# the main process or a concurrent second reload -- exactly what produced
+# the OOM/health-check-flap pattern during a concurrent-heavy day. 2
+# workers keeps worst case near ~5.7GB, leaving real headroom. This is a
+# stopgap trading some concurrency for safety; the actual fix is reducing
+# how often a *full* reload happens at all (extend the CLS-style
+# domain-scoped refresh in refresh_domain_loaders below to more domains).
+future::plan(future::multisession, workers = 2)
 
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
