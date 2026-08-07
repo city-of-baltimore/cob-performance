@@ -1,9 +1,22 @@
 # Fly.io configuration for the Beacon performance planning app.
 # See DEPLOY.md for the full setup walkthrough.
 #
-# Shiny is a stateful single-process runtime: keep exactly one machine
-# (fly scale count 1) so page loads and websocket sessions hit the same
-# R process.
+# Scaled to 3 machines 2026-08-07 to fix the concurrent-login freeze
+# (single process blocking every other session's requests during a
+# login's full data load, measured 8-12s at 50 concurrent users).
+# Confirmed via a local 3-instance load test behind a no-sticky-session
+# proxy (matching fly-proxy's real default routing) that this cuts
+# worst-case latency from ~12.4s to ~5.1s and typical latency to under
+# 2s, with memory spread across machines instead of concentrated on one.
+# This relies on Beacon's per-session state already being per-connection
+# (nothing shared in-process across sessions) and its login/session
+# tokens already being Postgres-backed, not in-memory -- see
+# auth_throttle's move to access.login_throttle (PR #119), which was the
+# one piece of state that wasn't safe across multiple processes before
+# this. A session landing on a different machine after a dropped
+# WebSocket just pays a normal fresh-login cost via auth_restore_session,
+# not a lost session -- there is no fly-replay instance-pinning here, by
+# design, since the load test confirmed it isn't needed for correctness.
 
 app = "baltimore-city-beacon"
 primary_region = "iad"
@@ -18,7 +31,7 @@ primary_region = "iad"
   force_https = true
   auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 3
 
 [[vm]]
   size = "shared-cpu-4x"
