@@ -9175,13 +9175,13 @@ server <- function(input, output, session) {
       auth_state(list(view = "login", notice = "Enter a valid email address to continue."))
       return(invisible(FALSE))
     }
-    if (auth_attempt_blocked(email)) {
+    if (auth_attempt_blocked(database, email)) {
       auth_state(list(view = "login", notice = paste("Too many failed attempts. Try again in", AUTH_LOCKOUT_MINUTES, "minutes.")))
       return(invisible(FALSE))
     }
     user <- auth_find_user(database, email)
     if (is.null(user)) {
-      auth_note_failure(email)
+      auth_note_failure(database, email)
       auth_state(list(
         view = "access_request",
         email = email,
@@ -9192,11 +9192,11 @@ server <- function(input, output, session) {
     }
     verified <- auth_verify_login(database, email, password)
     if (is.null(verified)) {
-      auth_note_failure(email)
+      auth_note_failure(database, email)
       auth_state(list(view = "login", notice = "Sign-in failed. Check your email and password, or use “First time here” if you have not set a password yet."))
       return(invisible(FALSE))
     }
-    auth_clear_failures(email)
+    auth_clear_failures(database, email)
     complete_sign_in(verified, issue_session = TRUE)
     invisible(TRUE)
   }
