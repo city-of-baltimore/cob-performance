@@ -9021,23 +9021,24 @@ server <- function(input, output, session) {
       # call shape (full reload vs. a specific domain) the growth tracks
       # with instead of only the after-the-fact OOM kill message.
       #
-      # rss_before/rss_after_gc test a specific hypothesis for WHY a full
-      # reload settles at ~2.6GB on a worker despite production's actual
-      # data being tiny on disk (a few MB total, confirmed 2026-08-07):
-      # R's own large-vector heap frequently munmaps pages back to the OS
-      # on gc() for exactly the kind of big data.frame columns
-      # load_app_data() returns, unlike glibc's small-object allocator,
-      # which mostly doesn't. If rss_after_gc comes back meaningfully
-      # lower in production, that's the fix; if not, this rules retention
-      # out and points back to periodic worker recycling instead.
-      rss_before_gc <- process_rss_kb()
-      gc(full = TRUE)
-      rss_after_gc <- process_rss_kb()
-      if (!is.na(rss_before_gc)) {
+      # Tried gc(full = TRUE) here to test whether R's large-vector heap
+      # was retaining memory it could otherwise munmap back to the OS.
+      # Production data (2026-08-07 19:48-19:50 UTC): rss_before/after_gc
+      # came back identical or within noise every time, including at
+      # ~1.5GB, well past where retention should show up if that were the
+      # mechanism -- a clean negative result, not a maybe. Pulled back
+      # out same-day: it added a full mark-and-sweep GC cycle to every
+      # worker job for zero memory benefit, and coincided with a real
+      # capacity incident (2/7 concurrent sessions stuck, others not
+      # loading) most likely explained by that added CPU cost competing
+      # with the main process on this box's shared vCPUs. Root cause
+      # remains open -- next lead is periodic worker recycling, not gc().
+      rss_kb <- process_rss_kb()
+      if (!is.na(rss_kb)) {
         cat(sprintf(
-          "MEMLOG scope=worker pid=%s domains=%s rss_before_gc_kb=%s rss_after_gc_kb=%s at=%s\n",
+          "MEMLOG scope=worker pid=%s domains=%s rss_kb=%s at=%s\n",
           Sys.getpid(), if (is.null(domains)) "full" else paste(domains, collapse = ","),
-          rss_before_gc, rss_after_gc, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+          rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
         ))
       }
       loaded
