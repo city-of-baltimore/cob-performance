@@ -8904,11 +8904,6 @@ server <- function(input, output, session) {
   # deliberately NEVER scoped by this -- every signed-in user sees the
   # same citywide Action Plan dashboard regardless of role.
   measures_scope_agency_ids <- reactiveVal(NULL)
-  # Which user_id the CURRENT app_data()/measures_scope_agency_ids() was
-  # loaded for -- complete_sign_in() checks this before reusing cached
-  # data on a same-tab re-sign-in, since a different user must always get
-  # their own fresh, correctly-scoped load.
-  app_data_loaded_for_user_id <- reactiveVal(NULL)
   current_risk_id <- reactiveVal(NULL)
   current_history_plan_id <- reactiveVal(NULL)
   current_history_include_review <- reactiveVal(TRUE)
@@ -9200,32 +9195,26 @@ server <- function(input, output, session) {
   # needs a load on first sign-in in a given browser session -- doing that
   # in the background (same future_promise() pattern refresh_app_data()
   # already uses for saves) keeps one person's login from blocking every
-  # other connected session while it runs. finish_sign_in() -- the actual
-  # sign-in completion logic -- only needs `data` once it's actually
-  # available, whether that's immediately (a second sign-in in the same
-  # tab, data already cached) or once the background load resolves.
+  # other connected session while it runs.
+  #
+  # 2026-08-07: used to reuse cached app_data() for a same-tab, same-user
+  # re-sign-in instead of reloading. Removed after confirming live (sign
+  # out, change that user's own agency grant by hand, sign back in on the
+  # same tab with no page reload) that it can show a real, legitimate
+  # access change as if it never happened -- the user still saw their OLD
+  # agency's plan. Every sign-in now always gets a fresh, correctly-scoped
+  # load; the cost is an extra async round-trip for a same-user quick
+  # re-sign-in, which is a non-blocking background load (see above), not
+  # a repeat of the freeze this session already fixed elsewhere.
   complete_sign_in <- function(user, issue_session = TRUE) {
     current_user(user)
     auth_state(list(view = "login"))
-    existing <- app_data()
-    # Only reuse cached app_data() for the SAME user re-signing-in on this
-    # tab (nothing about their scope changed) -- a DIFFERENT user signing
-    # in after a sign-out must always get a fresh, correctly-scoped load.
-    # Before agency-scoped loading, reusing another user's stale app_data()
-    # here was harmless (same citywide data for anyone); now it would
-    # silently show one user's agency-scoped slice to a different user,
-    # or hide data an admin should see.
-    if (!is.null(existing) && identical(app_data_loaded_for_user_id(), user$user_id[[1]])) {
-      finish_sign_in(user, existing, issue_session)
-      return(invisible(TRUE))
-    }
     if (isTRUE(sign_in_in_progress())) return(invisible(FALSE))
     sign_in_in_progress(TRUE)
     auth_state(list(view = "login", notice = "Signing in…"))
     refresh_app_data(
       after = function() {
         sign_in_in_progress(FALSE)
-        app_data_loaded_for_user_id(user$user_id[[1]])
         finish_sign_in(user, app_data(), issue_session)
       },
       on_error = function(error) {
