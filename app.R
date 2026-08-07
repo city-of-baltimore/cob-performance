@@ -9085,14 +9085,34 @@ server <- function(input, output, session) {
       # worker job for zero memory benefit, and coincided with a real
       # capacity incident (2/7 concurrent sessions stuck, others not
       # loading) most likely explained by that added CPU cost competing
-      # with the main process on this box's shared vCPUs. Root cause
-      # remains open -- next lead is periodic worker recycling, not gc().
+      # with the main process on this box's shared vCPUs.
+      #
+      # loaded_size_mb (2026-08-07, next step in the same investigation):
+      # object.size() of the R object THIS call just built and is about
+      # to return, measured before it's handed back to the main process --
+      # answers a question gc() couldn't: is the ~2.6GB RSS actually
+      # reflecting a ~2.6GB R object, or is the object itself much
+      # smaller while something else (fragmentation across this worker's
+      # lifetime, retained-but-dead allocations) inflates the process's
+      # RSS well past what any single call's live data would need? If
+      # loaded_size_mb tracks rss_kb closely, break down top_keys (only
+      # computed for a full reload over 50MB, to keep this cheap for the
+      # frequent small domain-scoped calls) to find which table actually
+      # drives it. If loaded_size_mb stays small while rss_kb keeps
+      # climbing, that's the case for periodic worker recycling instead.
       rss_kb <- process_rss_kb()
+      loaded_size_mb <- round(as.numeric(object.size(loaded)) / 1024^2, 1)
+      top_keys <- ""
+      if (is.null(domains) && loaded_size_mb > 50 && is.list(loaded)) {
+        key_sizes <- vapply(loaded, function(x) as.numeric(object.size(x)) / 1024^2, numeric(1))
+        top3 <- head(sort(key_sizes, decreasing = TRUE), 3)
+        top_keys <- paste0(" top_keys=", paste(sprintf("%s:%.1fMB", names(top3), top3), collapse = ","))
+      }
       if (!is.na(rss_kb)) {
         cat(sprintf(
-          "MEMLOG scope=worker pid=%s domains=%s agency_scoped=%s rss_kb=%s at=%s\n",
+          "MEMLOG scope=worker pid=%s domains=%s agency_scoped=%s rss_kb=%s loaded_size_mb=%s at=%s%s\n",
           Sys.getpid(), if (is.null(domains)) "full" else paste(domains, collapse = ","),
-          !is.null(measures_scope), rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+          !is.null(measures_scope), rss_kb, loaded_size_mb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"), top_keys
         ))
       }
       list(loaded = loaded, measures_scope = measures_scope, scope_was_resolved = !is.null(resolve_scope_for_user_id))
