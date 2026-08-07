@@ -8999,7 +8999,8 @@ server <- function(input, output, session) {
   # too much is merely wasteful, reloading too little means some OTHER
   # page silently shows stale data, which is the worse failure mode.
   refresh_domain_loaders <- list(
-    cls = load_cls_domain_data
+    cls = load_cls_domain_data,
+    measures = load_measures_domain_data
   )
 
   refresh_app_data <- function(after = NULL, on_error = NULL, domains = NULL) {
@@ -9678,7 +9679,7 @@ server <- function(input, output, session) {
     ensure_measure_current_entity_link(database, measure_id, data, current_plan(data, submitter_value))
     refresh_app_data(after = function() {
       showNotification("Measure owner updated.", type = "message")
-    })
+    }, domains = "measures")
     invisible(TRUE)
   }
   collect_measure_form <- function() {
@@ -9961,7 +9962,8 @@ server <- function(input, output, session) {
       on_error = function(error) {
         measure_save_in_progress(FALSE)
         session$sendCustomMessage("measure-save-result", list(ok = FALSE))
-      }
+      },
+      domains = "measures"
     )
   }
 
@@ -9994,7 +9996,7 @@ server <- function(input, output, session) {
     refresh_app_data(after = function() {
       current_measure_id(NULL)
       showNotification("Measure deleted.", type = "message", duration = 6)
-    })
+    }, domains = "measures")
   }, ignoreInit = TRUE)
   observeEvent(input$action_plan_measure_owner_request, {
     if (!current_user_can_manage_measure_admin_fields()) {
@@ -10743,7 +10745,7 @@ server <- function(input, output, session) {
     }
     refresh_app_data(after = function() {
       showNotification(if (identical(action, "approve")) "Measure approved." else "Measure returned to agency with feedback.", type = "message")
-    })
+    }, domains = "measures")
   }, ignoreInit = TRUE)
   observeEvent(input$measure_cap_error, {
     message <- input$measure_cap_error$message %||% "No more than 5 measures are allowed."
@@ -10759,13 +10761,13 @@ server <- function(input, output, session) {
     }
     refresh_app_data(after = function() {
       showNotification("Measure made inactive.", type = "message")
-    })
+    }, domains = "measures")
   }, ignoreInit = TRUE)
   observeEvent(input$reactivate_measure, {
     set_measure_active(database, current_measure_id(), current_agency_id(), TRUE)
     refresh_app_data(after = function() {
       showNotification("Measure reactivated.", type = "message")
-    })
+    }, domains = "measures")
   }, ignoreInit = TRUE)
   observeEvent(input$confirm_measure_revert_to_draft, {
     if (!current_user_can_edit_locked_measure_data()) {
@@ -10781,7 +10783,7 @@ server <- function(input, output, session) {
     }
     refresh_app_data(after = function() {
       showNotification("Measure reverted to Draft.", type = "message")
-    })
+    }, domains = "measures")
   }, ignoreInit = TRUE)
 
   observeEvent(input$open_risk_id, {

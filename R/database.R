@@ -1208,6 +1208,177 @@ load_cls_domain_data <- function(connection) {
   )
 }
 
+# Measures domain: performance.performance_measure/measure_actuals and
+# everything keyed off a measure_id (pm_goal_link, pm_service_link,
+# measure_entity_link, review.measure_review), plus city_measures/
+# strategic_plan, both derived from performance_measure -- an Action Plan
+# measure's actual/target changing needs those recomputed too, or the
+# Action Plan page and pillar modals would show stale numbers after a
+# measure save. Deliberately does NOT export reference.pillar/pillar_goal
+# themselves even though city_measures/strategic_plan are computed from
+# them here -- those tables don't change from a measure save and
+# app_data() already has current copies from the last full/reference
+# load, so re-querying them fresh (cheap, small tables) without also
+# overwriting app_data()'s existing keys keeps this domain's exported
+# surface to measures-only, matching load_cls_domain_data() above.
+load_measures_domain_data <- function(connection) {
+  query <- function(sql) DBI::dbGetQuery(connection, sql)
+  data <- list(
+    performance_pm_goal_link = query(
+      paste(
+        "SELECT l.agency_goal_id, l.measure_id",
+        "FROM performance.pm_goal_link l",
+        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
+        "WHERE pc.fiscal_year = 2027",
+        "AND m.active",
+        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
+        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')"
+      )
+    ),
+    performance_pm_service_link = query(
+      paste(
+        "SELECT l.service_id, l.measure_id",
+        "FROM performance.pm_service_link l",
+        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
+        "WHERE pc.fiscal_year = 2027",
+        "AND m.active",
+        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
+        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')",
+        "ORDER BY l.service_id, l.measure_id"
+      )
+    ),
+    performance_pm_service_link_all = query(
+      "SELECT service_id, measure_id FROM performance.pm_service_link ORDER BY service_id, measure_id"
+    ),
+    performance_measure_entity_link = query(
+      paste(
+        "SELECT link_id, measure_id, agency_id, service_id, entity_type, entity_id, public_name, source_old_measure_id",
+        "FROM performance.measure_entity_link ORDER BY agency_id, service_id, entity_type, public_name, measure_id"
+      )
+    ),
+    performance_performance_measure = query(
+      paste(
+        "SELECT measure_id, agency_id, initial_cycle, title, measure_type, description, data_source, data_owner, data_owner_role,",
+        "update_frequency, formula, desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required,",
+        "replicability, disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
+        "change_mapping, pillar_id, pillar_goal_id, is_city, is_agency, is_service, active, validated, approval_status, submitted_for_approval_at,",
+        "ever_validated_at, created_date, last_updated, pc.fiscal_year",
+        "FROM performance.performance_measure",
+        "JOIN planning.plan_cycle pc ON pc.cycle_id = performance_measure.initial_cycle",
+        "ORDER BY agency_id, title"
+      )
+    ),
+    performance_measure_actuals = query(
+      "SELECT measure_id, fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals ORDER BY measure_id, fiscal_year"
+    ),
+    review_measure_review = query(
+      paste(
+        "SELECT mr.measure_review_id, mr.measure_id, mr.reviewer_id, u.full_name AS reviewer_name,",
+        "mr.decision, mr.feedback, mr.reviewed_at, mr.created_at",
+        "FROM review.measure_review mr",
+        "LEFT JOIN access.\"user\" u ON u.user_id = mr.reviewer_id",
+        "ORDER BY mr.reviewed_at DESC, mr.measure_review_id DESC"
+      )
+    )
+  )
+
+  pillar <- query(
+    "SELECT pillar_id, pillar_name, pillar_lead, pillar_lead_name, summary, overview, sort_order FROM reference.pillar ORDER BY sort_order"
+  )
+  pillar_goal <- query(
+    paste(
+      "SELECT pg.pillar_goal_id, pg.pillar_id, pg.goal_code, pg.goal_title, pg.goal_lead, pg.sort_order",
+      "FROM reference.pillar_goal pg JOIN reference.pillar p ON p.pillar_id = pg.pillar_id",
+      "ORDER BY p.sort_order, pg.sort_order"
+    )
+  )
+  action_plan_initiatives <- query(
+    "SELECT pillar_goal_id, initiative_title, sort_order FROM reference.action_plan_initiative ORDER BY pillar_goal_id, sort_order"
+  )
+  # Real Action Plan measures: any performance_measure marked Citywide
+  # (is_city = TRUE), via the measure editor's admin-only "Citywide
+  # measure"/"Action Plan pillar" fields (see measure_review_app_roles in
+  # app.R). Replaces the old reference.action_plan_measure table, which
+  # held dummy data generated by another bot, not real measures (found
+  # 2026-07-27; the table itself is dropped, see
+  # database/schema/target_schema.sql). Latest actual/target uses the
+  # same "last complete year / this year's target" snapshot shown on the
+  # Measures page's summary column, for consistency. Exposed as its own
+  # top-level data$city_measures (not scoped to a pillar -- a measure can
+  # be marked Citywide before a pillar is assigned, and the Action Plan
+  # Measures admin page needs to surface those too) and also used below,
+  # filtered per pillar, for each pillar's modal.
+  city_measure_target_fy <- current_fiscal_year()
+  city_measure_actual_fy <- city_measure_target_fy - 1L
+  data$city_measures <- query(
+    sprintf(
+      paste(
+        "SELECT pm.measure_id, pm.pillar_id, pm.pillar_goal_id, pm.title, pm.desired_direction,",
+        "pm.display_unit, pm.format_type, pm.approval_status, pm.agency_id,",
+        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name, mel.entity_id AS owning_entity_id,",
+        "p.pillar_name, pg.goal_code AS pillar_goal_code, pg.goal_title AS pillar_goal_title,",
+        "actual_row.annual_actual AS current_value, target_row.target_value AS target_value",
+        "FROM performance.performance_measure pm",
+        "JOIN reference.agency a ON a.agency_id = pm.agency_id",
+        "LEFT JOIN reference.pillar p ON p.pillar_id = pm.pillar_id",
+        "LEFT JOIN reference.pillar_goal pg ON pg.pillar_goal_id = pm.pillar_goal_id",
+        "LEFT JOIN performance.measure_actuals actual_row ON actual_row.measure_id = pm.measure_id AND actual_row.fiscal_year = %d",
+        "LEFT JOIN performance.measure_actuals target_row ON target_row.measure_id = pm.measure_id AND target_row.fiscal_year = %d",
+        # A Citywide measure's entity_link (if any) names the specific
+        # mayoral service/quasi-agency that actually owns it -- e.g. OPI,
+        # not just the shared parent agency (Mayor's Office) every mayoral
+        # suboffice measure is otherwise indistinguishable under. Pick one
+        # deterministically since a measure could in principle have more
+        # than one link row. owning_entity_id feeds the owning-entity
+        # selector on the Action Plan Measures page so it can pre-select
+        # the measure's current owner.
+        "LEFT JOIN LATERAL (",
+        "  SELECT mel.public_name, mel.entity_id FROM performance.measure_entity_link mel",
+        "  WHERE mel.measure_id = pm.measure_id ORDER BY mel.updated_at DESC LIMIT 1",
+        ") mel ON TRUE",
+        "WHERE pm.is_city AND pm.active",
+        "ORDER BY p.pillar_name NULLS FIRST, pm.title"
+      ),
+      city_measure_actual_fy, city_measure_target_fy
+    )
+  )
+  data$strategic_plan <- lapply(seq_len(nrow(pillar)), function(index) {
+    this_pillar <- pillar[index, , drop = FALSE]
+    pillar_goals <- pillar_goal[pillar_goal$pillar_id == this_pillar$pillar_id, , drop = FALSE]
+    goals <- lapply(seq_len(nrow(pillar_goals)), function(goal_index) {
+      goal <- pillar_goals[goal_index, , drop = FALSE]
+      initiatives <- action_plan_initiatives$initiative_title[action_plan_initiatives$pillar_goal_id == goal$pillar_goal_id]
+      list(code = goal$goal_code[[1]], title = goal$goal_title[[1]], lead = goal$goal_lead[[1]], initiatives = initiatives)
+    })
+    pillar_measures <- data$city_measures[!is.na(data$city_measures$pillar_id) & data$city_measures$pillar_id == this_pillar$pillar_id, , drop = FALSE]
+    metrics <- lapply(seq_len(nrow(pillar_measures)), function(measure_index) {
+      measure <- pillar_measures[measure_index, , drop = FALSE]
+      list(
+        measure_id = measure$measure_id[[1]],
+        name = measure$title[[1]],
+        current = as.numeric(measure$current_value[[1]]),
+        target = as.numeric(measure$target_value[[1]]),
+        direction = measure$desired_direction[[1]],
+        unit = if (is.na(measure$display_unit[[1]])) NULL else measure$display_unit[[1]],
+        format_type = measure$format_type[[1]]
+      )
+    })
+    list(
+      id = this_pillar$pillar_id[[1]],
+      title = this_pillar$pillar_name[[1]],
+      lead = this_pillar$pillar_lead[[1]],
+      lead_name = this_pillar$pillar_lead_name[[1]],
+      summary = this_pillar$summary[[1]],
+      overview = this_pillar$overview[[1]],
+      goals = goals,
+      metrics = metrics
+    )
+  })
+  data
+}
+
 load_app_data <- function(connection) {
   query <- function(sql) DBI::dbGetQuery(connection, sql)
   data <- list(
@@ -1282,55 +1453,6 @@ load_app_data <- function(connection) {
     performance_agency_goal_initiative_link = query(
       "SELECT agency_goal_id, initiative_id FROM performance.agency_goal_initiative_link"
     ),
-    performance_pm_goal_link = query(
-      paste(
-        "SELECT l.agency_goal_id, l.measure_id",
-        "FROM performance.pm_goal_link l",
-        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
-        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
-        "WHERE pc.fiscal_year = 2027",
-        "AND m.active",
-        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
-        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')"
-      )
-    ),
-    performance_pm_service_link = query(
-      paste(
-        "SELECT l.service_id, l.measure_id",
-        "FROM performance.pm_service_link l",
-        "JOIN performance.performance_measure m ON m.measure_id = l.measure_id",
-        "JOIN planning.plan_cycle pc ON pc.cycle_id = m.initial_cycle",
-        "WHERE pc.fiscal_year = 2027",
-        "AND m.active",
-        "AND COALESCE(m.approval_status, '') <> 'Deprecated'",
-        "AND COALESCE(m.change_mapping, '') NOT IN ('Removed', 'Replaced')",
-        "ORDER BY l.service_id, l.measure_id"
-      )
-    ),
-    performance_pm_service_link_all = query(
-      "SELECT service_id, measure_id FROM performance.pm_service_link ORDER BY service_id, measure_id"
-    ),
-    performance_measure_entity_link = query(
-      paste(
-        "SELECT link_id, measure_id, agency_id, service_id, entity_type, entity_id, public_name, source_old_measure_id",
-        "FROM performance.measure_entity_link ORDER BY agency_id, service_id, entity_type, public_name, measure_id"
-      )
-    ),
-    performance_performance_measure = query(
-      paste(
-        "SELECT measure_id, agency_id, initial_cycle, title, measure_type, description, data_source, data_owner, data_owner_role,",
-        "update_frequency, formula, desired_direction, baseline_value, baseline_fy, format_type, display_unit, context_required,",
-        "replicability, disaggregation, data_location, collection_method, how_data_used, why_meaningful, proxy_measure, improvement_notes,",
-        "change_mapping, pillar_id, pillar_goal_id, is_city, is_agency, is_service, active, validated, approval_status, submitted_for_approval_at,",
-        "ever_validated_at, created_date, last_updated, pc.fiscal_year",
-        "FROM performance.performance_measure",
-        "JOIN planning.plan_cycle pc ON pc.cycle_id = performance_measure.initial_cycle",
-        "ORDER BY agency_id, title"
-      )
-    ),
-    performance_measure_actuals = query(
-      "SELECT measure_id, fiscal_year, annual_actual, annual_actual_notes, target_value, target_value_notes FROM performance.measure_actuals ORDER BY measure_id, fiscal_year"
-    ),
     performance_service_risk = query(
       "SELECT risk_id, plan_id, risk_type, description FROM performance.service_risk ORDER BY plan_id, risk_id"
     ),
@@ -1347,15 +1469,6 @@ load_app_data <- function(connection) {
     ),
     review_section_feedback = query(
       "SELECT feedback_id, review_id, section_code, feedback_text, return_required, resolved_at FROM review.section_feedback ORDER BY review_id, section_code, feedback_id"
-    ),
-    review_measure_review = query(
-      paste(
-        "SELECT mr.measure_review_id, mr.measure_id, mr.reviewer_id, u.full_name AS reviewer_name,",
-        "mr.decision, mr.feedback, mr.reviewed_at, mr.created_at",
-        "FROM review.measure_review mr",
-        "LEFT JOIN access.\"user\" u ON u.user_id = mr.reviewer_id",
-        "ORDER BY mr.reviewed_at DESC, mr.measure_review_id DESC"
-      )
     ),
     workflow_plan_status_history = query(
       paste(
@@ -1435,89 +1548,7 @@ load_app_data <- function(connection) {
     )
   )
   data <- c(data, load_cls_domain_data(connection))
-
-  action_plan_initiatives <- query(
-    "SELECT pillar_goal_id, initiative_title, sort_order FROM reference.action_plan_initiative ORDER BY pillar_goal_id, sort_order"
-  )
-  # Real Action Plan measures: any performance_measure marked Citywide
-  # (is_city = TRUE), via the measure editor's admin-only "Citywide
-  # measure"/"Action Plan pillar" fields (see measure_review_app_roles in
-  # app.R). Replaces the old reference.action_plan_measure table, which
-  # held dummy data generated by another bot, not real measures (found
-  # 2026-07-27; the table itself is dropped, see
-  # database/schema/target_schema.sql). Latest actual/target uses the
-  # same "last complete year / this year's target" snapshot shown on the
-  # Measures page's summary column, for consistency. Exposed as its own
-  # top-level data$city_measures (not scoped to a pillar -- a measure can
-  # be marked Citywide before a pillar is assigned, and the Action Plan
-  # Measures admin page needs to surface those too) and also used below,
-  # filtered per pillar, for each pillar's modal.
-  city_measure_target_fy <- current_fiscal_year()
-  city_measure_actual_fy <- city_measure_target_fy - 1L
-  data$city_measures <- query(
-    sprintf(
-      paste(
-        "SELECT pm.measure_id, pm.pillar_id, pm.pillar_goal_id, pm.title, pm.desired_direction,",
-        "pm.display_unit, pm.format_type, pm.approval_status, pm.agency_id,",
-        "a.agency_name, COALESCE(mel.public_name, a.public_name) AS agency_public_name, mel.entity_id AS owning_entity_id,",
-        "p.pillar_name, pg.goal_code AS pillar_goal_code, pg.goal_title AS pillar_goal_title,",
-        "actual_row.annual_actual AS current_value, target_row.target_value AS target_value",
-        "FROM performance.performance_measure pm",
-        "JOIN reference.agency a ON a.agency_id = pm.agency_id",
-        "LEFT JOIN reference.pillar p ON p.pillar_id = pm.pillar_id",
-        "LEFT JOIN reference.pillar_goal pg ON pg.pillar_goal_id = pm.pillar_goal_id",
-        "LEFT JOIN performance.measure_actuals actual_row ON actual_row.measure_id = pm.measure_id AND actual_row.fiscal_year = %d",
-        "LEFT JOIN performance.measure_actuals target_row ON target_row.measure_id = pm.measure_id AND target_row.fiscal_year = %d",
-        # A Citywide measure's entity_link (if any) names the specific
-        # mayoral service/quasi-agency that actually owns it -- e.g. OPI,
-        # not just the shared parent agency (Mayor's Office) every mayoral
-        # suboffice measure is otherwise indistinguishable under. Pick one
-        # deterministically since a measure could in principle have more
-        # than one link row. owning_entity_id feeds the owning-entity
-        # selector on the Action Plan Measures page so it can pre-select
-        # the measure's current owner.
-        "LEFT JOIN LATERAL (",
-        "  SELECT mel.public_name, mel.entity_id FROM performance.measure_entity_link mel",
-        "  WHERE mel.measure_id = pm.measure_id ORDER BY mel.updated_at DESC LIMIT 1",
-        ") mel ON TRUE",
-        "WHERE pm.is_city AND pm.active",
-        "ORDER BY p.pillar_name NULLS FIRST, pm.title"
-      ),
-      city_measure_actual_fy, city_measure_target_fy
-    )
-  )
-  data$strategic_plan <- lapply(seq_len(nrow(data$reference_pillar)), function(index) {
-    pillar <- data$reference_pillar[index, , drop = FALSE]
-    pillar_goals <- data$reference_pillar_goal[data$reference_pillar_goal$pillar_id == pillar$pillar_id, , drop = FALSE]
-    goals <- lapply(seq_len(nrow(pillar_goals)), function(goal_index) {
-      goal <- pillar_goals[goal_index, , drop = FALSE]
-      initiatives <- action_plan_initiatives$initiative_title[action_plan_initiatives$pillar_goal_id == goal$pillar_goal_id]
-      list(code = goal$goal_code[[1]], title = goal$goal_title[[1]], lead = goal$goal_lead[[1]], initiatives = initiatives)
-    })
-    pillar_measures <- data$city_measures[!is.na(data$city_measures$pillar_id) & data$city_measures$pillar_id == pillar$pillar_id, , drop = FALSE]
-    metrics <- lapply(seq_len(nrow(pillar_measures)), function(measure_index) {
-      measure <- pillar_measures[measure_index, , drop = FALSE]
-      list(
-        measure_id = measure$measure_id[[1]],
-        name = measure$title[[1]],
-        current = as.numeric(measure$current_value[[1]]),
-        target = as.numeric(measure$target_value[[1]]),
-        direction = measure$desired_direction[[1]],
-        unit = if (is.na(measure$display_unit[[1]])) NULL else measure$display_unit[[1]],
-        format_type = measure$format_type[[1]]
-      )
-    })
-    list(
-      id = pillar$pillar_id[[1]],
-      title = pillar$pillar_name[[1]],
-      lead = pillar$pillar_lead[[1]],
-      lead_name = pillar$pillar_lead_name[[1]],
-      summary = pillar$summary[[1]],
-      overview = pillar$overview[[1]],
-      goals = goals,
-      metrics = metrics
-    )
-  })
+  data <- c(data, load_measures_domain_data(connection))
   data
 }
 
