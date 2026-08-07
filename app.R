@@ -16,6 +16,24 @@ future::plan(future::multisession, workers = 3)
 source(file.path("R", "database.R"), local = TRUE)
 source(file.path("R", "auth.R"), local = TRUE)
 
+# Diagnostic trace for the 2026-08-07 OOM crash loop -- logs the MAIN
+# Shiny process's own RSS on a timer, independent of any session or save
+# action, so it's possible to tell "main process slowly bloating from
+# concurrent sessions" apart from "a worker process spiking on one call"
+# (see the per-load MEMLOG in refresh_app_data() below). Self-reschedules
+# on the process's own event loop; runs once per process, not per session.
+log_main_process_memory <- function() {
+  rss_kb <- process_rss_kb()
+  if (!is.na(rss_kb)) {
+    cat(sprintf(
+      "MEMLOG scope=main pid=%s rss_kb=%s at=%s\n",
+      Sys.getpid(), rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+    ))
+  }
+  later::later(log_main_process_memory, delay = 300)
+}
+log_main_process_memory()
+
 `%||%` <- function(x, y) {
   if (is.null(x) || length(x) == 0) return(y)
   missing <- tryCatch(all(is.na(x)), error = function(error) FALSE)
@@ -8967,7 +8985,7 @@ server <- function(input, output, session) {
     promises::future_promise({
       connection <- connect_app_database()
       on.exit(DBI::dbDisconnect(connection), add = TRUE)
-      if (is.null(domains)) {
+      loaded <- if (is.null(domains)) {
         load_app_data(connection)
       } else {
         loaders <- refresh_domain_loaders[domains]
@@ -8975,6 +8993,20 @@ server <- function(input, output, session) {
         if (length(unknown)) stop(paste("Unknown refresh domain(s):", paste(unknown, collapse = ", ")))
         do.call(c, unname(lapply(loaders, function(loader) loader(connection))))
       }
+      # Diagnostic trace for the 2026-08-07 OOM crash loop -- logs this
+      # worker's own RSS right after the load it just did, tagged with
+      # which domain(s) triggered it, so a recurrence shows exactly which
+      # call shape (full reload vs. a specific domain) the growth tracks
+      # with instead of only the after-the-fact OOM kill message.
+      rss_kb <- process_rss_kb()
+      if (!is.na(rss_kb)) {
+        cat(sprintf(
+          "MEMLOG scope=worker pid=%s domains=%s rss_kb=%s at=%s\n",
+          Sys.getpid(), if (is.null(domains)) "full" else paste(domains, collapse = ","),
+          rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+        ))
+      }
+      loaded
     }, seed = TRUE) %...>% (function(loaded) {
       if (is.null(domains)) {
         app_data(loaded)

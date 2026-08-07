@@ -41,6 +41,20 @@ connect_app_database <- function() {
   )
 }
 
+# Diagnostic aid for the 2026-08-07 OOM crash loop (root cause still
+# unidentified after ruling out load_app_data() via stress testing) --
+# reads this process's own resident memory so callers can log it alongside
+# what the process just did. /proc/self/status is Linux-only (production
+# and Docker dev); returns NA_real_ anywhere else instead of erroring.
+process_rss_kb <- function() {
+  status_path <- "/proc/self/status"
+  if (!file.exists(status_path)) return(NA_real_)
+  lines <- tryCatch(readLines(status_path, warn = FALSE), error = function(e) character(0))
+  line <- grep("^VmRSS:", lines, value = TRUE)
+  if (!length(line)) return(NA_real_)
+  as.numeric(regmatches(line, regexpr("[0-9]+", line)))
+}
+
 logical_seed_value <- function(value) {
   value <- tolower(trimws(as.character(value %||% "")))
   value %in% c("true", "t", "1", "yes", "y")
