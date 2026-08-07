@@ -31,9 +31,12 @@ test_that("refresh_domain_loaders in app.R only references known R/database.R lo
   # must exist as a real function, so a typo'd domain name fails loudly
   # in CI rather than silently no-op-ing in production.
   app_lines <- readLines(repo_path("app.R"), warn = FALSE)
-  loader_lines <- grep("^\\s*[a-z_]+ = load_[a-z_]+_domain_data\\s*$", app_lines, value = TRUE)
-  expect_true(length(loader_lines) >= 1)
-  loader_names <- trimws(sub("^\\s*[a-z_]+ = (load_[a-z_]+_domain_data)\\s*$", "\\1", loader_lines))
+  # Trailing comma is optional -- every entry but the last in
+  # refresh_domain_loaders has one, and this must keep matching all of
+  # them as more domains are added, not just whichever is listed last.
+  loader_lines <- grep("^\\s*[a-z_]+ = load_[a-z_]+_domain_data,?\\s*$", app_lines, value = TRUE)
+  expect_true(length(loader_lines) >= 2)
+  loader_names <- trimws(sub("^\\s*[a-z_]+ = (load_[a-z_]+_domain_data),?\\s*$", "\\1", loader_lines))
   for (loader_name in loader_names) {
     expect_true(exists(loader_name, mode = "function"), info = loader_name)
   }
