@@ -22,7 +22,7 @@ primary_region = "iad"
 
 [[vm]]
   size = "shared-cpu-4x"
-  memory = "4gb"
+  memory = "8gb"
 
 [checks]
   [checks.http]
