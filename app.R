@@ -9020,12 +9020,24 @@ server <- function(input, output, session) {
       # which domain(s) triggered it, so a recurrence shows exactly which
       # call shape (full reload vs. a specific domain) the growth tracks
       # with instead of only the after-the-fact OOM kill message.
-      rss_kb <- process_rss_kb()
-      if (!is.na(rss_kb)) {
+      #
+      # rss_before/rss_after_gc test a specific hypothesis for WHY a full
+      # reload settles at ~2.6GB on a worker despite production's actual
+      # data being tiny on disk (a few MB total, confirmed 2026-08-07):
+      # R's own large-vector heap frequently munmaps pages back to the OS
+      # on gc() for exactly the kind of big data.frame columns
+      # load_app_data() returns, unlike glibc's small-object allocator,
+      # which mostly doesn't. If rss_after_gc comes back meaningfully
+      # lower in production, that's the fix; if not, this rules retention
+      # out and points back to periodic worker recycling instead.
+      rss_before_gc <- process_rss_kb()
+      gc(full = TRUE)
+      rss_after_gc <- process_rss_kb()
+      if (!is.na(rss_before_gc)) {
         cat(sprintf(
-          "MEMLOG scope=worker pid=%s domains=%s rss_kb=%s at=%s\n",
+          "MEMLOG scope=worker pid=%s domains=%s rss_before_gc_kb=%s rss_after_gc_kb=%s at=%s\n",
           Sys.getpid(), if (is.null(domains)) "full" else paste(domains, collapse = ","),
-          rss_kb, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
+          rss_before_gc, rss_after_gc, format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
         ))
       }
       loaded
