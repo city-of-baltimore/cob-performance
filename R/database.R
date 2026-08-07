@@ -757,6 +757,21 @@ ensure_review_schema <- function(connection) {
   )
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS user_login_session_user_idx ON access.user_login_session (user_id)")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS user_login_session_active_idx ON access.user_login_session (token_hash, expires_at) WHERE revoked_at IS NULL")
+  # Failed-login throttle (R/auth.R auth_attempt_blocked/auth_note_failure/
+  # auth_clear_failures) -- moved from an in-process R environment to
+  # Postgres 2026-08-07 so the 5-failure/15-minute lockout holds correctly
+  # across multiple app processes, not just within whichever one process
+  # happened to handle a given connection.
+  DBI::dbExecute(
+    connection,
+    paste(
+      "CREATE TABLE IF NOT EXISTS access.login_throttle (",
+      "email varchar(255) PRIMARY KEY,",
+      "failure_count integer NOT NULL DEFAULT 0,",
+      "locked_until timestamptz",
+      ")"
+    )
+  )
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_type varchar(20) NOT NULL DEFAULT 'plan'")
   DBI::dbExecute(connection, "ALTER TABLE review.section_score ADD COLUMN IF NOT EXISTS target_id integer")
   DBI::dbExecute(connection, "CREATE INDEX IF NOT EXISTS idx_section_score_target ON review.section_score(review_id, target_type, target_id)")

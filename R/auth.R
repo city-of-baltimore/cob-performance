@@ -202,24 +202,43 @@ auth_home_page <- function(roles) {
   if (nrow(roles) && any(roles$app_role %in% AUTH_REVIEWER_ROLES)) "reviewer_dashboard" else "landing"
 }
 
-# In-process failed-attempt throttle, keyed by lowercased email.
-auth_throttle <- new.env(parent = emptyenv())
-
-auth_attempt_blocked <- function(email) {
-  entry <- auth_throttle[[tolower(trimws(email))]]
-  !is.null(entry) && entry$count >= AUTH_MAX_FAILURES && Sys.time() < entry$until
+# Failed-login throttle, keyed by lowercased email, backed by
+# access.login_throttle in Postgres (not an in-process R environment) --
+# an in-memory version only holds the 5-failure/15-minute lockout within
+# whichever single process happens to see all of one email's attempts.
+# Across multiple app processes (see fly.toml), a reconnect landing on a
+# different, still-empty process would silently reset the count to 0,
+# diluting the lockout to up to 5x the number of running processes.
+auth_attempt_blocked <- function(connection, email) {
+  key <- tolower(trimws(email %||% ""))
+  row <- DBI::dbGetQuery(connection, "SELECT failure_count, locked_until FROM access.login_throttle WHERE email = $1", params = list(key))
+  nrow(row) > 0 && row$failure_count[[1]] >= AUTH_MAX_FAILURES && !is.na(row$locked_until[[1]]) && Sys.time() < row$locked_until[[1]]
 }
 
-auth_note_failure <- function(email) {
-  key <- tolower(trimws(email))
-  entry <- auth_throttle[[key]]
-  count <- if (is.null(entry) || Sys.time() >= entry$until) 1L else entry$count + 1L
-  auth_throttle[[key]] <- list(count = count, until = Sys.time() + AUTH_LOCKOUT_MINUTES * 60)
+auth_note_failure <- function(connection, email) {
+  key <- tolower(trimws(email %||% ""))
+  DBI::dbExecute(
+    connection,
+    sprintf(
+      paste(
+        "INSERT INTO access.login_throttle (email, failure_count, locked_until)",
+        "VALUES ($1, 1, now() + interval '%d minutes')",
+        "ON CONFLICT (email) DO UPDATE SET",
+        "failure_count = CASE WHEN access.login_throttle.locked_until IS NULL OR now() >= access.login_throttle.locked_until",
+        "THEN 1 ELSE access.login_throttle.failure_count + 1 END,",
+        "locked_until = now() + interval '%d minutes'"
+      ),
+      AUTH_LOCKOUT_MINUTES, AUTH_LOCKOUT_MINUTES
+    ),
+    params = list(key)
+  )
+  invisible(NULL)
 }
 
-auth_clear_failures <- function(email) {
-  key <- tolower(trimws(email))
-  if (!is.null(auth_throttle[[key]])) rm(list = key, envir = auth_throttle)
+auth_clear_failures <- function(connection, email) {
+  key <- tolower(trimws(email %||% ""))
+  DBI::dbExecute(connection, "DELETE FROM access.login_throttle WHERE email = $1", params = list(key))
+  invisible(NULL)
 }
 
 auth_reset_link <- function(session, token) {
