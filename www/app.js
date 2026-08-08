@@ -21,6 +21,11 @@
   // more recent edit to a field this tab never touched.
   var goalsDirtyFieldIds = {};
   var goalsDirtyGoalIds = {};
+  // Same idea as goalsDirtyFieldIds/goalsDirtyGoalIds, for the Services
+  // page's quiet autosave (collectBuilderDraft(page, true)) -- see that
+  // function's comment.
+  var servicesDirtyFieldIds = {};
+  var servicesDirtyServiceIds = {};
   var draftSaveQueue = [];
   var activeDraftSave = null;
   var activeDraftSaveTimer = null;
@@ -2602,6 +2607,7 @@
     if (!page || !input || !input.id) return;
     var match = input.id.match(/^service_description_(.+)$/);
     if (!match) return;
+    servicesDirtyFieldIds[input.id] = true;
     scheduleServicesQuietAutosave(page, delay || 1100);
   }
 
@@ -2623,6 +2629,7 @@
     if (!serviceId) return;
     updateServiceEditorMetricMetadata(editor);
     rememberServiceMetricUiState(editor);
+    servicesDirtyServiceIds[serviceId] = true;
     scheduleServicesQuietAutosave(page, delay || 700);
   }
 
@@ -2631,8 +2638,11 @@
     page.dataset.autosaveDirty = "true";
     page.querySelectorAll(".service-editor").forEach(updateServiceEditorMetricMetadata);
     setGoalsSaveStatus("Unsaved changes. Saving soon...");
-    var draft = collectBuilderDraft(page);
-    window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
+    // Full snapshot for this browser's own crash-recovery copy -- a local
+    // restore of this tab's own state, unrelated to the cross-tab server
+    // race dirtyOnly exists for.
+    window.localStorage.setItem(builderDraftKey(page), JSON.stringify(collectBuilderDraft(page)));
+    var draft = collectBuilderDraft(page, true);
     pendingServicesQuietSave = {
       planId: Number(page.getAttribute("data-plan-id")),
       sectionKey: page.getAttribute("data-section-key"),
@@ -2653,12 +2663,18 @@
     var page = document.querySelector(".builder-page-content[data-section-key='services']");
     if (page) {
       page.querySelectorAll(".service-editor").forEach(updateServiceEditorMetricMetadata);
-      var draft = collectBuilderDraft(page);
-      window.localStorage.setItem(builderDraftKey(page), JSON.stringify(draft));
+      window.localStorage.setItem(builderDraftKey(page), JSON.stringify(collectBuilderDraft(page)));
+      var draft = collectBuilderDraft(page, true);
       pendingServicesQuietSave.payloadJson = JSON.stringify(draft);
     }
     var payload = Object.assign({}, pendingServicesQuietSave, { nonce: Date.now() });
     pendingServicesQuietSave = null;
+    // Safe to clear here, not at schedule time: any keystroke between now
+    // and this point would have re-scheduled (cancelling this timer) and
+    // re-marked its field/service dirty, so nothing dirtied since the
+    // snapshot above is being dropped.
+    servicesDirtyFieldIds = {};
+    servicesDirtyServiceIds = {};
     setGoalsSaveStatus("Saving...");
     return enqueueDraftSave("services_draft_quiet_save", payload);
   }
@@ -2735,7 +2751,22 @@
     return "cob-performance:builder-draft:v1:" + (agency ? agency.textContent.trim() : "agency") + ":" + title;
   }
 
-  function collectBuilderDraft(page) {
+  // dirtyOnly restricts values/serviceMetrics to fields and services this
+  // tab has actually touched (servicesDirtyFieldIds/servicesDirtyServiceIds)
+  // since its last quiet autosave. Used only by the quiet-autosave send
+  // path (scheduleServicesQuietAutosave/flushServicesQuietAutosave) --
+  // callers that need the tab's full current state regardless of what
+  // changed (crash-recovery localStorage, export, the revision-checked
+  // manual "shared_draft_save" path) call this with no second argument
+  // and get the same full snapshot as before. Same reasoning as
+  // collectGoalsDraft's dirtyOnly (see its comment): the server merges
+  // this payload key-by-key (merge_services_draft_payload/
+  // merge_named_list), letting whichever save mentions a key last win,
+  // so a full-snapshot resend from a tab that never touched a field can
+  // silently revert a more recent edit to it from another tab. Confirmed
+  // via direct save_services_draft_quiet_merged() calls 2026-08-08, same
+  // failure mode already fixed for Goals in PR #123.
+  function collectBuilderDraft(page, dirtyOnly) {
     var values = {};
     var serviceMetrics = {};
     page.querySelectorAll("textarea[id], input[id]:not([type='button']):not([type='submit']), select[id]").forEach(function (input) {
@@ -2744,21 +2775,18 @@
       // Keeping them again in values can replay stale row indexes after a
       // middle metric is removed and the remaining selects are renumbered.
       if (/^service_metric_/.test(input.id || "")) return;
+      if (dirtyOnly && !servicesDirtyFieldIds[input.id]) return;
       values[input.id] = input.value;
     });
     page.querySelectorAll(".service-editor[data-service-id]").forEach(function (editor) {
       var serviceId = editor.getAttribute("data-service-id");
       var container = editor.querySelector(".service-metric-selectors");
-      if (container) {
-        serviceMetrics[serviceId] = Array.from(container.querySelectorAll("select")).map(function (select) {
-          return select.value;
-        }).filter(function (value) {
-          return value !== "";
-        });
-        editor.setAttribute("data-selected-metrics", serviceMetrics[serviceId].join(","));
-      } else {
-        serviceMetrics[serviceId] = selectedMetricsFromEditor(editor);
-      }
+      var metrics = container
+        ? Array.from(container.querySelectorAll("select")).map(function (select) { return select.value; }).filter(function (value) { return value !== ""; })
+        : selectedMetricsFromEditor(editor);
+      if (container) editor.setAttribute("data-selected-metrics", metrics.join(","));
+      if (dirtyOnly && !servicesDirtyServiceIds[serviceId]) return;
+      serviceMetrics[serviceId] = metrics;
     });
     return { savedAt: new Date().toISOString(), values: values, serviceMetrics: serviceMetrics };
   }

@@ -125,6 +125,86 @@ The browser keeps local storage only as a recovery copy for unsaved changes.
 Goals and Services save whole-section draft payloads so the database has one
 shared draft source per plan section.
 
+### Two save paths, and why they exist
+
+Each draft-backed section (Goals, Services) has **two** distinct save
+mechanisms, not one:
+
+1. **Quiet autosave** (`goals_draft_quiet_save`, `services_draft_quiet_save`)
+   — fires on every keystroke/selection change, debounced. Server side:
+   `save_goals_draft_merged()` / `save_services_draft_quiet_merged()`, which
+   **merge** the incoming payload into whatever's already stored
+   (`merge_goals_draft_payload()` / `merge_services_draft_payload()` in
+   `R/database.R`, both via the shared `merge_named_list()` helper). No
+   conflict is ever reported to the user — it just merges and moves on,
+   because interrupting someone's typing with a conflict dialog on every
+   autosave tick would be unusable.
+2. **Manual/explicit save** (`shared_draft_save`, via `saveBuilderDraft()`
+   in `www/app.js`) — revision-checked optimistic locking
+   (`save_section_draft()`). If another save landed since this tab's last
+   known revision, the user gets a real conflict message ("A newer shared
+   draft was saved by someone else... reload before saving again") instead
+   of a silent overwrite.
+
+**The quiet path has no such safety net, which is exactly what makes it
+dangerous to get wrong.** Path 1 trades correctness for typing UX by
+design; path 2 is where correctness actually gets enforced.
+
+### The stale-tab pitfall (fixed for Goals in PR #123, Services in PR #125)
+
+Because the quiet path *merges by key* (`merge_named_list()`: whichever
+save mentions a key last, wins), it is only safe if a tab **only ever
+sends the fields it actually changed.** If the client instead resends its
+entire current page state on every autosave tick — every field, not just
+the one just edited — then a second tab that's been open a while (and
+never touched a given field) will keep resending its own stale copy of
+that field. The moment that stale resend lands *after* a different tab's
+more recent edit to the same field, it silently reverts that edit. No
+error, no warning, to either user.
+
+This is not a hypothetical: confirmed directly against
+`save_goals_draft_merged()` and `save_services_draft_quiet_merged()`
+(2026-08-08) — Tab A edits a field and saves; Tab B, sitting on an
+unrefreshed DOM, edits a *different* field and saves; Tab A's edit comes
+back reverted. Two tabs on the same plan (the same person working across
+two browser tabs, or two different people on the same entity/agency) is
+an ordinary, expected usage pattern here, not an edge case.
+
+**The fix, and the pattern to follow for any new quiet-autosave section:**
+track which fields (and which sub-objects, e.g. a goal's KPI/initiative
+arrays, a service's metric selections) the *local tab* has actually
+touched since its last autosave, and have the payload-collector function
+only include those — not everything currently on the page. See
+`goalsDirtyFieldIds`/`goalsDirtyGoalIds` and
+`collectGoalsDraft(page, dirtyOnly)` (Goals), or
+`servicesDirtyFieldIds`/`servicesDirtyServiceIds` and
+`collectBuilderDraft(page, dirtyOnly)` (Services), in `www/app.js` for the
+reference implementation. Concretely:
+
+- Add a `dirtyFieldIds` / `dirtyGroupIds`-style object at module scope,
+  next to the existing ones.
+- Every event handler that schedules the quiet autosave must *also* mark
+  the specific field id (or sub-object's group id, for anything keyed by
+  an array rather than a flat value) dirty — not just call the schedule
+  function. Grep for every call site of the schedule function; each one
+  needs a corresponding dirty-mark line, not just the obvious ones.
+- The payload-collector function takes an optional `dirtyOnly` flag.
+  When true, skip any field/group not in the dirty set. When false/omitted
+  (the default), keep collecting everything — every *other* caller
+  (the crash-recovery `localStorage` copy, the export-with-draft flow,
+  the revision-checked manual save) needs the full snapshot and must be
+  left alone.
+- Clear the dirty tracking only at the moment the debounced autosave
+  actually fires and builds its final payload — not when scheduling
+  is (re)triggered. A keystroke between "scheduled" and "fires" cancels
+  and reschedules the timer anyway, so nothing dirtied gets lost.
+- **Verify it, don't just read it and assume.** The cheapest real check:
+  feed two independently-built payloads (representing two tabs) through
+  the actual server merge function directly and confirm both edits
+  survive in the final stored draft — see either PR above for the exact
+  pattern. If browser click-through is available, a real two-tab test is
+  better still.
+
 ## Deployment
 
 Deploy to Fly.io:
