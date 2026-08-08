@@ -13,6 +13,14 @@
   var pendingServiceMetricsSave = null;
   var pendingServicesQuietSave = null;
   var pendingGoalsQuietSave = null;
+  // Fields/goals touched by this tab's own typing since the last quiet
+  // autosave was sent. collectGoalsDraft(page, true) uses these to send
+  // only what this tab actually changed, instead of its full current page
+  // -- see that function's comment for why a full-snapshot resend from a
+  // second, stale-but-still-open tab can silently revert someone else's
+  // more recent edit to a field this tab never touched.
+  var goalsDirtyFieldIds = {};
+  var goalsDirtyGoalIds = {};
   var draftSaveQueue = [];
   var activeDraftSave = null;
   var activeDraftSaveTimer = null;
@@ -2329,6 +2337,8 @@
     if (page && page.matches(".services-page")) {
       scheduleServiceMetricsAutosave(page.closest(".builder-page-content"), serviceEditor, 1600);
     } else if (page && page.matches(".goals-page")) {
+      var kpiGoalEditor = removeButton.closest(".goal-editor");
+      if (kpiGoalEditor) goalsDirtyGoalIds[kpiGoalEditor.getAttribute("data-goal-id")] = true;
       scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 1600);
     } else {
       scheduleBuilderAutosave(page && page.closest(".builder-page-content"), 500);
@@ -2381,6 +2391,8 @@
     var row = removeButton.closest(".initiative-input-row");
     row.remove();
     updateGoalRequirements(removeButton.closest(".goals-page"));
+    var initiativeGoalEditor = removeButton.closest(".goal-editor");
+    if (initiativeGoalEditor) goalsDirtyGoalIds[initiativeGoalEditor.getAttribute("data-goal-id")] = true;
     scheduleGoalsQuietAutosave(removeButton.closest(".builder-page-content"), 300);
   });
 
@@ -2667,8 +2679,11 @@
     var goalsPage = page.querySelector(".goals-page");
     if (page.dataset.restoringDraft === "true" || goalsPage.dataset.restoringDraft === "true") return;
     updateGoalRequirements(goalsPage);
-    var draft = collectGoalsDraft(goalsPage);
-    window.localStorage.setItem(goalsDraftKey(goalsPage), JSON.stringify(draft));
+    // Full snapshot for this browser's own crash-recovery copy -- that's a
+    // local restore of this tab's own state, unrelated to the cross-tab
+    // server race dirtyOnly exists for.
+    window.localStorage.setItem(goalsDraftKey(goalsPage), JSON.stringify(collectGoalsDraft(goalsPage)));
+    var draft = collectGoalsDraft(goalsPage, true);
     pendingGoalsQuietSave = {
       planId: Number(page.getAttribute("data-plan-id")),
       sectionKey: "goals",
@@ -2688,6 +2703,12 @@
     if (!pendingGoalsQuietSave || !window.Shiny || !window.Shiny.setInputValue) return false;
     var payload = Object.assign({}, pendingGoalsQuietSave, { nonce: Date.now() });
     pendingGoalsQuietSave = null;
+    // Safe to clear here, not at schedule time: any keystroke between now
+    // and this point would have re-scheduled (cancelling this timer) and
+    // re-marked its field dirty, so nothing dirtied since the snapshot
+    // above is being dropped.
+    goalsDirtyFieldIds = {};
+    goalsDirtyGoalIds = {};
     setGoalsSaveStatus("Saving...");
     return enqueueDraftSave("goals_draft_quiet_save", payload);
   }
@@ -2779,22 +2800,50 @@
     setGoalsSaveStatus((sourceLabel || "Recovery draft") + " restored from " + new Date(draft.savedAt).toLocaleString() + ".");
   }
 
-  function collectGoalsDraft(page) {
+  // dirtyOnly restricts values/kpis/initiatives to fields and goals this
+  // tab has actually touched (goalsDirtyFieldIds/goalsDirtyGoalIds) since
+  // its last quiet autosave. Used only by the quiet-autosave send path
+  // (scheduleGoalsQuietAutosave) -- callers that need the tab's full
+  // current state regardless of what changed (the crash-recovery
+  // localStorage copy, the export-with-draft flow, the revision-checked
+  // manual "shared_draft_save" path) call this with no second argument
+  // and get the same full snapshot as before.
+  //
+  // Why dirtyOnly exists: the server merges this payload field-by-field
+  // (merge_goals_draft_payload/merge_named_list) by simply letting
+  // whichever save mentions a key last win. A full-snapshot resend from a
+  // tab that's been open a while includes every field on its page,
+  // including ones it never touched -- so if that tab's autosave lands
+  // after a second tab has since edited one of those same fields, the
+  // first tab's stale copy silently overwrites the second tab's newer
+  // edit, with no warning. Restricting the payload to genuinely-changed
+  // fields means a tab that never touched a field never resends it, so it
+  // can't clobber it. Confirmed via direct save_goals_draft_merged() calls
+  // 2026-08-08: two tabs open on the same goal, tab A edits the statement
+  // and saves, tab B (still showing the pre-edit statement) edits the
+  // initiatives and saves -- tab A's statement edit was silently reverted
+  // before this fix.
+  function collectGoalsDraft(page, dirtyOnly) {
     var values = {};
     var kpis = {};
     var initiatives = {};
     page.querySelectorAll("textarea[id], select[id]").forEach(function (input) {
+      if (dirtyOnly && !goalsDirtyFieldIds[input.id]) return;
       values[input.id] = input.value;
     });
     page.querySelectorAll(".kpi-selectors").forEach(function (container) {
-      kpis[container.getAttribute("data-goal-id")] = Array.from(container.querySelectorAll("select")).map(function (select) {
+      var goalId = container.getAttribute("data-goal-id");
+      if (dirtyOnly && !goalsDirtyGoalIds[goalId]) return;
+      kpis[goalId] = Array.from(container.querySelectorAll("select")).map(function (select) {
         return select.value;
       }).filter(function (value) {
         return value !== "";
       });
     });
     page.querySelectorAll(".initiative-inputs").forEach(function (container) {
-      initiatives[container.getAttribute("data-goal-id")] = Array.from(container.querySelectorAll("textarea")).map(function (textarea) {
+      var goalId = container.getAttribute("data-goal-id");
+      if (dirtyOnly && !goalsDirtyGoalIds[goalId]) return;
+      initiatives[goalId] = Array.from(container.querySelectorAll("textarea")).map(function (textarea) {
         return textarea.value;
       });
     });
@@ -3403,6 +3452,9 @@
     if (event.target.matches(".kpi-select-row select")) return;
     if (goalsPage && event.target.matches("textarea[id^='goal_statement_'], .initiative-inputs textarea")) {
       updateGoalRequirements(goalsPage);
+      if (event.target.id) goalsDirtyFieldIds[event.target.id] = true;
+      var initiativeContainer = event.target.closest(".initiative-inputs");
+      if (initiativeContainer) goalsDirtyGoalIds[initiativeContainer.getAttribute("data-goal-id")] = true;
       scheduleGoalsQuietAutosave(page, 1200);
       return;
     }
@@ -3421,12 +3473,15 @@
     if (goalsPage && event.target.matches("select[id^='goal_alignment_']")) {
       updateGoalAlignmentSummary(event.target.closest(".goal-editor"));
       updateGoalRequirements(goalsPage);
+      if (event.target.id) goalsDirtyFieldIds[event.target.id] = true;
       scheduleGoalsQuietAutosave(page, 700);
       return;
     }
     if (goalsPage && event.target.matches(".kpi-select-row select")) {
       updateGoalRequirements(goalsPage);
       updateAllKpiAvailability(goalsPage);
+      var kpiContainer = event.target.closest(".kpi-selectors");
+      if (kpiContainer) goalsDirtyGoalIds[kpiContainer.getAttribute("data-goal-id")] = true;
       scheduleGoalsQuietAutosave(page, 1600);
       return;
     }
@@ -3455,7 +3510,14 @@
       updateGoalControls(page);
       return;
     }
-    addGoalEditor(page);
+    var newEditor = addGoalEditor(page);
+    if (newEditor) {
+      var newGoalId = newEditor.getAttribute("data-goal-id");
+      if (newGoalId) goalsDirtyGoalIds[newGoalId] = true;
+      newEditor.querySelectorAll("textarea[id], select[id]").forEach(function (control) {
+        goalsDirtyFieldIds[control.id] = true;
+      });
+    }
     updateAllKpiAvailability(page);
     updateGoalRequirements(page);
     scheduleGoalsQuietAutosave(page.closest(".builder-page-content"), 700);
