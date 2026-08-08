@@ -674,6 +674,19 @@
     if (countLabel) countLabel.textContent = count + " " + (count === 1 ? "measure" : "measures");
   }
 
+  function applyMeasureReviewSearch() {
+    var search = (document.getElementById("measure_review_search") || {}).value || "";
+    var count = 0;
+    search = search.trim().toLowerCase();
+    document.querySelectorAll(".measure-review-row").forEach(function (row) {
+      var matches = !search || (row.getAttribute("data-measure-search") || "").indexOf(search) !== -1;
+      row.style.display = matches ? "" : "none";
+      if (matches) count += 1;
+    });
+    var countLabel = document.querySelector(".measure-review-search-count");
+    if (countLabel) countLabel.textContent = count + " " + (count === 1 ? "measure" : "measures");
+  }
+
   function setNavigationScope(message) {
     var hideServices = Boolean(message && message.hideServices);
     var showPerformanceReviewing = Boolean(message && message.showPerformanceReviewing);
@@ -1487,6 +1500,9 @@
     }
     if (event.target && event.target.id === "measure_library_search") {
       applyMeasureLibrarySearch();
+    }
+    if (event.target && event.target.id === "measure_review_search") {
+      applyMeasureReviewSearch();
     }
     if (event.target && event.target.id === "feedback_search") {
       applyFeedbackFilters();
