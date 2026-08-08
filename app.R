@@ -2645,6 +2645,12 @@ page_measure_review <- function(db) {
   measures <- measures[order(measures$submitted_for_approval_at, measures$last_updated, decreasing = TRUE), , drop = FALSE]
   returned_count <- sum(db$performance_performance_measure$approval_status == "Returned", na.rm = TRUE)
   validated_count <- sum(db$performance_performance_measure$approval_status == "Validated", na.rm = TRUE)
+  agency_match <- match(measures$agency_id, db$reference_agency$agency_id)
+  agency_public_names <- db$reference_agency$public_name[agency_match]
+  agency_names <- db$reference_agency$agency_name[agency_match]
+  agency_label <- ifelse(!is.na(agency_public_names) & nzchar(trimws(agency_public_names)), agency_public_names, agency_names)
+  agency_label <- ifelse(is.na(agency_label), measures$agency_id, agency_label)
+  measures$search_blob <- tolower(paste(measures$title, measures$measure_type, agency_label))
   tagList(
     div(
       class = "briefing-header compact",
@@ -2669,10 +2675,22 @@ page_measure_review <- function(db) {
     surface(
       "Measure Review Queue",
       "PendingApproval measures appear here after an agency submits them from the Measures page.",
+      if (nrow(measures)) {
+        div(
+          class = "measure-review-search-row",
+          div(class = "measure-field", tags$label(`for` = "measure_review_search", "Search"), tags$input(id = "measure_review_search", class = "form-control", type = "search", placeholder = "Title, type, or agency")),
+          span(class = "measure-review-search-count", paste(nrow(measures), if (nrow(measures) == 1) "measure" else "measures"))
+        )
+      },
       if (!nrow(measures)) {
         div(class = "empty-state", h3("No measures are waiting for review"), p("Submitted measures will appear here for OPI Reviewer or System Admin action."))
       } else {
-        div(class = "measure-review-list", lapply(seq_len(nrow(measures)), function(i) measure_review_card(db, measures[i, , drop = FALSE])))
+        div(
+          class = "measure-review-list",
+          lapply(seq_len(nrow(measures)), function(i) {
+            div(class = "measure-review-row", `data-measure-search` = measures$search_blob[i], measure_review_card(db, measures[i, , drop = FALSE]))
+          })
+        )
       }
     )
   )

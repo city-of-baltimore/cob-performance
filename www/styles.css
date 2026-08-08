@@ -4392,6 +4392,29 @@ textarea.cls-over-limit,
   white-space: nowrap;
 }
 
+.measure-review-search-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.measure-review-search-row .measure-field {
+  flex: 1;
+  min-width: 14rem;
+  max-width: 22rem;
+  margin-bottom: 0;
+}
+
+.measure-review-search-count {
+  color: var(--lp-text-secondary);
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .measure-library-row {
   width: 100%;
   border: 0;
